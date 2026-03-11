@@ -12,7 +12,11 @@ import {
     Info,
     CheckCircle,
     AlertCircle,
-    Save
+    Save,
+    ChevronsLeft,
+    ChevronLeft,
+    ChevronRight,
+    ChevronsRight
 } from 'lucide-react';
 import DataTable from '../../components/data/DataTable';
 import { getHouses, syncHouses, getProjects, getSyncStatus, updateHouse } from '../../services/api';
@@ -124,6 +128,10 @@ const Houses = () => {
     const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
     const [isFilterCollapsed, setIsFilterCollapsed] = useState(false);
 
+    // Pagination state (client-side)
+    const [page, setPage] = useState(1);
+    const [pageSize, setPageSize] = useState(25);
+
     // Editing mapping
     const [editingHouse, setEditingHouse] = useState<House | null>(null);
     const [isSaving, setIsSaving] = useState(false);
@@ -148,6 +156,7 @@ const Houses = () => {
     useEffect(() => {
         const timer = setTimeout(() => {
             setDebouncedSearchTerm(searchTerm);
+            setPage(1);
         }, 500);
         return () => clearTimeout(timer);
     }, [searchTerm]);
@@ -281,6 +290,16 @@ const Houses = () => {
     // 不再使用前端过滤，因为搜索条件已提交给后端
     const filteredHouses = houses;
 
+    const totalRecords = filteredHouses.length;
+    const totalPages = Math.max(1, Math.ceil(totalRecords / pageSize));
+    const startIndex = (page - 1) * pageSize;
+    const endIndex = Math.min(startIndex + pageSize, totalRecords);
+    const pagedHouses = filteredHouses.slice(startIndex, startIndex + pageSize);
+
+    useEffect(() => {
+        if (page > totalPages) setPage(totalPages);
+    }, [page, totalPages]);
+
     const filteredProjectsList = projects.filter(p =>
         p.proj_name.toLowerCase().includes(projectSearch.toLowerCase()) ||
         String(p.proj_id).includes(projectSearch)
@@ -376,7 +395,7 @@ const Houses = () => {
     ];
 
     return (
-        <div className="page-container fade-in">
+        <div className="page-container fade-in houses-page">
             {/* Filter Section - Consistent with Bills.tsx style */}
             <div className={`bills-filter-section ${isFilterCollapsed ? 'collapsed' : ''}`}>
                 <div className="filter-header-row">
@@ -469,21 +488,70 @@ const Houses = () => {
                 )}
             </div>
 
-            <div className="table-area-wrapper">
+            <div className="table-area-wrapper houses-table-area-wrapper">
                 <DataTable
                     columns={columns}
-                    data={filteredHouses}
+                    data={pagedHouses}
                     loading={isLoading}
                     title={
                         <div className="flex items-center gap-2">
                             <Home size={18} className="text-primary" />
                             <span>房屋基本信息档案库</span>
                             <span className="text-xs font-normal text-secondary ml-2">
-                                当前加载 {filteredHouses.length} 条
+                                {totalRecords === 0 ? '暂无数据' : `显示第 ${startIndex + 1} - ${endIndex} 条，共 ${totalRecords} 条`}
                             </span>
                         </div>
                     }
                 />
+
+                <div className="pagination-footer">
+                    <div className="pagination-info">共 {totalRecords} 条记录</div>
+
+                    <div className="pagination-controls">
+                        <select
+                            className="page-select"
+                            value={pageSize}
+                            onChange={(e) => {
+                                setPageSize(Number(e.target.value));
+                                setPage(1);
+                            }}
+                        >
+                            <option value={10}>10 条/页</option>
+                            <option value={25}>25 条/页</option>
+                            <option value={50}>50 条/页</option>
+                            <option value={100}>100 条/页</option>
+                        </select>
+
+                        <div className="flex gap-1 ml-2">
+                            <button className="page-btn" disabled={page === 1} onClick={() => setPage(1)}>
+                                <ChevronsLeft size={16} />
+                            </button>
+                            <button className="page-btn" disabled={page === 1} onClick={() => setPage(p => Math.max(1, p - 1))}>
+                                <ChevronLeft size={16} />
+                            </button>
+
+                            <button className="page-btn active">{page}</button>
+                            {page < totalPages && (
+                                <button className="page-btn" onClick={() => setPage(p => p + 1)}>
+                                    {page + 1}
+                                </button>
+                            )}
+                            {page + 1 < totalPages && <span className="px-2 text-secondary">...</span>}
+                            {page + 1 < totalPages && (
+                                <button className="page-btn" onClick={() => setPage(totalPages)}>
+                                    {totalPages}
+                                </button>
+                            )}
+
+                            <button className="page-btn" disabled={page === totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>
+                                <ChevronRight size={16} />
+                            </button>
+                            <button className="page-btn" disabled={page === totalPages} onClick={() => setPage(totalPages)}>
+                                <ChevronsRight size={16} />
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             {/* Sync Progress Modal */}

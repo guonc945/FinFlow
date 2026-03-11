@@ -1,5 +1,38 @@
 /* Houses page - Kingdee house mapping modal (scoped) */
 
+.page-container.houses-page {
+    /* Harden against other pages' global overrides (some use !important on .page-container). */
+    display: flex !important;
+    flex-direction: column !important;
+    height: calc(100vh - var(--header-height, 64px) - 2rem) !important;
+    overflow: hidden !important;
+}
+
+.table-area-wrapper.houses-table-area-wrapper {
+    margin-bottom: 0;
+}
+
+/* Ensure the table region shrinks correctly so pagination stays visible. */
+.page-container.houses-page .table-area-wrapper.houses-table-area-wrapper {
+    flex: 1 1 auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+}
+
+/* Avoid other pages forcing 100% height (often with !important) on these generic classes. */
+.page-container.houses-page .table-area-wrapper.houses-table-area-wrapper .data-table-wrapper {
+    flex: 1 1 auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+}
+
+.page-container.houses-page .table-area-wrapper.houses-table-area-wrapper .table-container {
+    flex: 1 1 auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: auto !important;
+}
+
 .kd-house-mapping-overlay {
     position: fixed;
     inset: 0;
