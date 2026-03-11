@@ -112,7 +112,16 @@ const Header = () => {
 
                 <div className="header-divider hidden-sm"></div>
 
-                <div className="user-profile-header">
+                <div
+                    className="user-profile-header"
+                    role="button"
+                    tabIndex={0}
+                    title="个人设置"
+                    onClick={() => navigate('/account')}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') navigate('/account');
+                    }}
+                >
                     <div className="user-info-header hidden-sm">
                         <span className="user-name">{user?.real_name || 'Loading...'}</span>
                         <span className="user-role">{user?.org_name || 'System'}</span>

@@ -8,6 +8,7 @@ const MainLayout = () => {
         const titles: Record<string, { title: string, subtitle?: string }> = {
             '/': { title: '首页仪表盘', subtitle: '系统运行正常，您可以在下方查看近期的收入趋势及账单动态' },
             '/bills': { title: '账单管理', subtitle: '所有应收/已收账单信息的全景视图' },
+            '/receipt-bills': { title: '收款账单', subtitle: '来自马克系统的收款明细，用于统一查看与同步收款信息' },
             '/charge-items': { title: '收费项目与规则管理', subtitle: '集中配置和管理各类收费项目及其计费规则' },
             '/houses': { title: '房屋管理 (马克)', subtitle: '马克系统内的房屋基础资产数据' },
             '/projects': { title: '项目与园区管理', subtitle: '定义并管理所有物业服务项目及关联区域' },
@@ -26,6 +27,7 @@ const MainLayout = () => {
             '/kd-houses': { title: '房号管理 (金蝶)', subtitle: '单向同步和检查金蝶房号明细数据' },
             '/bank-accounts': { title: '银行账户管理 (金蝶)', subtitle: '同步和管理金蝶系统中的银行账户基础档案' },
             '/settings': { title: '系统设置', subtitle: '全局系统参数与偏好配置' },
+            '/account': { title: '个人设置', subtitle: '编辑个人信息、修改密码与偏好配置' },
             '/users': { title: '用户与权限管理', subtitle: '内部员工账号、角色与系统访问控制' },
             '/organizations': { title: '组织架构管理', subtitle: '维护公司的多层级组织与部门结构' }
         };

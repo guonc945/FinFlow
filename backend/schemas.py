@@ -139,6 +139,10 @@ class BillSyncRequest(BaseModel):
     community_ids: Optional[List[int]] = None
 
 
+class ReceiptBillSyncRequest(BaseModel):
+    community_ids: Optional[List[int]] = None
+
+
 class BillPreviewRef(BaseModel):
     bill_id: int
     community_id: int

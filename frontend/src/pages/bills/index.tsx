@@ -22,6 +22,7 @@ import { syncBills, getProjects, getSyncStatus, getBills, previewVoucherForBill,
 import VoucherPreviewModal from '../../components/common/VoucherPreviewModal';
 import ConfirmModal from '../../components/common/ConfirmModal';
 import { useToast, ToastContainer } from '../../components/Toast';
+import { useLocation } from 'react-router-dom';
 
 // --- Sub-component: SyncProgressModal ---
 const SyncProgressModal = ({
@@ -123,6 +124,7 @@ const CheckCircle = ({ size, className }: { size: number, className?: string }) 
 );
 
 const Bills = () => {
+    const location = useLocation();
     const { toasts, showToast, removeToast } = useToast();
     const [bills, setBills] = useState<Bill[]>([]);
     const [projects, setProjects] = useState<Project[]>([]);
@@ -151,6 +153,7 @@ const Bills = () => {
     const [inMonthEnd, setInMonthEnd] = useState('');
     const [payTimeStart, setPayTimeStart] = useState('');
     const [payTimeEnd, setPayTimeEnd] = useState('');
+    const [dealLogIdFilter, setDealLogIdFilter] = useState('');
 
     // Quick selection state for UI
     const [quickInMonth, setQuickInMonth] = useState('');
@@ -198,6 +201,30 @@ const Bills = () => {
             setEnd('');
         }
     };
+
+    // Allow deep-link from receipt bills: /bills?deal_log_id=...&community_ids=...
+    useEffect(() => {
+        const sp = new URLSearchParams(location.search || '');
+        const dealLogId = (sp.get('deal_log_id') || '').trim();
+        const communityIds = (sp.get('community_ids') || '').trim();
+
+        if (dealLogId && dealLogId !== dealLogIdFilter) {
+            setDealLogIdFilter(dealLogId);
+        }
+        if (!dealLogId && dealLogIdFilter) {
+            setDealLogIdFilter('');
+        }
+
+        if (communityIds) {
+            const ids = communityIds.split(',').map(s => s.trim()).filter(Boolean);
+            const normalized = ids.sort().join(',');
+            const current = [...communityFilter].sort().join(',');
+            if (normalized !== current) {
+                setCommunityFilter(ids);
+            }
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [location.search]);
 
 
     // UI state
@@ -582,7 +609,8 @@ const Bills = () => {
                 in_month_start: inMonthStart || undefined,
                 in_month_end: inMonthEnd || undefined,
                 pay_time_start: payTimeStart || undefined,
-                pay_time_end: payTimeEnd || undefined
+                pay_time_end: payTimeEnd || undefined,
+                deal_log_id: dealLogIdFilter ? Number(dealLogIdFilter) : undefined,
             };
             if (debouncedSearchQuery) {
                 params.search = debouncedSearchQuery;
@@ -603,7 +631,7 @@ const Bills = () => {
         } finally {
             setIsLoading(false);
         }
-    }, [page, pageSize, debouncedSearchQuery, statusFilter, communityFilter, chargeItemFilter, customerNameFilter, inMonthStart, inMonthEnd, payTimeStart, payTimeEnd]);
+    }, [page, pageSize, debouncedSearchQuery, statusFilter, communityFilter, chargeItemFilter, customerNameFilter, inMonthStart, inMonthEnd, payTimeStart, payTimeEnd, dealLogIdFilter]);
 
     useEffect(() => {
         const timer = setTimeout(() => {
@@ -778,6 +806,12 @@ const Bills = () => {
             render: (_Value: any, _Record: any, index: number) => (page - 1) * pageSize + index + 1
         },
         { key: 'id' as keyof Bill, title: '账单ID', width: 120 },
+        {
+            key: 'deal_log_id' as keyof Bill,
+            title: '缴费ID',
+            width: 120,
+            render: (val: any) => <span className="text-secondary text-sm">{val ?? '-'}</span>,
+        },
         { key: 'community_name' as keyof Bill, title: '园区', width: 150 },
         { key: 'asset_name' as keyof Bill, title: '资产名称' },
         { key: 'customer_name' as keyof Bill, title: '客户名称' },
@@ -858,6 +892,7 @@ const Bills = () => {
             key: 'actions' as keyof Bill,
             title: '操作',
             width: 130,
+            fixed: 'right' as const,
             render: (_: any, row: Bill) => (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                 <button

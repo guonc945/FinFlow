@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import axios from 'axios';
 import type { AccountingSubject } from '../../types';
+import { API_BASE_URL } from '../../services/apiBase';
 import './AccountingSubjectSelector.css';
 
 interface AccountingSubjectSelectorProps {
@@ -77,7 +78,7 @@ const AccountingSubjectSelector: React.FC<AccountingSubjectSelectorProps> = ({
         setLoading(true);
         try {
             const skip = (currentPage - 1) * pageSize;
-            const res = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/finance/accounting-subjects`, {
+            const res = await axios.get(`${API_BASE_URL}/finance/accounting-subjects`, {
                 params: {
                     skip: skip,
                     limit: pageSize,
@@ -102,7 +103,7 @@ const AccountingSubjectSelector: React.FC<AccountingSubjectSelectorProps> = ({
         setLoading(true);
         try {
             // Try to find an exact match by number
-            const res = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/finance/accounting-subjects`, {
+            const res = await axios.get(`${API_BASE_URL}/finance/accounting-subjects`, {
                 params: {
                     search: text,
                     limit: 10

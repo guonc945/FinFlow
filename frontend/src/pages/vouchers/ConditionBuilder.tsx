@@ -2,13 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { DragEvent } from 'react';
 import { ChevronDown, ChevronRight, Database, GripVertical, Hash, Layers, Plus, Redo2, Sliders, Trash2, Undo2, X } from 'lucide-react';
 import VariablePicker from '../settings/VariablePicker';
+import SourceFieldPickerModal from './SourceFieldPickerModal';
+import type { VoucherFieldModule } from '../../types';
 import './ConditionBuilder.css';
-
-type SourceFieldOption = {
-    label: string;
-    value: string;
-    group?: string;
-};
 
 type ExpressionFunctionOption = {
     key: string;
@@ -91,7 +87,7 @@ interface ConditionBuilderProps {
     onChange: (value: string) => void;
     fields: { label: string; value: string; group?: string }[];
     /** 数据源字段列表（如账单字段） */
-    sourceFields?: SourceFieldOption[];
+    fieldModules?: VoucherFieldModule[] | null;
 }
 
 const generateId = () => Math.random().toString(36).slice(2, 11);
@@ -110,7 +106,7 @@ const OPERATORS: { label: string; value: Operator }[] = [
 
 const HISTORY_LIMIT = 60;
 
-const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fields, sourceFields }) => {
+const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fields, fieldModules }) => {
     const [root, setRoot] = useState<ConditionGroup>({
         id: 'root',
         type: 'group',
@@ -124,6 +120,8 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
     const [collapsedGroupIds, setCollapsedGroupIds] = useState<string[]>([]);
     const [historyPast, setHistoryPast] = useState<string[]>([]);
     const [historyFuture, setHistoryFuture] = useState<string[]>([]);
+    const [sourceFieldPickerOpen, setSourceFieldPickerOpen] = useState(false);
+    const [sourceFieldPickerTarget, setSourceFieldPickerTarget] = useState<{ mode: 'field' | 'value'; nodeId: string } | null>(null);
     const builderRef = useRef<HTMLDivElement | null>(null);
     const lastAutoScrollAtRef = useRef<number>(0);
     const autoExpandTimerRef = useRef<number | null>(null);
@@ -638,15 +636,32 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
                 <div className="rule-content">
                     {/* 字段选择 + 字段格式化 */}
                     <div className="rule-field-group">
-                        <select
-                            value={node.field}
-                            onChange={(e) => updateNode(node.id, { field: e.target.value })}
-                            className="rule-field"
-                        >
-                            {fields.map(f => (
-                                <option key={f.value} value={f.value}>{f.label}</option>
-                            ))}
-                        </select>
+                        {fieldModules && fieldModules.length > 0 ? (
+                            <button
+                                type="button"
+                                className="rule-field cb-adv-field-btn"
+                                onClick={() => {
+                                    setSourceFieldPickerTarget({ mode: 'field', nodeId: node.id });
+                                    setSourceFieldPickerOpen(true);
+                                }}
+                                title="选择字段"
+                            >
+                                <span className="cb-adv-field-text">
+                                    {fields.find(f => f.value === node.field)?.label || node.field || '选择字段'}
+                                </span>
+                                <ChevronDown size={14} />
+                            </button>
+                        ) : (
+                            <select
+                                value={node.field}
+                                onChange={(e) => updateNode(node.id, { field: e.target.value })}
+                                className="rule-field"
+                            >
+                                {fields.map(f => (
+                                    <option key={f.value} value={f.value}>{f.label}</option>
+                                ))}
+                            </select>
+                        )}
                         <div className="cb-field-format-combo" title={fieldFormatter ? `字段格式：${fieldFormatPreview}` : '对字段值做格式化后再比较'}>
                             <Sliders size={11} />
                             <select
@@ -705,38 +720,19 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
                             >
                                 <Hash size={12} />
                             </button>
-                            {/* 数据源字段下拉 */}
-                            {sourceFields && sourceFields.length > 0 && (
+                            {fieldModules && fieldModules.length > 0 && (
                                 <div className="cb-field-combo" title="选择数据源字段">
-                                    <Database size={12} />
-                                    <select
-                                        className="cb-format-select"
-                                        onChange={(e) => {
-                                            const val = e.target.value;
-                                            if (!val) return;
-                                            const text = `{${val}}`;
-                                            updateNode(node.id, { value: (node.value || '') + text });
-                                            e.target.value = '';
+                                    <button
+                                        type="button"
+                                        className="cb-field-trigger"
+                                        onClick={() => {
+                                            setSourceFieldPickerTarget({ mode: 'value', nodeId: node.id });
+                                            setSourceFieldPickerOpen(true);
                                         }}
                                         title="选择数据源字段"
                                     >
-                                        <option value="">选择字段...</option>
-                                        {(() => {
-                                            const groups: Record<string, SourceFieldOption[]> = {};
-                                            sourceFields.forEach(f => {
-                                                const g = f.group || '其他';
-                                                if (!groups[g]) groups[g] = [];
-                                                groups[g]!.push(f);
-                                            });
-                                            return Object.entries(groups).map(([groupName, gFields]) => (
-                                                <optgroup key={groupName} label={groupName}>
-                                                    {gFields.map(f => (
-                                                        <option key={f.value} value={f.value}>{f.label}</option>
-                                                    ))}
-                                                </optgroup>
-                                            ));
-                                        })()}
-                                    </select>
+                                        <Database size={12} />
+                                    </button>
                                 </div>
                             )}
                         </div>
@@ -766,6 +762,29 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
                     }
                 }}
             />
+            {fieldModules && fieldModules.length > 0 && (
+                <SourceFieldPickerModal
+                    open={sourceFieldPickerOpen}
+                    onClose={() => {
+                        setSourceFieldPickerOpen(false);
+                        setSourceFieldPickerTarget(null);
+                    }}
+                    modules={fieldModules}
+                    onPick={(f) => {
+                        const target = sourceFieldPickerTarget;
+                        if (!target) return;
+                        if (target.mode === 'field') {
+                            updateNode(target.nodeId, { field: f.value });
+                        } else {
+                            const node = findNode(root, target.nodeId) as Condition | null;
+                            const prevValue = node && node.type === 'rule' ? (node.value || '') : '';
+                            updateNode(target.nodeId, { value: prevValue + `{${f.value}}` });
+                        }
+                        setSourceFieldPickerOpen(false);
+                        setSourceFieldPickerTarget(null);
+                    }}
+                />
+            )}
         </div>
     );
 };

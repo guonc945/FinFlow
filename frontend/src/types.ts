@@ -60,6 +60,7 @@ export interface Bill {
 
     pay_status_str: string;
     pay_time: number | null;
+    deal_log_id?: number | null;
     created_at: string;
     push_status: 'not_pushed' | 'pushing' | 'success' | 'failed';
     push_status_label: string;
@@ -69,6 +70,46 @@ export interface Bill {
     pushed_at?: string | null;
     message?: string | null;
     account_book_number?: string | null;
+}
+
+export interface VoucherSourceFieldOption {
+    label: string;
+    value: string;
+    group?: string;
+}
+
+export interface VoucherFieldSource {
+    id: string;
+    label: string;
+    source_type: string;
+    fields: VoucherSourceFieldOption[];
+}
+
+export interface VoucherFieldModule {
+    id: string;
+    label: string;
+    note?: string;
+    sources: VoucherFieldSource[];
+}
+
+export interface ReceiptBill {
+    id: string;
+    community_id: number;
+    community_name: string;
+    receipt_id?: string | null;
+    asset_name?: string | null;
+    payee?: string | null;
+    payer_name?: string | null;
+    income_amount: number;
+    amount: number;
+    bill_amount: number;
+    discount_amount: number;
+    late_money_amount: number;
+    deposit_amount: number;
+    pay_channel_str?: string | null;
+    deal_time?: number | null;
+    deal_date?: string | null;
+    deal_type?: number | null;
 }
 
 export interface ChargeItem {

@@ -1,21 +1,54 @@
 import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import {
     Layers, FileText, Settings, Hash, Info, X, Sliders, ArrowUp, ArrowDown, AlertTriangle,
-    Plus, Save, Trash2, ChevronLeft, Database, Copy
+    Plus, Save, Trash2, ChevronLeft, ChevronDown, Database, Copy
 } from 'lucide-react';
 import axios from 'axios';
 import VariablePicker from '../settings/VariablePicker';
 import ConditionBuilder from './ConditionBuilder';
 import AccountSelector from './AccountSelector';
-import type { AccountingSubject } from '../../types';
+import type { AccountingSubject, VoucherFieldModule, VoucherSourceFieldOption } from '../../types';
+import SourceFieldPickerModal from './SourceFieldPickerModal';
 import './VoucherTemplates.css';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL;
+import { API_BASE_URL } from '../../services/apiBase';
+
+const API_BASE = API_BASE_URL;
 
 type SourceFieldOption = {
     label: string;
     value: string;
     group?: string;
+};
+
+const buildDefaultVoucherFieldModules = (billsFields: SourceFieldOption[]): VoucherFieldModule[] => {
+    return [
+        {
+            id: 'marki',
+            label: '马克系统',
+            sources: [
+                {
+                    id: 'bills',
+                    label: '运营账单',
+                    source_type: 'bills',
+                    fields: billsFields as unknown as VoucherSourceFieldOption[],
+                }
+            ]
+        },
+        {
+            id: 'oa',
+            label: 'OA系统',
+            note: '暂未接入，缺省处理',
+            sources: [
+                {
+                    id: 'oa_default',
+                    label: '缺省',
+                    source_type: 'oa',
+                    fields: [],
+                }
+            ]
+        }
+    ];
 };
 
 
@@ -210,7 +243,7 @@ const ExpressionInputWithActions = ({
     onChange,
     onGlobalFocus,
     onOpenPicker,
-    sourceFields,
+    fieldModules,
     useBraces = true,
     size = 'normal',
     placeholder,
@@ -220,13 +253,14 @@ const ExpressionInputWithActions = ({
     onChange: (val: string) => void,
     onGlobalFocus: (ins: (text: string) => void) => void,
     onOpenPicker: () => void,
-    sourceFields?: any[] | null,
+    fieldModules?: VoucherFieldModule[] | null,
     useBraces?: boolean,
     size?: 'normal' | 'mini',
     placeholder?: string,
     className?: string
 }) => {
     const expRef = useRef<{ insert: (t: string) => void }>(null);
+    const [fieldPickerOpen, setFieldPickerOpen] = useState(false);
 
     return (
         <div className={`expression-input-group ${size === 'mini' ? 'mini' : ''}`}>
@@ -245,42 +279,32 @@ const ExpressionInputWithActions = ({
                 }}>
                     <Hash size={size === 'mini' ? 12 : 14} />
                 </button>
-                {sourceFields && (
+                {fieldModules && fieldModules.length > 0 && (
                     <div className="source-field-combo" title="选择数据源字段">
-                        <Database size={size === 'mini' ? 12 : 14} />
-                        <select
-                            className="source-field-select"
-                            onChange={(e) => {
-                                const val = e.target.value;
-                                if (!val) return;
-                                const text = useBraces ? `{${val}}` : val;
+                        <button
+                            type="button"
+                            className="source-field-trigger"
+                            onClick={() => setFieldPickerOpen(true)}
+                            title="选择数据源字段"
+                        >
+                            <Database size={size === 'mini' ? 12 : 14} />
+                            <ChevronDown size={size === 'mini' ? 12 : 14} />
+                        </button>
+                        <SourceFieldPickerModal
+                            open={fieldPickerOpen}
+                            onClose={() => setFieldPickerOpen(false)}
+                            modules={fieldModules}
+                            onPick={(f) => {
+                                const text = useBraces ? `{${f.value}}` : f.value;
                                 if (expRef.current) {
                                     expRef.current.insert(text);
                                     onGlobalFocus(expRef.current.insert);
                                 } else {
                                     onChange(value + text);
                                 }
-                                e.target.value = '';
+                                setFieldPickerOpen(false);
                             }}
-                            title="选择数据源字段"
-                        >
-                            <option value="">选择字段...</option>
-                            {(() => {
-                                const groups: Record<string, typeof sourceFields> = {};
-                                sourceFields.forEach(f => {
-                                    const g = (f as any).group || '其他';
-                                    if (!groups[g]) groups[g] = [];
-                                    groups[g]!.push(f);
-                                });
-                                return Object.entries(groups).map(([groupName, fields]) => (
-                                    <optgroup key={groupName} label={groupName}>
-                                        {fields!.map(f => (
-                                            <option key={f.value} value={f.value}>{f.label}</option>
-                                        ))}
-                                    </optgroup>
-                                ));
-                            })()}
-                        </select>
+                        />
                     </div>
                 )}
             </div>
@@ -294,7 +318,7 @@ const DimensionFormEditor = ({
     onFocusField,
     onOpenPicker,
     dataSourceType,
-    sourceFields,
+    fieldModules,
     requiredKeys
 }: {
     value: string | null | undefined,
@@ -302,7 +326,7 @@ const DimensionFormEditor = ({
     onFocusField: (insert: (text: string) => void) => void,
     onOpenPicker: () => void,
     dataSourceType?: string | null,
-    sourceFields?: SourceFieldOption[],
+    fieldModules?: VoucherFieldModule[] | null,
     requiredKeys?: string[]
 }) => {
     const [rows, setRows] = useState(parseJsonToRows(value));
@@ -383,7 +407,7 @@ const DimensionFormEditor = ({
                                     onChange={val => handleRowChange(idx, 'value', val)}
                                     onGlobalFocus={onFocusField}
                                     onOpenPicker={onOpenPicker}
-                                    sourceFields={dataSourceType === 'bills' ? (sourceFields || FALLBACK_BILL_SOURCE_FIELDS) : null}
+                                    fieldModules={(!dataSourceType || dataSourceType === 'bills') ? (fieldModules || buildDefaultVoucherFieldModules(FALLBACK_BILL_SOURCE_FIELDS)) : null}
                                 />
                             </td>
                             <td>
@@ -486,11 +510,14 @@ const VoucherTemplates = () => {
     const [saveErrors, setSaveErrors] = useState<string[]>([]);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [billSourceFields, setBillSourceFields] = useState<SourceFieldOption[]>(FALLBACK_BILL_SOURCE_FIELDS);
+    const [voucherFieldModules, setVoucherFieldModules] = useState<VoucherFieldModule[]>(
+        buildDefaultVoucherFieldModules(FALLBACK_BILL_SOURCE_FIELDS)
+    );
 
     useEffect(() => {
         fetchSubjects();
         fetchTemplates();
-        fetchBillSourceFields();
+        fetchVoucherFieldModules();
     }, []);
 
     const fetchSubjects = async () => {
@@ -544,6 +571,30 @@ const VoucherTemplates = () => {
         }
     };
 
+    const fetchVoucherFieldModules = async () => {
+        try {
+            const res = await axios.get(`${API_BASE}/vouchers/source-modules`);
+            const modules = res?.data?.modules as VoucherFieldModule[] | undefined;
+            if (Array.isArray(modules) && modules.length > 0) {
+                setVoucherFieldModules(modules);
+
+                // Keep the legacy flat list in sync for existing logic (filters/labels etc).
+                const marki = modules.find(m => String(m?.id) === 'marki') || modules[0];
+                const billsSource = (marki?.sources || []).find(s => String(s?.id) === 'bills' || String(s?.source_type) === 'bills');
+                const dynamicFields = normalizeSourceFields(billsSource?.fields ?? []);
+                if (dynamicFields.length > 0) {
+                    setBillSourceFields(dynamicFields);
+                }
+                return;
+            }
+        } catch (err) {
+            console.warn('Failed to fetch voucher source modules, falling back to source-fields.', err);
+        }
+
+        // Fallback: existing endpoint, then wrap into modules for advanced picker UI.
+        await fetchBillSourceFields();
+    };
+
     const fetchBillSourceFields = async () => {
         try {
             const res = await axios.get(`${API_BASE}/vouchers/source-fields`, {
@@ -551,7 +602,9 @@ const VoucherTemplates = () => {
             });
             const dynamicFields = normalizeSourceFields(res?.data?.fields ?? res?.data ?? []);
             if (dynamicFields.length === 0) return;
-            setBillSourceFields(mergeSourceFields(FALLBACK_BILL_SOURCE_FIELDS, dynamicFields));
+            const merged = mergeSourceFields(FALLBACK_BILL_SOURCE_FIELDS, dynamicFields);
+            setBillSourceFields(merged);
+            setVoucherFieldModules(buildDefaultVoucherFieldModules(merged));
         } catch (err) {
             console.warn('Failed to fetch dynamic bill source fields, fallback to built-in list.', err);
         }
@@ -927,7 +980,7 @@ const VoucherTemplates = () => {
                                             value={currentTemplate.trigger_condition}
                                             onChange={(val) => setCurrentTemplate({ ...currentTemplate, trigger_condition: val })}
                                             fields={billSourceFields}
-                                            sourceFields={billSourceFields}
+                                            fieldModules={voucherFieldModules}
                                         />
                                     </div>
                                 </div>
@@ -1001,7 +1054,7 @@ const VoucherTemplates = () => {
                                             onChange={val => setCurrentTemplate({ ...currentTemplate, bizdate_expr: val })}
                                             onGlobalFocus={ins => setLastFocusedField({ insert: ins })}
                                             onOpenPicker={() => setIsVariablePickerOpen(true)}
-                                            sourceFields={currentTemplate.source_type === 'bills' ? billSourceFields : null}
+                                            fieldModules={(!currentTemplate.source_type || currentTemplate.source_type === 'bills') ? voucherFieldModules : null}
                                         />
                                     </div>
                                     <div className="field-item">
@@ -1011,7 +1064,7 @@ const VoucherTemplates = () => {
                                             onChange={val => setCurrentTemplate({ ...currentTemplate, bookeddate_expr: val })}
                                             onGlobalFocus={ins => setLastFocusedField({ insert: ins })}
                                             onOpenPicker={() => setIsVariablePickerOpen(true)}
-                                            sourceFields={currentTemplate.source_type === 'bills' ? billSourceFields : null}
+                                            fieldModules={(!currentTemplate.source_type || currentTemplate.source_type === 'bills') ? voucherFieldModules : null}
                                         />
                                     </div>
                                 </div>
@@ -1049,7 +1102,7 @@ const VoucherTemplates = () => {
                                                         onChange={val => updateRule(idx, { summary_expr: val })}
                                                         onGlobalFocus={ins => setLastFocusedField({ insert: ins })}
                                                         onOpenPicker={() => setIsVariablePickerOpen(true)}
-                                                        sourceFields={currentTemplate.source_type === 'bills' ? billSourceFields : null}
+                                                        fieldModules={(!currentTemplate.source_type || currentTemplate.source_type === 'bills') ? voucherFieldModules : null}
                                                     />
                                                 </td>
                                                 <td>
@@ -1078,7 +1131,7 @@ const VoucherTemplates = () => {
                                                         onChange={val => updateRule(idx, { amount_expr: val })}
                                                         onGlobalFocus={ins => setLastFocusedField({ insert: ins })}
                                                         onOpenPicker={() => setIsVariablePickerOpen(true)}
-                                                        sourceFields={currentTemplate.source_type === 'bills' ? billSourceFields : null}
+                                                        fieldModules={(!currentTemplate.source_type || currentTemplate.source_type === 'bills') ? voucherFieldModules : null}
                                                     />
                                                 </td>
                                                 <td>
@@ -1178,7 +1231,7 @@ const VoucherTemplates = () => {
                                                 onFocusField={(insert) => setLastFocusedField({ insert })}
                                                 onOpenPicker={() => setIsVariablePickerOpen(true)}
                                                 dataSourceType={currentTemplate.source_type}
-                                                sourceFields={billSourceFields}
+                                                fieldModules={voucherFieldModules}
                                                 requiredKeys={(() => {
                                                     const accountCode = currentTemplate.rules[currentRuleIndex].account_code;
                                                     const subject = subjects.find(s => s.number === accountCode);
@@ -1213,7 +1266,7 @@ const VoucherTemplates = () => {
                                                 onFocusField={(insert) => setLastFocusedField({ insert })}
                                                 onOpenPicker={() => setIsVariablePickerOpen(true)}
                                                 dataSourceType={currentTemplate.source_type}
-                                                sourceFields={billSourceFields}
+                                                fieldModules={voucherFieldModules}
                                             />
                                         </div>
                                     )}

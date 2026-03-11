@@ -6,6 +6,7 @@ import './Credentials.css';
 import type { ExternalService } from './types';
 import CredentialModal from './CredentialModal';
 import { useToast, ToastContainer } from '../../../components/Toast';
+import { API_BASE_URL } from '../../../services/apiBase';
 
 interface CredentialsManagerProps {
     hideHeader?: boolean;
@@ -24,7 +25,7 @@ const CredentialsManager: React.FC<CredentialsManagerProps> = ({ hideHeader = fa
 
     const fetchServices = async () => {
         try {
-            const res = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/external/services`);
+            const res = await axios.get(`${API_BASE_URL}/external/services`);
             setServices(res.data);
         } catch (error) {
             console.error('Failed to fetch services:', error);
@@ -34,7 +35,7 @@ const CredentialsManager: React.FC<CredentialsManagerProps> = ({ hideHeader = fa
     const handleDeleteService = async (id: number) => {
         if (!confirm('确定要删除此凭证配置吗？删除后相关集成将和服务断开。')) return;
         try {
-            await axios.delete(`${import.meta.env.VITE_API_BASE_URL}/external/services/${id}`);
+            await axios.delete(`${API_BASE_URL}/external/services/${id}`);
             showToast('success', '删除成功', '凭证配置已移除');
             fetchServices();
         } catch (error) {
@@ -45,9 +46,9 @@ const CredentialsManager: React.FC<CredentialsManagerProps> = ({ hideHeader = fa
     const handleSaveService = async (serviceData: Partial<ExternalService>) => {
         try {
             if (serviceData.id) {
-                await axios.put(`${import.meta.env.VITE_API_BASE_URL}/external/services/${serviceData.id}`, serviceData);
+                await axios.put(`${API_BASE_URL}/external/services/${serviceData.id}`, serviceData);
             } else {
-                await axios.post(`${import.meta.env.VITE_API_BASE_URL}/external/services`, serviceData);
+                await axios.post(`${API_BASE_URL}/external/services`, serviceData);
             }
             setIsEditingService(false);
             showToast('success', '保存成功', '凭证配置已更新');
@@ -60,7 +61,7 @@ const CredentialsManager: React.FC<CredentialsManagerProps> = ({ hideHeader = fa
 
     const handleRefreshToken = async (id: number) => {
         try {
-            const res = await axios.post(`${import.meta.env.VITE_API_BASE_URL}/external/services/${id}/token`);
+            const res = await axios.post(`${API_BASE_URL}/external/services/${id}/token`);
             if (res.data.success) {
                 showToast('success', '凭证刷新成功', `有效期至: ${new Date(res.data.expires_at).toLocaleString()}`);
                 fetchServices();

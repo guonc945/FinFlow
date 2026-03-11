@@ -1,5 +1,9 @@
 /* Houses page - Kingdee house mapping modal (scoped) */
 
+.table-area-wrapper.houses-table-area-wrapper {
+    margin-bottom: 0;
+}
+
 .kd-house-mapping-overlay {
     position: fixed;
     inset: 0;

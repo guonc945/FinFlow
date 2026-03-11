@@ -84,7 +84,7 @@ const RouteTabs: React.FC<{ getPageTitle: (path: string) => { title: string } }>
                     <div
                         key={tab.key}
                         className={classNames('route-tab-pane', { 'pane-active': location.pathname === tab.path })}
-                        style={{ display: location.pathname === tab.path ? 'block' : 'none', height: '100%' }}
+                        style={{ display: location.pathname === tab.path ? 'flex' : 'none' }}
                     >
                         {tab.path === location.pathname ? outlet : tab.element}
                     </div>

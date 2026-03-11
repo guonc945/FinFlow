@@ -10,6 +10,7 @@ import {
 import axios from 'axios';
 import JsonEditor from '../../../components/data/JsonEditor';
 import VariablePicker from '../../settings/VariablePicker';
+import { API_BASE_URL } from '../../../services/apiBase';
 import './APIManager.css';
 
 interface ExternalApi {
@@ -104,7 +105,7 @@ const APIManager = () => {
 
     const fetchServices = async () => {
         try {
-            const res = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/external/services`);
+            const res = await axios.get(`${API_BASE_URL}/external/services`);
             setServices(res.data);
         } catch (error) {
             console.error('Failed to fetch services:', error);
@@ -176,9 +177,9 @@ const APIManager = () => {
             };
 
             if (currentApi.id) {
-                await axios.put(`${import.meta.env.VITE_API_BASE_URL}/external/apis/${currentApi.id}`, payload);
+                await axios.put(`${API_BASE_URL}/external/apis/${currentApi.id}`, payload);
             } else {
-                await axios.post(`${import.meta.env.VITE_API_BASE_URL}/external/services/${targetServiceId}/apis`, payload);
+                await axios.post(`${API_BASE_URL}/external/services/${targetServiceId}/apis`, payload);
             }
 
             setIsEditing(false);
@@ -201,7 +202,7 @@ const APIManager = () => {
                 request_headers: headersObj,
                 request_body: currentApi.method === 'GET' ? JSON.parse(rowsToQueryJson(queryRows) || '{}') : JSON.parse(currentApi.request_body || '{}')
             };
-            const res = await axios.post(`${import.meta.env.VITE_API_BASE_URL}/archives/test`, payload);
+            const res = await axios.post(`${API_BASE_URL}/archives/test`, payload);
             setTestResult(res.data);
         } catch (err: any) {
             setTestResult({
@@ -216,7 +217,7 @@ const APIManager = () => {
     const handleDeleteApi = async (id: number) => {
         if (!confirm('确定删除此 API 接口吗？')) return;
         try {
-            await axios.delete(`${import.meta.env.VITE_API_BASE_URL}/external/apis/${id}`);
+            await axios.delete(`${API_BASE_URL}/external/apis/${id}`);
             fetchServices();
         } catch (error) {
             console.error('Delete failed', error);
@@ -245,7 +246,7 @@ const APIManager = () => {
                         is_active: true
                     };
 
-                    await axios.post(`${import.meta.env.VITE_API_BASE_URL}/external/services/${importTargetServiceId}/apis`, apiData);
+                    await axios.post(`${API_BASE_URL}/external/services/${importTargetServiceId}/apis`, apiData);
                     count++;
                 }
             }

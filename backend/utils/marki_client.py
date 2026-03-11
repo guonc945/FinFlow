@@ -241,3 +241,26 @@ def get_api_url(api_name: str, preloaded_vars: dict = None) -> str:
         return f"{base}/{path}"
     finally:
         db.close()
+
+
+def get_api_url_by_id(api_id: int, preloaded_vars: dict = None) -> str:
+    """Resolve Marki API URL by `external_apis.id`."""
+    db = SessionLocal()
+    try:
+        service = db.query(ExternalService).filter_by(service_name="marki").first()
+        if not service:
+            raise ValueError("Marki service not found in database")
+
+        api = db.query(ExternalApi).filter(ExternalApi.id == int(api_id)).first()
+        if not api:
+            raise ValueError(f"API id={api_id} not found in database")
+
+        base = (service.base_url or "").rstrip("/")
+        path = (api.url_path or "").lstrip("/")
+
+        from utils.variable_parser import resolve_variables
+        path = resolve_variables(path, db, preloaded_vars=preloaded_vars)
+
+        return f"{base}/{path}"
+    finally:
+        db.close()

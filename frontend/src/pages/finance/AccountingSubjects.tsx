@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import axios from 'axios';
 import { useToast, ToastContainer } from '../../components/Toast';
+import { API_BASE_URL } from '../../services/apiBase';
 import '../bills/Bills.css';
 import './AccountingSubjects.css';
 import './AccountingSubjectsNav.css';
@@ -73,7 +74,7 @@ const AccountingSubjects = () => {
         setLoading(true);
         try {
             const skip = (currentPage - 1) * pageSize;
-            const res = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/finance/accounting-subjects`, {
+            const res = await axios.get(`${API_BASE_URL}/finance/accounting-subjects`, {
                 params: {
                     skip: skip,
                     limit: pageSize,
@@ -101,7 +102,7 @@ const AccountingSubjects = () => {
         setIsConfirmModalOpen(false);
         setLoading(true);
         try {
-            await axios.post(`${import.meta.env.VITE_API_BASE_URL}/finance/accounting-subjects/sync`, {});
+            await axios.post(`${API_BASE_URL}/finance/accounting-subjects/sync`, {});
             showToast('success', '同步任务已提交', '系统正在后台处理数据同步，请在 1-2 分钟后尝试刷新列表。');
             setTimeout(fetchSubjects, 3000);
         } catch (err: any) {
@@ -165,7 +166,7 @@ const AccountingSubjects = () => {
     const totalPages = Math.ceil(total / pageSize);
 
     return (
-        <div className="page-container fade-in">
+        <div className="page-container fade-in accounting-subjects-page">
             <div className={`bills-filter-section ${isFilterCollapsed ? 'collapsed' : ''}`}>
                 <div className="filter-header-row">
                     <div className="flex items-center gap-2">

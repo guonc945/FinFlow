@@ -15,12 +15,14 @@ const lazyWithPreload = <T extends ComponentType<any>>(loader: Loader<T>): LazyW
 export const Login = lazyWithPreload(() => import('../pages/auth/Login'));
 export const Dashboard = lazyWithPreload(() => import('../pages/dashboard'));
 export const Bills = lazyWithPreload(() => import('../pages/bills'));
+export const ReceiptBills = lazyWithPreload(() => import('../pages/receipt-bills'));
 export const Projects = lazyWithPreload(() => import('../pages/projects'));
 export const ChargeItems = lazyWithPreload(() => import('../pages/charge-items'));
 export const Reports = lazyWithPreload(() => import('../pages/reports'));
 export const Settings = lazyWithPreload(() => import('../pages/settings'));
 export const Users = lazyWithPreload(() => import('../pages/users'));
 export const Organizations = lazyWithPreload(() => import('../pages/organizations'));
+export const Account = lazyWithPreload(() => import('../pages/account'));
 export const CredentialsManager = lazyWithPreload(() => import('../pages/integrations/credentials'));
 export const APIManager = lazyWithPreload(() => import('../pages/integrations/apis'));
 export const VoucherTemplates = lazyWithPreload(() => import('../pages/vouchers/VoucherTemplates'));
@@ -40,6 +42,7 @@ const routePreloaders: Record<string, () => Promise<unknown>> = {
     '/login': Login.preload,
     '/': Dashboard.preload,
     '/bills': Bills.preload,
+    '/receipt-bills': ReceiptBills.preload,
     '/houses': Houses.preload,
     '/residents': Residents.preload,
     '/parks': Parks.preload,
@@ -56,6 +59,7 @@ const routePreloaders: Record<string, () => Promise<unknown>> = {
     '/charge-items': ChargeItems.preload,
     '/users': Users.preload,
     '/organizations': Organizations.preload,
+    '/account': Account.preload,
     '/integrations': CredentialsManager.preload,
     '/integrations/credentials': CredentialsManager.preload,
     '/integrations/apis': APIManager.preload,

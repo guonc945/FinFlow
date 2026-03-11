@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { RefreshCw, CheckCircle, AlertTriangle, Link2, ShieldCheck, Clock, Save, Edit3, Key, Trash2 } from 'lucide-react';
 import axios from 'axios';
+import { API_BASE_URL } from '../../services/apiBase';
 import './Integrations.css';
 
 interface ExtStatus {
@@ -27,8 +28,8 @@ const Integrations = () => {
     const fetchStatuses = async () => {
         try {
             const [kdRes, mkRes] = await Promise.all([
-                axios.get(`${import.meta.env.VITE_API_BASE_URL}/external/kingdee/status`),
-                axios.get(`${import.meta.env.VITE_API_BASE_URL}/external/marki/status`)
+                axios.get(`${API_BASE_URL}/external/kingdee/status`),
+                axios.get(`${API_BASE_URL}/external/marki/status`)
             ]);
             setStatus(kdRes.data);
             setMarkiStatus(mkRes.data);
@@ -44,7 +45,7 @@ const Integrations = () => {
     const handleRefreshKingdee = async () => {
         setRefreshing(true);
         try {
-            await axios.post(`${import.meta.env.VITE_API_BASE_URL}/external/kingdee/refresh`);
+            await axios.post(`${API_BASE_URL}/external/kingdee/refresh`);
             await fetchStatuses();
             alert('刷新成功');
         } catch (error) {
@@ -58,7 +59,7 @@ const Integrations = () => {
     const handleRefreshMarki = async () => {
         setMarkiRefreshing(true);
         try {
-            await axios.post(`${import.meta.env.VITE_API_BASE_URL}/external/marki/refresh`);
+            await axios.post(`${API_BASE_URL}/external/marki/refresh`);
             await fetchStatuses();
             alert('马克联同步凭证已更新');
         } catch (error) {
@@ -71,7 +72,7 @@ const Integrations = () => {
 
     const handleSaveMarkiConfig = async () => {
         try {
-            await axios.post(`${import.meta.env.VITE_API_BASE_URL}/external/marki/config`, {
+            await axios.post(`${API_BASE_URL}/external/marki/config`, {
                 app_id: markiUser,
                 app_secret: markiPassword
             });
@@ -87,10 +88,10 @@ const Integrations = () => {
         if (!confirm('确定要删除马克联系统集成吗？这将移除所有关联的 API 凭证。')) return;
         try {
             // Find the ID for 'marki' service first or use a known endpoint
-            const res = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/external/services`);
+            const res = await axios.get(`${API_BASE_URL}/external/services`);
             const markiService = res.data.find((s: any) => s.service_name === 'marki');
             if (markiService) {
-                await axios.delete(`${import.meta.env.VITE_API_BASE_URL}/external/services/${markiService.id}`);
+                await axios.delete(`${API_BASE_URL}/external/services/${markiService.id}`);
                 alert('马克联配置已删除');
                 fetchStatuses();
             }

@@ -9,12 +9,14 @@ import {
   Login,
   Dashboard,
   Bills,
+  ReceiptBills,
   Projects,
   ChargeItems,
   Reports,
   Settings,
   Users,
   Organizations,
+  Account,
   CredentialsManager,
   APIManager,
   VoucherTemplates,
@@ -87,6 +89,7 @@ function App() {
           <Route path="/" element={<MainLayout />}>
             <Route index element={<RouteElement variant="dashboard"><Dashboard /></RouteElement>} />
             <Route path="bills" element={<RouteElement variant="table"><Bills /></RouteElement>} />
+            <Route path="receipt-bills" element={<RouteElement variant="table"><ReceiptBills /></RouteElement>} />
             <Route path="houses" element={<RouteElement variant="table"><Houses /></RouteElement>} />
             <Route path="residents" element={<RouteElement variant="table"><Residents /></RouteElement>} />
             <Route path="parks" element={<RouteElement variant="table"><Parks /></RouteElement>} />
@@ -99,6 +102,7 @@ function App() {
             <Route path="auxiliary-data-categories" element={<RouteElement variant="table"><AuxiliaryDataCategoriesPage /></RouteElement>} />
             <Route path="account-books" element={<RouteElement variant="table"><AccountBookPage /></RouteElement>} />
             <Route path="bank-accounts" element={<RouteElement variant="table"><BankAccountsPage /></RouteElement>} />
+            <Route path="account" element={<RouteElement variant="settings"><Account /></RouteElement>} />
 
             <Route element={<AdminRoute />}>
               <Route path="projects" element={<RouteElement variant="table"><Projects /></RouteElement>} />

@@ -77,7 +77,7 @@ const Login = () => {
                 </form>
 
                 <div className="login-footer">
-                    <p>技术支持：鼎力科技团队</p>
+                    <p>技术支持：郭年超</p>
                 </div>
             </div>
         </div>

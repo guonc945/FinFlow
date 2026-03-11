@@ -9,6 +9,8 @@ interface Column<T> {
     title: ReactNode;
     render?: (value: any, record: T, index: number) => ReactNode;
     width?: number | string;
+    fixed?: 'left' | 'right';
+    className?: string;
 }
 
 interface DataTableProps<T> {
@@ -82,7 +84,14 @@ const DataTable = <T extends Record<string, any>>({
                                         key={String(column.key)}
                                         onClick={() => handleSort(column.key)}
                                         style={{ width: column.width }}
-                                        className="sortable-header"
+                                        className={classNames(
+                                            'sortable-header',
+                                            column.className,
+                                            {
+                                                'dt-sticky-left': column.fixed === 'left',
+                                                'dt-sticky-right': column.fixed === 'right',
+                                            }
+                                        )}
                                     >
                                         <div className="th-content">
                                             {column.title}
@@ -102,7 +111,16 @@ const DataTable = <T extends Record<string, any>>({
                                     className={classNames({ 'clickable-row': !!onRowClick })}
                                 >
                                     {columns.map((column) => (
-                                        <td key={String(column.key)}>
+                                        <td
+                                            key={String(column.key)}
+                                            className={classNames(
+                                                column.className,
+                                                {
+                                                    'dt-sticky-left': column.fixed === 'left',
+                                                    'dt-sticky-right': column.fixed === 'right',
+                                                }
+                                            )}
+                                        >
                                             {column.render
                                                 ? column.render(row[column.key], row, rowIndex)
                                                 : String(row[column.key] || '-')

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { RefreshCw, Pencil, CloudSync, X, Save, AlertCircle, Search, ChevronDown } from 'lucide-react';
+import { ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight } from 'lucide-react';
 import DataTable from '../../components/data/DataTable';
 import { getChargeItems, updateChargeItem, getProjects, syncChargeItems } from '../../services/api';
 import type { ChargeItem } from '../../types';
@@ -14,6 +15,10 @@ const ChargeItems = () => {
     const [isSyncing, setIsSyncing] = useState(false);
     const [editingItem, setEditingItem] = useState<ChargeItem | null>(null);
     const [isSaving, setIsSaving] = useState(false);
+
+    // Pagination state
+    const [page, setPage] = useState(1);
+    const [pageSize, setPageSize] = useState(25);
 
     const [projects, setProjects] = useState<any[]>([]);
     const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
@@ -68,6 +73,7 @@ const ChargeItems = () => {
         try {
             const data = await getChargeItems();
             setItems(data);
+            setPage(1);
         } catch (error) {
             console.error('Failed to fetch items:', error);
         } finally {
@@ -175,6 +181,16 @@ const ChargeItems = () => {
         );
     };
 
+    const totalRecords = items.length;
+    const totalPages = Math.max(1, Math.ceil(totalRecords / pageSize));
+    const startIndex = (page - 1) * pageSize;
+    const endIndex = Math.min(startIndex + pageSize, totalRecords);
+    const pagedItems = items.slice(startIndex, startIndex + pageSize);
+
+    useEffect(() => {
+        if (page > totalPages) setPage(totalPages);
+    }, [page, totalPages]);
+
     return (
         <div className="page-container fade-in">
             <div className="bills-filter-section mb-6">
@@ -233,12 +249,70 @@ const ChargeItems = () => {
                 </div>
             </div>
 
-            <DataTable
-                columns={columns}
-                data={items}
-                loading={isLoading}
-                title="收费项目列表"
-            />
+            <div className="table-area-wrapper">
+                <DataTable
+                    columns={columns}
+                    data={pagedItems}
+                    loading={isLoading}
+                    title={
+                        <div className="flex items-center justify-between w-full">
+                            <span>收费项目列表</span>
+                            <span className="text-xs font-normal text-secondary">
+                                {totalRecords === 0 ? '暂无数据' : `显示第 ${startIndex + 1} - ${endIndex} 条，共 ${totalRecords} 条`}
+                            </span>
+                        </div>
+                    }
+                />
+
+                <div className="pagination-footer">
+                    <div className="pagination-info">共 {totalRecords} 条记录</div>
+
+                    <div className="pagination-controls">
+                        <select
+                            className="page-select"
+                            value={pageSize}
+                            onChange={(e) => {
+                                setPageSize(Number(e.target.value));
+                                setPage(1);
+                            }}
+                        >
+                            <option value={10}>10 条/页</option>
+                            <option value={25}>25 条/页</option>
+                            <option value={50}>50 条/页</option>
+                            <option value={100}>100 条/页</option>
+                        </select>
+
+                        <div className="flex gap-1 ml-2">
+                            <button className="page-btn" disabled={page === 1} onClick={() => setPage(1)}>
+                                <ChevronsLeft size={16} />
+                            </button>
+                            <button className="page-btn" disabled={page === 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+                                <ChevronLeft size={16} />
+                            </button>
+
+                            <button className="page-btn active">{page}</button>
+                            {page < totalPages && (
+                                <button className="page-btn" onClick={() => setPage((p) => p + 1)}>
+                                    {page + 1}
+                                </button>
+                            )}
+                            {page + 1 < totalPages && <span className="px-2 text-secondary">...</span>}
+                            {page + 1 < totalPages && (
+                                <button className="page-btn" onClick={() => setPage(totalPages)}>
+                                    {totalPages}
+                                </button>
+                            )}
+
+                            <button className="page-btn" disabled={page === totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>
+                                <ChevronRight size={16} />
+                            </button>
+                            <button className="page-btn" disabled={page === totalPages} onClick={() => setPage(totalPages)}>
+                                <ChevronsRight size={16} />
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
             {/* Edit Modal */}
             {editingItem && (

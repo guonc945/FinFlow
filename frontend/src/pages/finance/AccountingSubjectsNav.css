@@ -52,33 +52,25 @@
     -webkit-backdrop-filter: blur(10px);
 }
 
-/* --- Extreme Height Optimization --- */
-/* Override global page-content padding slightly when this view is active */
-.page-content {
-    padding: 0.75rem 1rem !important;
-    /* Smaller globally when this nav is active? */
-    padding-bottom: 0.25rem !important;
-}
-
-.page-container {
-    /* Nearly fill the entire remaining vertical space */
-    height: calc(100vh - var(--header-height, 64px) - 1.25rem) !important;
+/* --- Extreme Height Optimization (Scoped) --- */
+/* NOTE: this file is imported by the accounting-subjects page and should not affect other pages. */
+.accounting-subjects-page {
     gap: 0.5rem !important;
     padding: 0 !important;
     margin: 0 !important;
 }
 
-.table-area-wrapper {
+.accounting-subjects-page .table-area-wrapper {
     height: 100% !important;
     flex: 1 !important;
 }
 
-.type-nav-sidebar {
+.accounting-subjects-page .type-nav-sidebar {
     height: 100% !important;
 }
 
 /* Make table container also full height */
-.table-container {
+.accounting-subjects-page .table-container {
     flex: 1 !important;
     height: 100% !important;
 }

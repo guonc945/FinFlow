@@ -13,6 +13,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional, Set
 import models, schemas, database
 from fetch_bills import sync_bills
+from fetch_receipt_bills import sync_receipt_bills
 from fetch_charge_items import sync_charge_items
 from fetch_houses import sync_houses
 from fetch_residents import sync_residents
@@ -557,11 +558,26 @@ def _reset_bill_voucher_binding_impl(
 
 origins_raw = os.getenv("ALLOWED_ORIGINS", "")
 origins = [o.strip() for o in origins_raw.split(",") if o.strip()]
+allow_all_origins = "*" in origins
+if not origins:
+    origins = [
+        "http://localhost:5273",
+        "http://127.0.0.1:5273",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:8100",
+        "http://127.0.0.1:8100",
+    ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
+    allow_origins=["*"] if allow_all_origins else origins,
+    # Support dev access via LAN IP without having to enumerate it in ALLOWED_ORIGINS.
+    allow_origin_regex=None
+    if allow_all_origins
+    else r"^http://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$",
+    # This project uses Authorization header (Bearer token) instead of cookies.
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -1256,6 +1272,7 @@ def get_bills(
     in_month_end: Optional[str] = None,
     pay_time_start: Optional[str] = None,
     pay_time_end: Optional[str] = None,
+    deal_log_id: Optional[int] = None,
     skip: int = 0, 
     limit: int = 25, 
     x_account_book_number: Optional[str] = Header(None, alias="X-Account-Book-Number"),
@@ -1367,6 +1384,12 @@ def get_bills(
         except ValueError:
             pass
 
+    if deal_log_id is not None:
+        try:
+            query = query.filter(models.Bill.deal_log_id == int(deal_log_id))
+        except Exception:
+            pass
+
     if search:
         search_filter = or_(
             models.Bill.id.ilike(f"%{search}%"),
@@ -1402,6 +1425,7 @@ def get_bills(
             "pay_status_str": bill.pay_status_str,
             "pay_time": bill.pay_time,
             "receive_date": bill.receive_date,
+            "deal_log_id": bill.deal_log_id,
             "created_at": bill.created_at,
             "customer_name": customer_name or "",
             **status_map.get(
@@ -1529,6 +1553,223 @@ def get_bill(
         "remark": bill.remark,
         "receipt_id": bill.receipt_id,
         **push_status,
+    }
+
+
+# ===================== Receipt Bills (收款账单) =====================
+
+@app.get("/api/receipt-bills")
+def get_receipt_bills(
+    search: Optional[str] = None,
+    community_ids: Optional[str] = None,
+    deal_date_start: Optional[str] = None,
+    deal_date_end: Optional[str] = None,
+    pay_channel_str: Optional[str] = None,
+    payee: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 25,
+    db: Session = Depends(get_db),
+    allowed_community_ids: List[int] = Depends(get_allowed_community_ids),
+):
+    from sqlalchemy import func as sa_func, cast, String as SAString
+
+    payer_subq = (
+        db.query(
+            models.ReceiptBillUser.receipt_bill_id,
+            models.ReceiptBillUser.community_id,
+            sa_func.string_agg(models.ReceiptBillUser.user_name, ", ").label("payer_name"),
+        )
+        .group_by(models.ReceiptBillUser.receipt_bill_id, models.ReceiptBillUser.community_id)
+        .subquery()
+    )
+
+    query = (
+        db.query(
+            models.ReceiptBill,
+            models.ProjectList.proj_name,
+            payer_subq.c.payer_name,
+        )
+        .outerjoin(models.ProjectList, models.ReceiptBill.community_id == models.ProjectList.proj_id)
+        .outerjoin(
+            payer_subq,
+            (models.ReceiptBill.id == payer_subq.c.receipt_bill_id)
+            & (models.ReceiptBill.community_id == payer_subq.c.community_id),
+        )
+    )
+
+    if allowed_community_ids:
+        query = query.filter(models.ReceiptBill.community_id.in_(allowed_community_ids))
+    else:
+        return {"total": 0, "total_income_amount": 0.00, "items": []}
+
+    if community_ids:
+        try:
+            ids = [int(cid.strip()) for cid in community_ids.split(",") if cid.strip()]
+            if ids:
+                query = query.filter(models.ReceiptBill.community_id.in_(ids))
+        except ValueError:
+            pass
+
+    if deal_date_start:
+        try:
+            start_dt = datetime.strptime(deal_date_start, "%Y-%m-%d").date()
+            query = query.filter(models.ReceiptBill.deal_date >= start_dt)
+        except ValueError:
+            pass
+
+    if deal_date_end:
+        try:
+            end_dt = datetime.strptime(deal_date_end, "%Y-%m-%d").date()
+            query = query.filter(models.ReceiptBill.deal_date <= end_dt)
+        except ValueError:
+            pass
+
+    if pay_channel_str:
+        query = query.filter(models.ReceiptBill.pay_channel_str.ilike(f"%{pay_channel_str}%"))
+
+    if payee:
+        query = query.filter(models.ReceiptBill.payee.ilike(f"%{payee}%"))
+
+    if search:
+        like = f"%{search}%"
+        query = query.filter(
+            or_(
+                cast(models.ReceiptBill.id, SAString).ilike(like),
+                models.ReceiptBill.receipt_id.ilike(like),
+                models.ReceiptBill.asset_name.ilike(like),
+                models.ReceiptBill.payee.ilike(like),
+                payer_subq.c.payer_name.ilike(like),
+                models.ProjectList.proj_name.ilike(like),
+            )
+        )
+
+    total = query.count()
+    total_income = query.with_entities(sa_func.sum(models.ReceiptBill.income_amount)).scalar()
+
+    results = (
+        query.order_by(models.ReceiptBill.deal_time.desc().nullslast(), models.ReceiptBill.id.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+    return {
+        "total": total,
+        "total_income_amount": float(total_income) if total_income else 0.00,
+        "items": [
+            {
+                "id": rb.id,
+                "community_id": rb.community_id,
+                "community_name": proj_name or f"园区 {rb.community_id}",
+                "receipt_id": rb.receipt_id,
+                "asset_name": rb.asset_name,
+                "payee": rb.payee,
+                "payer_name": payer_name or "",
+                "income_amount": float(rb.income_amount) if rb.income_amount else 0,
+                "amount": float(rb.amount) if rb.amount else 0,
+                "bill_amount": float(rb.bill_amount) if rb.bill_amount else 0,
+                "discount_amount": float(rb.discount_amount) if rb.discount_amount else 0,
+                "late_money_amount": float(rb.late_money_amount) if rb.late_money_amount else 0,
+                "deposit_amount": float(rb.deposit_amount) if rb.deposit_amount else 0,
+                "pay_channel_str": rb.pay_channel_str,
+                "deal_time": rb.deal_time,
+                "deal_date": rb.deal_date,
+                "deal_type": rb.deal_type,
+            }
+            for rb, proj_name, payer_name in results
+        ],
+    }
+
+
+@app.post("/api/receipt-bills/sync")
+def sync_receipt_bills_endpoint(
+    background_tasks: BackgroundTasks,
+    request: schemas.ReceiptBillSyncRequest = None,
+    allowed_community_ids: List[int] = Depends(get_allowed_community_ids),
+):
+    if request and request.community_ids:
+        community_ids = [cid for cid in request.community_ids if cid in allowed_community_ids]
+    else:
+        community_ids = allowed_community_ids
+
+    if not community_ids:
+        raise HTTPException(status_code=403, detail="No authorized communities for this account book")
+
+    str_ids = [str(cid) for cid in community_ids]
+    task_id = tracker.create_task(str_ids)
+    background_tasks.add_task(sync_receipt_bills, str_ids, task_id)
+
+    return {
+        "message": "Receipt bill synchronization started",
+        "task_id": task_id,
+        "community_ids": str_ids,
+    }
+
+
+@app.get("/api/receipt-bills/sync/status/{task_id}")
+def get_receipt_bill_sync_status(task_id: str):
+    status = tracker.get_task_status(task_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return status
+
+
+@app.get("/api/receipt-bills/{receipt_bill_id}")
+def get_receipt_bill(
+    receipt_bill_id: int,
+    community_id: int = Query(..., description="Marki community ID"),
+    db: Session = Depends(get_db),
+    allowed_community_ids: List[int] = Depends(get_allowed_community_ids),
+):
+    if allowed_community_ids and int(community_id) not in set(allowed_community_ids):
+        raise HTTPException(status_code=403, detail="Unauthorized community")
+
+    rb = (
+        db.query(models.ReceiptBill)
+        .options(selectinload(models.ReceiptBill.users))
+        .filter(models.ReceiptBill.id == int(receipt_bill_id), models.ReceiptBill.community_id == int(community_id))
+        .first()
+    )
+    if not rb:
+        raise HTTPException(status_code=404, detail="Receipt bill not found")
+
+    return {
+        "id": rb.id,
+        "community_id": rb.community_id,
+        "receipt_id": rb.receipt_id,
+        "deal_type": rb.deal_type,
+        "asset_type": rb.asset_type,
+        "asset_name": rb.asset_name,
+        "asset_id": rb.asset_id,
+        "income_amount": float(rb.income_amount) if rb.income_amount else 0,
+        "amount": float(rb.amount) if rb.amount else 0,
+        "discount_amount": float(rb.discount_amount) if rb.discount_amount else 0,
+        "late_money_amount": float(rb.late_money_amount) if rb.late_money_amount else 0,
+        "bill_amount": float(rb.bill_amount) if rb.bill_amount else 0,
+        "deposit_amount": float(rb.deposit_amount) if rb.deposit_amount else 0,
+        "pay_channel": rb.pay_channel,
+        "pay_channel_list": rb.pay_channel_list,
+        "pay_channel_str": rb.pay_channel_str,
+        "deal_time": rb.deal_time,
+        "deal_date": rb.deal_date,
+        "remark": rb.remark,
+        "fk_id": rb.fk_id,
+        "receipt_record_id": rb.receipt_record_id,
+        "receipt_version": rb.receipt_version,
+        "invoice_number": rb.invoice_number,
+        "invoice_urls": rb.invoice_urls,
+        "invoice_status": rb.invoice_status,
+        "open_invoice": rb.open_invoice,
+        "payee": rb.payee,
+        "bind_users_raw": rb.bind_users_raw,
+        "users": [
+            {
+                "user_id": u.user_id,
+                "user_name": u.user_name,
+                "phone": u.phone,
+            }
+            for u in (rb.users or [])
+        ],
     }
 
 # New endpoint: POST /api/projects/sync
@@ -2616,6 +2857,56 @@ def get_voucher_source_fields(source_type: str = Query("bills")):
         })
 
     return {"source_type": "bills", "fields": fields}
+
+
+@app.get("/api/vouchers/source-modules")
+def get_voucher_source_modules():
+    """
+    Advanced source field selector metadata.
+
+    - Top-level module split: Mark system vs OA system (OA is placeholder for now).
+    - Mark system fields are loaded from backend data models (SQLAlchemy columns + runtime/derived fields).
+    """
+
+    bills_fields = []
+    for field_name in sorted(_build_bills_fields()):
+        display_name = _BILL_FIELD_LABELS.get(field_name)
+        label = f"{display_name} ({field_name})" if display_name else field_name
+        bills_fields.append({
+            "label": label,
+            "value": field_name,
+            "group": _group_bills_field(field_name),
+        })
+
+    return {
+        "modules": [
+            {
+                "id": "marki",
+                "label": "马克系统",
+                "sources": [
+                    {
+                        "id": "bills",
+                        "label": "运营账单",
+                        "source_type": "bills",
+                        "fields": bills_fields,
+                    }
+                ],
+            },
+            {
+                "id": "oa",
+                "label": "OA系统",
+                "note": "暂未接入，缺省处理",
+                "sources": [
+                    {
+                        "id": "oa_default",
+                        "label": "缺省",
+                        "source_type": "oa",
+                        "fields": [],
+                    }
+                ],
+            },
+        ]
+    }
 
 
 def _build_allowed_placeholders(source_type: Optional[str], db: Session) -> Set[str]:

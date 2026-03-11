@@ -23,8 +23,43 @@ def get_db_connection():
 
 def validate_timestamp(timestamp):
     """验证时间戳是否有效，如果是无效则返回None"""
-    if timestamp and timestamp > 0:
-        return timestamp
+    try:
+        if timestamp is None:
+            return None
+        if isinstance(timestamp, str):
+            ts = timestamp.strip()
+            if not ts:
+                return None
+            if not ts.isdigit():
+                return None
+            timestamp = int(ts)
+        timestamp = int(timestamp)
+        if timestamp > 0:
+            return timestamp
+    except Exception:
+        return None
+    return None
+
+
+def normalize_datetime(value):
+    """Normalize Marki date/time values to python datetime (or None)."""
+    if value is None:
+        return None
+    try:
+        if isinstance(value, (int, float)) and value > 0:
+            return datetime.fromtimestamp(int(value))
+        if isinstance(value, str):
+            v = value.strip()
+            if not v:
+                return None
+            if v.isdigit():
+                return datetime.fromtimestamp(int(v))
+            try:
+                return datetime.fromisoformat(v.replace("Z", "+00:00"))
+            except Exception:
+                return None
+    except Exception:
+        return None
     return None
 
 def format_amount(val):
@@ -56,7 +91,14 @@ def insert_bills_data(data_list, community_id_context=None):
             # 优先使用传入的上下文ID，确保数据正确归类
             community_id = community_id_context or item.get("communityId") or item.get("communityID")
             
-            if not bill_id or community_id is None:
+            if bill_id is None or community_id is None:
+                skipped_count += 1
+                continue
+
+            try:
+                bill_id = int(bill_id)
+                community_id = int(community_id)
+            except Exception:
                 skipped_count += 1
                 continue
             
@@ -116,7 +158,7 @@ def insert_bills_data(data_list, community_id_context=None):
             remark = item.get("remark")
             bind_toll = json.dumps(item.get("bindToll", []), ensure_ascii=False)
             user_list = json.dumps(item.get("userList", []), ensure_ascii=False)
-            last_op_time = item.get("lastOpTime")
+            last_op_time = normalize_datetime(item.get("lastOpTime"))
             
             # 插入语句（列顺序与模型保持一致）
             cursor.execute(
@@ -140,11 +182,11 @@ def insert_bills_data(data_list, community_id_context=None):
                     %s, %s,
                     %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s
                 )
                 ON CONFLICT (id, community_id) DO UPDATE SET
                     charge_item_id = EXCLUDED.charge_item_id,
@@ -231,9 +273,11 @@ def insert_bills_data(data_list, community_id_context=None):
         
         conn.commit()
         print(f"Sync: Inserted {inserted_count}, Skipped {skipped_count}")
+        return {"inserted": inserted_count, "skipped": skipped_count}
     except Exception as e:
         conn.rollback()
         print(f"Database error: {e}")
+        raise
     finally:
         cursor.close()
         conn.close()
@@ -328,16 +372,20 @@ def sync_bills_for_community(community_id: int, task_id: str = None):
             break
 
         # 传递当前正在同步的园区ID，确保数据库记录正确
-        insert_bills_data(bills_data, community_id_context=community_id)
-        total_inserted += len(bills_data)
-        msg = f"Community {community_id} - Page {page}: processed {len(bills_data)} records."
+        counts = insert_bills_data(bills_data, community_id_context=community_id)
+        total_inserted += int(counts.get("inserted", 0) or 0)
+        total_skipped += int(counts.get("skipped", 0) or 0)
+        msg = (
+            f"Community {community_id} - Page {page}: "
+            f"fetched {len(bills_data)} inserted {counts.get('inserted', 0)} skipped {counts.get('skipped', 0)}."
+        )
         print(msg)
         if task_id:
             tracker.add_log(task_id, msg, "info")
         page += 1
         time.sleep(1)  # Rate limiting
     
-    print(f"Completed sync for community {community_id}: total {total_inserted} records processed.")
+    print(f"Completed sync for community {community_id}: inserted {total_inserted}, skipped {total_skipped}.")
     return total_inserted
 
 

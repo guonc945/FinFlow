@@ -1,7 +1,7 @@
 import axios from 'axios';
-import type { CashJournal, PushResult, VoucherPreview, ChargeItem, House, Project, Resident, BillVoucherPushStatus } from '../types';
+import type { CashJournal, PushResult, VoucherPreview, ChargeItem, House, Project, Resident, BillVoucherPushStatus, ReceiptBill, VoucherFieldModule } from '../types';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+import { API_BASE_URL } from './apiBase';
 
 // Axios Interceptor for Auth
 axios.interceptors.request.use((config) => {
@@ -115,9 +115,9 @@ export const createUser = async (data: {
 
 export const updateUser = async (id: number, data: {
     username?: string;
-    email?: string;
-    phone?: string;
-    real_name?: string;
+    email?: string | null;
+    phone?: string | null;
+    real_name?: string | null;
     org_id?: number;
     status?: number;
     password?: string;
@@ -136,6 +136,11 @@ export const getMe = async () => {
     return response.data;
 };
 
+export const getUserById = async (userId: number) => {
+    const response = await axios.get(`${API_BASE_URL}/users/${userId}`);
+    return response.data;
+};
+
 // Bills Sync
 export const syncBills = async (communityIds?: number[]) => {
     const response = await axios.post(`${API_BASE_URL}/bills/sync`, { community_ids: communityIds });
@@ -144,6 +149,17 @@ export const syncBills = async (communityIds?: number[]) => {
 
 export const getSyncStatus = async (taskId: string) => {
     const response = await axios.get(`${API_BASE_URL}/bills/sync/status/${taskId}`);
+    return response.data;
+};
+
+// Receipt Bills Sync
+export const syncReceiptBills = async (communityIds?: number[]) => {
+    const response = await axios.post(`${API_BASE_URL}/receipt-bills/sync`, { community_ids: communityIds });
+    return response.data;
+};
+
+export const getReceiptBillSyncStatus = async (taskId: string) => {
+    const response = await axios.get(`${API_BASE_URL}/receipt-bills/sync/status/${taskId}`);
     return response.data;
 };
 
@@ -179,6 +195,7 @@ export const getBills = async (params?: {
     in_month_end?: string;
     pay_time_start?: string;
     pay_time_end?: string;
+    deal_log_id?: number;
     skip?: number;
     limit?: number
 }) => {
@@ -189,6 +206,32 @@ export const getBills = async (params?: {
 export const getBillChargeItems = async () => {
     const response = await axios.get(`${API_BASE_URL}/bills/charge-items`);
     return response.data as { value: string, label: string }[];
+};
+
+export const getVoucherFieldModules = async () => {
+    const response = await axios.get<{ modules: VoucherFieldModule[] }>(`${API_BASE_URL}/vouchers/source-modules`);
+    return response.data;
+};
+
+export const getReceiptBills = async (params?: {
+    search?: string;
+    community_ids?: string;
+    deal_date_start?: string;
+    deal_date_end?: string;
+    pay_channel_str?: string;
+    payee?: string;
+    skip?: number;
+    limit?: number;
+}) => {
+    const response = await axios.get(`${API_BASE_URL}/receipt-bills`, { params });
+    return response.data as { total: number; total_income_amount: number; items: ReceiptBill[] };
+};
+
+export const getReceiptBill = async (receiptBillId: number, communityId: number) => {
+    const response = await axios.get(`${API_BASE_URL}/receipt-bills/${receiptBillId}`, {
+        params: { community_id: communityId }
+    });
+    return response.data;
 };
 
 // Reports

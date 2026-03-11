@@ -110,6 +110,7 @@ const Sidebar = () => {
             icon: FileText,
             children: [
                 { path: '/bills', label: '运营账单', icon: Receipt },
+                { path: '/receipt-bills', label: '收款账单', icon: Receipt },
                 { path: '/vouchers/templates', label: '模板管理', icon: Layers, adminOnly: true },
             ]
         },
@@ -157,6 +158,7 @@ const Sidebar = () => {
             ]
         },
         { path: '/reports', label: '统计分析', icon: BarChart3 },
+        { path: '/account', label: '个人设置', icon: Users },
         {
             key: 'system-management',
             label: '系统管理',

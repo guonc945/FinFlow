@@ -12,6 +12,8 @@ import {
     X,
     Info,
     CheckCircle,
+    AlertCircle,
+    Save,
     Loader2,
     ChevronsLeft,
     ChevronLeft,
@@ -309,6 +311,18 @@ const Residents = () => {
         String(p.proj_id).includes(projectSearch)
     );
 
+    const getHousesText = (houses?: string) => {
+        if (!houses) return '-';
+        try {
+            const housesList = JSON.parse(houses);
+            if (!Array.isArray(housesList)) return '-';
+            const names = housesList.map((h: any) => h?.name).filter(Boolean);
+            return names.length > 0 ? names.join('、') : '-';
+        } catch {
+            return '-';
+        }
+    };
+
     const columns = [
         { key: 'resident_id' as keyof Resident, title: '住户ID', width: 90 },
         {
@@ -335,33 +349,36 @@ const Residents = () => {
             title: '关联房屋',
             width: 200,
             render: (val: any) => {
-                if (!val) return <span className="text-secondary">-</span>;
-                try {
-                    const housesList = JSON.parse(val);
-                    const names = housesList.map((h: any) => h.name).join(', ');
-                    return (
-                        <div className="truncate text-xs" title={names} style={{ maxWidth: '180px' }}>
-                            {names}
-                        </div>
-                    );
-                } catch {
-                    return <span className="text-secondary">-</span>;
-                }
+                const names = getHousesText(val);
+                if (names === '-') return <span className="text-secondary">-</span>;
+                return (
+                    <div className="truncate text-xs" title={names} style={{ maxWidth: '180px' }}>
+                        {names}
+                    </div>
+                );
             }
         },
         {
-            key: 'kingdee_customer' as keyof Resident,
+            key: 'kingdee_customer_id' as keyof Resident,
             title: '财务系统客户映射',
             width: 220,
-            render: ((val: any) => {
-                if (!val) return <span className="text-secondary">-</span>;
-                return (
-                    <div className="flex flex-col">
-                        <span className="font-medium text-primary-dark">{val.name}</span>
-                        <span className="text-xs text-secondary-light">{val.number}</span>
-                    </div>
-                );
-            }) as any
+            render: (_: any, row: Resident): ReactNode => (
+                <div
+                    className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-1 rounded transition-colors group"
+                    onClick={() => setEditingResident(row)}
+                >
+                    {row.kingdee_customer ? (
+                        <div className="flex flex-col">
+                            <span className="text-xs font-semibold text-brand group-hover:text-primary">{row.kingdee_customer.name}</span>
+                            <span className="text-[10px] text-gray-400 font-mono">{row.kingdee_customer.number}</span>
+                        </div>
+                    ) : (
+                        <span className="text-xs text-secondary-light italic group-hover:text-primary flex items-center gap-1">
+                            <CloudSync size={12} /> 未设置
+                        </span>
+                    )}
+                </div>
+            )
         },
         {
             key: 'created_at' as keyof Resident,
@@ -375,7 +392,7 @@ const Residents = () => {
             width: 80,
             render: (_: any, row: Resident): ReactNode => (
                 <div className="flex gap-2">
-                    <button className="icon-action hover:text-primary" onClick={() => setEditingResident(row)}><Pencil size={16} /></button>
+                    <button className="icon-action hover:text-primary" onClick={() => setEditingResident(row)} title="配置财务映射"><Pencil size={16} /></button>
                     <button className="icon-action hover:text-danger text-secondary"><Trash size={16} /></button>
                 </div>
             )
@@ -570,16 +587,18 @@ const Residents = () => {
                         if (e.target === e.currentTarget) setEditingResident(null);
                     }}
                 >
-                    <div className="kd-house-mapping-modal">
+                    <div className="kd-house-mapping-modal kd-house-edit-modal">
                         <div className="kd-house-mapping-header">
                             <div>
                                 <div className="kd-house-mapping-title">
-                                    <CloudSync size={18} className="text-primary" />
+                                    <AlertCircle size={18} className="text-primary" />
                                     <h3>配置住户财务映射</h3>
                                 </div>
-                                <div className="kd-house-mapping-subtitle">将业务系统住户关联到金蝶客户档案，用于后续对账/推送。</div>
+                                <div className="kd-house-mapping-subtitle">
+                                    选择对应的金蝶客户；保存后用于费用对账/推送的档案关联。
+                                </div>
                             </div>
-                            <button className="kd-house-mapping-close" onClick={() => setEditingResident(null)} type="button" aria-label="关闭">
+                            <button className="modal-close-btn kd-house-mapping-close" onClick={() => setEditingResident(null)} type="button" aria-label="关闭">
                                 <X size={20} />
                             </button>
                         </div>
@@ -588,15 +607,16 @@ const Residents = () => {
                             <div className="kd-house-mapping-housecard">
                                 <span className="kd-house-mapping-housecard-label">当前住户</span>
                                 <div className="kd-house-mapping-housecard-name">{editingResident.name}</div>
-                                <div className="kd-house-mapping-housecard-meta">
-                                    {editingResident.community_name || "-"}
-                                    {editingResident.phone ? ` · ${editingResident.phone}` : ""}
+                                <div className="kd-house-mapping-housecard-meta flex flex-col gap-1">
+                                    <span>所属园区：{editingResident.community_name || '-'}</span>
+                                    <span>联系电话：{editingResident.phone || '-'}</span>
+                                    <span title={getHousesText(editingResident.houses)}>关联房屋：{getHousesText(editingResident.houses)}</span>
                                 </div>
                             </div>
 
                             <div className="flex flex-col gap-4">
                                 <KingdeeCustomerSelector
-                                    label="金蝶客户档案映射"
+                                    label="财务系统客户映射"
                                     placeholder="搜索或手动输入金蝶客户编码/名称..."
                                     value={
                                         editingResident.kingdee_customer
@@ -624,8 +644,8 @@ const Residents = () => {
                                 取消
                             </button>
                             <button className="btn btn-primary" onClick={handleSaveResident} disabled={isSaving} type="button">
-                                {isSaving ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle size={16} />}
-                                {isSaving ? "保存中..." : "保存映射配置"}
+                                {isSaving ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />}
+                                保存映射配置
                             </button>
                         </div>
 

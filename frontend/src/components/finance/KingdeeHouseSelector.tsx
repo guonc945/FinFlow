@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Search, MapPin, X, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import axios from 'axios';
 import type { KingdeeHouse } from '../../types';
+import { API_BASE_URL } from '../../services/apiBase';
 import './KingdeeHouseSelector.css';
 
 interface KingdeeHouseSelectorProps {
@@ -75,7 +76,7 @@ const KingdeeHouseSelector = ({
     const fetchHouses = async () => {
         setIsLoading(true);
         try {
-            const res = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/finance/kd-houses`, {
+            const res = await axios.get(`${API_BASE_URL}/finance/kd-houses`, {
                 params: {
                     search: debouncedSearch,
                     skip: (page - 1) * pageSize,
@@ -107,7 +108,7 @@ const KingdeeHouseSelector = ({
         if (!text) return;
         setIsLoading(true);
         try {
-            const res = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/finance/kd-houses`, {
+            const res = await axios.get(`${API_BASE_URL}/finance/kd-houses`, {
                 params: {
                     search: text,
                     limit: 10

@@ -8,6 +8,7 @@ import KeyValueEditor from './KeyValueEditor';
 import './Credentials.css';
 import './CredentialTabs.css';
 import type { ToastType } from '../../../components/Toast';
+import { API_BASE_URL } from '../../../services/apiBase';
 
 interface CredentialModalProps {
     isOpen: boolean;
@@ -95,7 +96,7 @@ const CredentialModal = ({ isOpen, onClose, onSave, initialData, showToast }: Cr
     const handleTestConnection = async () => {
         setIsTesting(true);
         try {
-            const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/external/services/test-connection`, {
+            const res = await fetch(`${API_BASE_URL}/external/services/test-connection`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(formData)

@@ -1,10 +1,15 @@
 import { useState, useEffect } from 'react';
 import { Plus, Edit2, Trash2, Save, X, Search, Hash, Tag, Eye, EyeOff, Building2, CheckSquare, Square } from 'lucide-react';
 import axios from 'axios';
+import { API_BASE_URL } from '../../services/apiBase';
 import './Variables.css';
 
 // 园区多选变量的 key
 const COMMUNITY_VAR_KEY = 'MARKI_COMMUNITY_IDS';
+// Deal time range variable key (minDealTime/maxDealTime)
+// Stored as a JSON fragment so it can be embedded into request bodies:
+// "maxDealTime":1773331199,"minDealTime":1772985600
+const DEAL_TIME_RANGE_VAR_KEY = 'MARKI_DEAL_TIME_RANGE';
 
 interface Project {
     proj_id: number;
@@ -30,6 +35,11 @@ const GlobalVariables = () => {
     const [selectedCommunityIds, setSelectedCommunityIds] = useState<Set<string>>(new Set());
     const [projectSearch, setProjectSearch] = useState('');
 
+    const [dealStartDate, setDealStartDate] = useState('');
+    const [dealEndDate, setDealEndDate] = useState('');
+    const [dealMinTs, setDealMinTs] = useState<number | null>(null);
+    const [dealMaxTs, setDealMaxTs] = useState<number | null>(null);
+
     useEffect(() => {
         fetchVariables();
         fetchProjects();
@@ -37,7 +47,7 @@ const GlobalVariables = () => {
 
     const fetchVariables = async () => {
         try {
-            const res = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/settings/variables`);
+            const res = await axios.get(`${API_BASE_URL}/settings/variables`);
             setVariables(res.data);
         } catch (error) {
             console.error('Failed to fetch variables:', error);
@@ -46,7 +56,7 @@ const GlobalVariables = () => {
 
     const fetchProjects = async () => {
         try {
-            const res = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/projects?limit=500`);
+            const res = await axios.get(`${API_BASE_URL}/projects?limit=500`);
             setProjects(res.data);
         } catch (error) {
             console.error('Failed to fetch projects:', error);
@@ -54,6 +64,60 @@ const GlobalVariables = () => {
     };
 
     // 当打开编辑弹窗时，如果是园区变量，解析已选 ID
+    const pad2 = (n: number) => String(n).padStart(2, '0');
+
+    const toLocalDateString = (d: Date) => {
+        return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+    };
+
+    const parseDealTimeRangeValue = (value: string | null | undefined) => {
+        const v = String(value || '').trim();
+        if (!v) return null;
+
+        // Accept JSON fragment: "maxDealTime":177...,"minDealTime":177...
+        // Or JSON object: {"maxDealTime":...,"minDealTime":...}
+        const minMatch = v.match(/"minDealTime"\s*:\s*(\d+)/);
+        const maxMatch = v.match(/"maxDealTime"\s*:\s*(\d+)/);
+        const min = minMatch ? Number(minMatch[1]) : NaN;
+        const max = maxMatch ? Number(maxMatch[1]) : NaN;
+        if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+
+        const start = toLocalDateString(new Date(min * 1000));
+        const end = toLocalDateString(new Date(max * 1000));
+        return { start, end };
+    };
+
+    const computeDealTimeRange = (start: string, end: string) => {
+        const startVal = (start || '').trim();
+        const endVal = (end || '').trim() || startVal;
+        if (!startVal) return null;
+
+        // Local time boundary: start 00:00:00, end 23:59:59
+        const minMs = new Date(`${startVal}T00:00:00`).getTime();
+        const maxMs = new Date(`${endVal}T23:59:59`).getTime();
+        if (!Number.isFinite(minMs) || !Number.isFinite(maxMs)) return null;
+
+        let min = Math.floor(minMs / 1000);
+        let max = Math.floor(maxMs / 1000);
+        if (min > max) {
+            const tmp = min;
+            min = max;
+            max = tmp;
+        }
+
+        const fragment = `"maxDealTime":${max},"minDealTime":${min}`;
+        return { min, max, fragment, normalizedEnd: endVal };
+    };
+
+    const updateDealTimeRange = (start: string, end: string) => {
+        const computed = computeDealTimeRange(start, end);
+        setDealStartDate(start);
+        setDealEndDate(computed?.normalizedEnd || end);
+        setDealMinTs(computed?.min ?? null);
+        setDealMaxTs(computed?.max ?? null);
+        setCurrentVar(cv => ({ ...cv, value: computed?.fragment || '' }));
+    };
+
     const openEditor = (varData: Partial<GlobalVariable>) => {
         setCurrentVar(varData);
         if (varData.key === COMMUNITY_VAR_KEY && varData.value) {
@@ -61,6 +125,23 @@ const GlobalVariables = () => {
             setSelectedCommunityIds(new Set(ids));
         } else {
             setSelectedCommunityIds(new Set());
+        }
+
+        if (varData.key === DEAL_TIME_RANGE_VAR_KEY) {
+            const parsed = parseDealTimeRangeValue(varData.value || '');
+            if (parsed) {
+                updateDealTimeRange(parsed.start, parsed.end);
+            } else {
+                const today = new Date();
+                const end = toLocalDateString(today);
+                const start = toLocalDateString(new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000));
+                updateDealTimeRange(start, end);
+            }
+        } else {
+            setDealStartDate('');
+            setDealEndDate('');
+            setDealMinTs(null);
+            setDealMaxTs(null);
         }
         setProjectSearch('');
         setIsEditing(true);
@@ -107,13 +188,14 @@ const GlobalVariables = () => {
     };
 
     const isCommunityVar = currentVar.key === COMMUNITY_VAR_KEY;
+    const isDealTimeRangeVar = currentVar.key === DEAL_TIME_RANGE_VAR_KEY;
 
     const handleSave = async () => {
         try {
             if (currentVar.id) {
-                await axios.put(`${import.meta.env.VITE_API_BASE_URL}/settings/variables/${currentVar.id}`, currentVar);
+                await axios.put(`${API_BASE_URL}/settings/variables/${currentVar.id}`, currentVar);
             } else {
-                await axios.post(`${import.meta.env.VITE_API_BASE_URL}/settings/variables`, currentVar);
+                await axios.post(`${API_BASE_URL}/settings/variables`, currentVar);
             }
             setIsEditing(false);
             fetchVariables();
@@ -125,7 +207,7 @@ const GlobalVariables = () => {
     const handleDelete = async (id: number) => {
         if (!confirm('确定要删除这个全局变量吗?')) return;
         try {
-            await axios.delete(`${import.meta.env.VITE_API_BASE_URL}/settings/variables/${id}`);
+            await axios.delete(`${API_BASE_URL}/settings/variables/${id}`);
             fetchVariables();
         } catch (error) {
             alert('删除失败');
@@ -259,7 +341,18 @@ const GlobalVariables = () => {
                                 <input
                                     className="modern-input-pro font-mono text-sm"
                                     value={currentVar.key || ''}
-                                    onChange={e => setCurrentVar({ ...currentVar, key: e.target.value })}
+                                    onChange={e => {
+                                        const nextKey = e.target.value;
+                                        setCurrentVar(cv => ({ ...cv, key: nextKey }));
+
+                                        // When creating a new variable, typing the special key should initialize the helper UI.
+                                        if (!currentVar.id && nextKey === DEAL_TIME_RANGE_VAR_KEY) {
+                                            const today = new Date();
+                                            const end = toLocalDateString(today);
+                                            const start = toLocalDateString(new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000));
+                                            updateDealTimeRange(start, end);
+                                        }
+                                    }}
                                     placeholder="e.g. ERP_BASE_URL"
                                     disabled={!!currentVar.id}
                                 />
@@ -316,6 +409,43 @@ const GlobalVariables = () => {
                                         </div>
                                     </div>
                                     <p className="text-[10px] text-slate-400 mt-1">已选园区 ID 将以逗号分隔存储，可在接口请求体中通过 {'{MARKI_COMMUNITY_IDS}'} 引用</p>
+                                </div>
+                            ) : isDealTimeRangeVar ? (
+                                <div className="field-container">
+                                    <label className="modern-label text-xs">Deal Time Range (minDealTime / maxDealTime)</label>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <div className="text-[11px] text-slate-500 mb-1">Start Date</div>
+                                            <input
+                                                type="date"
+                                                className="modern-input-pro text-sm"
+                                                value={dealStartDate}
+                                                onChange={(e) => updateDealTimeRange(e.target.value, dealEndDate)}
+                                            />
+                                        </div>
+                                        <div>
+                                            <div className="text-[11px] text-slate-500 mb-1">End Date</div>
+                                            <input
+                                                type="date"
+                                                className="modern-input-pro text-sm"
+                                                value={dealEndDate}
+                                                onChange={(e) => updateDealTimeRange(dealStartDate, e.target.value)}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="mt-3" style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '10px 12px' }}>
+                                        <div className="text-[10px] text-slate-400 uppercase font-bold tracking-widest mb-1">Preview</div>
+                                        <code className="text-xs font-mono break-all">{currentVar.value || ''}</code>
+                                        <div className="mt-2 text-[11px] text-slate-500 flex gap-4 flex-wrap">
+                                            <span>minDealTime: <span className="font-mono">{dealMinTs ?? '-'}</span></span>
+                                            <span>maxDealTime: <span className="font-mono">{dealMaxTs ?? '-'}</span></span>
+                                        </div>
+                                    </div>
+
+                                    <p className="text-[10px] text-slate-400 mt-1">
+                                        Stored as a JSON fragment for embedding. Use: <span className="font-mono">{'{MARKI_DEAL_TIME_RANGE}'}</span>
+                                    </p>
                                 </div>
                             ) : (
                                 <div className="field-container">

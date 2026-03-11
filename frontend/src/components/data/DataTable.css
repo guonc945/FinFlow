@@ -19,6 +19,7 @@
 
 .table-container {
     overflow-x: auto;
+    position: relative;
 }
 
 .modern-table {
@@ -60,6 +61,46 @@
     padding: var(--space-4) var(--space-6);
     color: var(--text-primary);
     border-bottom: 1px solid var(--gray-100);
+}
+
+/* Sticky columns (e.g. action buttons) */
+.modern-table th.dt-sticky-right,
+.modern-table td.dt-sticky-right {
+    position: sticky;
+    right: 0;
+    border-left: 1px solid var(--border-color);
+}
+
+.modern-table th.dt-sticky-left,
+.modern-table td.dt-sticky-left {
+    position: sticky;
+    left: 0;
+    border-right: 1px solid var(--border-color);
+}
+
+.modern-table th.dt-sticky-right,
+.modern-table th.dt-sticky-left {
+    z-index: 15;
+}
+
+.modern-table td.dt-sticky-right,
+.modern-table td.dt-sticky-left {
+    z-index: 5;
+    background: var(--bg-card, #ffffff);
+}
+
+.modern-table td.dt-sticky-right {
+    box-shadow: -8px 0 12px -12px rgba(15, 23, 42, 0.35);
+}
+
+.modern-table.table-striped tbody tr:nth-of-type(odd) td.dt-sticky-right,
+.modern-table.table-striped tbody tr:nth-of-type(odd) td.dt-sticky-left {
+    background: #fafbfd;
+}
+
+.modern-table.table-hover tbody tr:hover td.dt-sticky-right,
+.modern-table.table-hover tbody tr:hover td.dt-sticky-left {
+    background: var(--primary-50);
 }
 
 .modern-table tr:last-child td {

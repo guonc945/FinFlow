@@ -375,6 +375,94 @@ class BillUser(Base):
                         foreign_keys=[bill_id, community_id])
 
 
+class ReceiptBill(Base):
+    """收款明细（收款账单）"""
+
+    __tablename__ = "receipt_bills"
+
+    # Composite primary key to keep community scoping consistent with bills.
+    id = Column(BigInteger, primary_key=True)
+    community_id = Column(Integer, primary_key=True, nullable=False, index=True)
+
+    deal_type = Column(Integer)
+    asset_type = Column(Integer)
+    asset_name = Column(String(255))
+    asset_id = Column(BigInteger, index=True)
+
+    # Amounts in Yuan (converted from cents on ingest)
+    income_amount = Column(DECIMAL(12, 2))
+    amount = Column(DECIMAL(12, 2))
+    discount_amount = Column(DECIMAL(12, 2), default=0)
+    late_money_amount = Column(DECIMAL(12, 2), default=0)
+    bill_amount = Column(DECIMAL(12, 2), default=0)
+    deposit_amount = Column(DECIMAL(12, 2), default=0)
+
+    pay_channel = Column(Integer)
+    pay_channel_list = Column(Text)  # JSON string
+    pay_channel_str = Column(String(100))
+
+    deal_time = Column(Integer, index=True)  # Unix timestamp seconds
+    deal_date = Column(Date, index=True)  # Derived from deal_time for filtering
+
+    remark = Column(Text)
+    fk_id = Column(BigInteger, index=True)
+
+    receipt_id = Column(String(50), index=True)
+    receipt_record_id = Column(BigInteger, index=True)
+    receipt_version = Column(Integer, default=1)
+
+    invoice_number = Column(String(100))
+    invoice_urls = Column(Text)  # JSON string
+    invoice_status = Column(Integer, default=0)
+    open_invoice = Column(Integer, default=0)
+
+    payee = Column(String(255))
+
+    bind_users_raw = Column(Text)  # JSON string, backup of bindUsers
+
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    users = relationship(
+        "ReceiptBillUser",
+        back_populates="receipt_bill",
+        cascade="all, delete-orphan",
+        foreign_keys="[ReceiptBillUser.receipt_bill_id, ReceiptBillUser.community_id]",
+    )
+
+
+class ReceiptBillUser(Base):
+    """收款明细关联住户（bindUsers）"""
+
+    __tablename__ = "receipt_bill_users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    receipt_bill_id = Column(BigInteger, nullable=False, index=True)
+    community_id = Column(Integer, nullable=False, index=True)
+
+    user_id = Column(BigInteger, index=True)
+    user_name = Column(String(255))
+    phone = Column(String(50))
+
+    created_at = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["receipt_bill_id", "community_id"],
+            ["receipt_bills.id", "receipt_bills.community_id"],
+            ondelete="CASCADE",
+        ),
+        Index("udx_receipt_bill_users_receipt_user", "receipt_bill_id", "community_id", "user_id", unique=True),
+        Index("ix_receipt_bill_users_user_name", "user_name"),
+    )
+
+    receipt_bill = relationship(
+        "ReceiptBill",
+        back_populates="users",
+        foreign_keys=[receipt_bill_id, community_id],
+    )
+
+
 class BillVoucherPushRecord(Base):
     __tablename__ = "bill_voucher_push_records"
 

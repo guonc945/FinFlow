@@ -13,6 +13,7 @@ import {
     FunctionSquare,
 } from 'lucide-react';
 import axios from 'axios';
+import { API_BASE_URL } from '../../services/apiBase';
 import './VariablePicker.css';
 
 interface PickerItem {
@@ -79,9 +80,9 @@ const VariablePicker = ({
             return;
         }
 
-        const requests = [axios.get(`${import.meta.env.VITE_API_BASE_URL}/settings/variables`)];
+        const requests = [axios.get(`${API_BASE_URL}/settings/variables`)];
         if (includeFunctions) {
-            requests.push(axios.get(`${import.meta.env.VITE_API_BASE_URL}/settings/functions`));
+            requests.push(axios.get(`${API_BASE_URL}/settings/functions`));
         }
 
         Promise.all(requests)

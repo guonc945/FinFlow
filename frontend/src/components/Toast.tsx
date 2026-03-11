@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { CheckCircle, AlertCircle, X, Info } from 'lucide-react';
 import './Toast.css';
 
@@ -14,15 +14,15 @@ interface ToastMessage {
 export const useToast = () => {
     const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
-    const showToast = (type: ToastType, message: string, description?: string) => {
+    const removeToast = useCallback((id: string) => {
+        setToasts(prev => prev.filter(t => t.id !== id));
+    }, []);
+
+    const showToast = useCallback((type: ToastType, message: string, description?: string) => {
         const id = Math.random().toString(36).substring(7);
         setToasts(prev => [...prev, { id, type, message, description }]);
-        setTimeout(() => removeToast(id), 4000);
-    };
-
-    const removeToast = (id: string) => {
-        setToasts(prev => prev.filter(t => t.id !== id));
-    };
+        window.setTimeout(() => removeToast(id), 4000);
+    }, [removeToast]);
 
     return { toasts, showToast, removeToast };
 };

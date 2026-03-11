@@ -1,7 +1,8 @@
 .route-tabs-container {
     display: flex;
     flex-direction: column;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
 }
 
 .route-tabs-header {
@@ -100,11 +101,18 @@
 
 .route-tabs-content {
     flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
     overflow-y: auto;
     overflow-x: hidden;
-    height: 100%;
+    /* Override global `.page-content` large bottom padding to reduce extra blank space. */
+    padding-bottom: var(--space-4);
 }
 
 .route-tab-pane {
-    height: 100%;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
 }

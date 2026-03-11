@@ -9,6 +9,7 @@ import {
 import axios from 'axios';
 import JsonEditor from '../../components/data/JsonEditor';
 import { useToast, ToastContainer } from '../../components/Toast';
+import { API_BASE_URL } from '../../services/apiBase';
 import './ArchiveAPIs.css';
 
 interface ExternalService {
@@ -46,8 +47,8 @@ const ArchiveAPIs = () => {
     const fetchInitialData = async () => {
         try {
             const [typesRes, servicesRes] = await Promise.all([
-                axios.get(`${import.meta.env.VITE_API_BASE_URL}/archives/types`),
-                axios.get(`${import.meta.env.VITE_API_BASE_URL}/external/services`)
+                axios.get(`${API_BASE_URL}/archives/types`),
+                axios.get(`${API_BASE_URL}/external/services`)
             ]);
             setArchiveTypes(typesRes.data);
             setServices(servicesRes.data);
@@ -65,7 +66,7 @@ const ArchiveAPIs = () => {
 
     const fetchConfig = async (archiveKey: string) => {
         setLoading(true);
-        const endpoint = `${import.meta.env.VITE_API_BASE_URL}/archives/config/${archiveKey}`;
+        const endpoint = `${API_BASE_URL}/archives/config/${archiveKey}`;
 
         try {
             const res = await axios.get(endpoint);
@@ -114,7 +115,7 @@ const ArchiveAPIs = () => {
                 request_headers: headersObj
             };
 
-            const res = await axios.post(`${import.meta.env.VITE_API_BASE_URL}/archives/test`, payload);
+            const res = await axios.post(`${API_BASE_URL}/archives/test`, payload);
             setTestResult(res.data);
         } catch (err: any) {
             setTestResult({
@@ -127,7 +128,7 @@ const ArchiveAPIs = () => {
     };
 
     const handleSaveConfig = async () => {
-        const endpoint = `${import.meta.env.VITE_API_BASE_URL}/archives/config/${selectedArchive}`;
+        const endpoint = `${API_BASE_URL}/archives/config/${selectedArchive}`;
 
         try {
             const headersObj: Record<string, string> = {};
@@ -158,7 +159,7 @@ const ArchiveAPIs = () => {
 
         const updatedTypes = [...archiveTypes, newType];
         try {
-            await axios.post(`${import.meta.env.VITE_API_BASE_URL}/archives/types`, updatedTypes);
+            await axios.post(`${API_BASE_URL}/archives/types`, updatedTypes);
             setArchiveTypes(updatedTypes);
             setSelectedArchive(newType.key);
             setIsAddModalOpen(false);

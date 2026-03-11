@@ -381,6 +381,37 @@
     color: #64748b;
 }
 
+.cb-adv-field-btn {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.4rem;
+}
+
+.cb-adv-field-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+}
+
+.cb-field-trigger {
+    border: none;
+    background: transparent;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    color: inherit;
+}
+
+.cb-field-trigger:hover {
+    color: #2563eb;
+}
+
 .cb-format-combo:hover,
 .cb-field-combo:hover {
     color: #334155;

@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import axios from 'axios';
 import { useToast, ToastContainer } from '../../components/Toast';
+import { API_BASE_URL } from '../../services/apiBase';
 import './AccountingSubjects.css';
 import '../bills/Bills.css'; // Reusing the same styling for consistency
 
@@ -61,7 +62,7 @@ const Customers = () => {
         setLoading(true);
         try {
             const skip = (currentPage - 1) * pageSize;
-            const res = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/finance/customers`, {
+            const res = await axios.get(`${API_BASE_URL}/finance/customers`, {
                 params: {
                     skip: skip,
                     limit: pageSize,
@@ -88,7 +89,7 @@ const Customers = () => {
         setIsConfirmModalOpen(false);
         setLoading(true);
         try {
-            await axios.post(`${import.meta.env.VITE_API_BASE_URL}/finance/customers/sync`, {});
+            await axios.post(`${API_BASE_URL}/finance/customers/sync`, {});
             showToast('success', '同步任务已提交', '系统正在后台处理数据同步，请在 1-2 分钟后尝试刷新列表。');
             setTimeout(fetchCustomers, 3000);
         } catch (err: any) {

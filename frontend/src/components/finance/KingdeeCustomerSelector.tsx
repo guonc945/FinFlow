@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, Loader2, Search, User, X } from 'lucide-react';
 import axios from 'axios';
 import type { Customer } from '../../types';
+import { API_BASE_URL } from '../../services/apiBase';
 import './KingdeeCustomerSelector.css';
 
 interface KingdeeCustomerSelectorProps {
@@ -72,7 +73,7 @@ const KingdeeCustomerSelector = ({
     const fetchCustomers = async () => {
         setIsLoading(true);
         try {
-            const res = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/finance/customers`, {
+            const res = await axios.get(`${API_BASE_URL}/finance/customers`, {
                 params: {
                     search: debouncedSearch,
                     skip: (page - 1) * pageSize,
@@ -103,7 +104,7 @@ const KingdeeCustomerSelector = ({
         if (!text) return;
         setIsLoading(true);
         try {
-            const res = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/finance/customers`, {
+            const res = await axios.get(`${API_BASE_URL}/finance/customers`, {
                 params: {
                     search: text,
                     limit: 10
@@ -271,4 +272,3 @@ const KingdeeCustomerSelector = ({
 };
 
 export default KingdeeCustomerSelector;
-
