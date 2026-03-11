@@ -1,0 +1,126 @@
+{
+    "code": 0,
+    "msg": "success",
+    "data": {
+        "list": [
+            {
+                "id": 3083473214,
+                "communityId": 0,
+                "payStatus": 3,
+                "chargeItemID": 307271,
+                "ciSnapshotId": 133378,
+                "chargeItemName": "车位服务费（标准车位）",
+                "chargeItemType": 1,
+                "bindToll": [
+                    {
+                        "id": 307271,
+                        "name": "车位服务费（标准车位）",
+                        "periodTypeStr": "按月收费,不足一月:按天收费",
+                        "periodType": 101,
+                        "calDesc": "固定金额:30元",
+                        "billTimeStr": "账期本月1号",
+                        "lateMoneyDesc": "无",
+                        "chargeItemInfo": "收费ID：307271（版本ID：2）\n类型：周期性收费\n计算精度：元（不保留小数），四舍五入\n收费方式：按月收费,不足一月:按天收费\n金额计算方式：固定金额:30元\n账单生成日期：账期本月1号\n违约金：无\n备注：\n修改记录\u003e\u003e",
+                        "price": 0,
+                        "isCustom": 0,
+                        "unit": 1,
+                        "roundType": 0,
+                        "sort": 0,
+                        "isDelete": false,
+                        "idType": 0
+                    }
+                ],
+                "billType": 5,
+                "assetType": 2,
+                "assetName": "A099",
+                "assetID": 650853,
+                "startTime": 1753977600,
+                "endTime": 1756655999,
+                "inMonth": "2025-08",
+                "amount": 3000,
+                "billAmount": 3000,
+                "discountAmount": 0,
+                "lateMoneyAmount": 0,
+                "payType": 4,
+                "payTime": 1768899954,
+                "createTime": 1768899693,
+                "canRevoke": 1,
+                "remark": "",
+                "version": 1,
+                "assetTypeStr": "车位",
+                "payTypeStr": "线下-微信",
+                "payStatusStr": "已缴",
+                "billTypeStr": "系统生成",
+                "userList": [
+                    {
+                        "id": 1991382,
+                        "name": "刘磊(18487721996)",
+                        "MeterExtInfo": {
+                            "Type": 0,
+                            "HouseId": 0,
+                            "userType": 0
+                        },
+                        "politicalStatusId": 0,
+                        "isSystem": 0
+                    }
+                ],
+                "FullHouseName": "",
+                "depositAmount": 0,
+                "badBillState": 0,
+                "isBadBill": false,
+                "houseId": 2837065,
+                "parkId": 0,
+                "parkName": "",
+                "dealLogId": 15741001,
+                "snapshotSize": "",
+                "nowSize": "",
+                "categoryName": "物业服务费",
+                "visibleInfo": {
+                    "billId": 3083473214,
+                    "visibleType": 0,
+                    "visibleUserList": null,
+                    "visibleUserIdList": null,
+                    "visibleDescStr": "不限制"
+                },
+                "bindHouseInfo": {
+                    "id": 2837065,
+                    "name": "3栋/-/1601",
+                    "MeterExtInfo": {
+                        "Type": 0,
+                        "HouseId": 0,
+                        "userType": 0
+                    },
+                    "politicalStatusId": 0,
+                    "isSystem": 0
+                },
+                "hasSplit": false,
+                "splitDesc": "",
+                "secondPayChannel": 0,
+                "secondPayAmount": 0,
+                "subMchId": "",
+                "subMchName": "",
+                "assetNameByte": null,
+                "chargeItemNameByte": null,
+                "lastOpTime": "2026-01-20 17:06:07",
+                "meterType": 0,
+                "receiptId": "1238200000535"
+            }
+        ],
+        "hasMore": true,
+        "total": 24558,
+        "index": "{\"total\":24558}",
+        "noCreateBillTotal": 0,
+        "blockIndex": "",
+        "maxAccessible": 0,
+        "statusData": null,
+        "tabNameInfo": {
+            "communityNumName": "",
+            "houseNumName": "",
+            "houseSizeName": "",
+            "userNumName": "",
+            "parkNumName": "",
+            "carNumName": ""
+        },
+        "communityName": ""
+    }
+}

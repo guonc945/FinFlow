@@ -1,0 +1,7 @@
+{
+  "预收收取物业费": [
+    "Field: charge_item_name, OP: ==, Expected: 商业物业费, Actual: 车位服务费（地下车位）, Match: False",
+    "Field: charge_item_name, OP: ==, Expected: 住宅物业服务费, Actual: 车位服务费（地下车位）, Match: False",
+    "Field: charge_item_name, OP: ==, Expected: 物业管理服务费, Actual: 车位服务费（地下车位）, Match: False"
+  ]
+}

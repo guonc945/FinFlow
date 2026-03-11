@@ -1,0 +1,39 @@
+/* Charge-Items Module Style */
+.charge-items-config-modal {
+    max-width: 600px;
+    width: 95vw;
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 1.5rem !important;
+    padding: 2rem !important;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.2);
+    position: relative;
+    z-index: 9999;
+}
+
+.info-badge {
+    background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+    border: 1px solid rgba(59, 130, 246, 0.1);
+}
+
+.modal-header .modal-close-btn {
+    padding: 0.5rem;
+    border-radius: 0.5rem;
+    transition: all 0.2s;
+    color: #94a3b8;
+}
+
+.modal-header .modal-close-btn:hover {
+    background: #fee2e2;
+    color: #ef4444;
+}
+
+/* Ensure the selector triggers look good in modal */
+.charge-items-config-modal .subject-selector-container {
+    padding: 0.25rem 0;
+}
+
+.charge-items-config-modal .selector-input-wrapper {
+    background: rgba(255, 255, 255, 0.5);
+}

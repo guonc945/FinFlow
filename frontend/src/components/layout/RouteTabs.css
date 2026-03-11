@@ -1,0 +1,110 @@
+.route-tabs-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.route-tabs-header {
+    display: flex;
+    gap: 4px;
+    padding: 10px 24px 0 24px;
+    margin-bottom: 0;
+    overflow-x: auto;
+    background: rgba(255, 255, 255, 0.5);
+    border-bottom: 1px solid var(--border-color);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+
+.route-tabs-header::-webkit-scrollbar {
+    height: 4px;
+}
+
+.route-tabs-header::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+}
+
+.route-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border-radius: 8px 8px 0 0;
+    background: transparent;
+    border: 1px solid transparent;
+    border-bottom: none;
+    color: var(--text-secondary);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+    user-select: none;
+    position: relative;
+    top: 1px;
+    /* Overlap the bottom border */
+}
+
+.route-tab:hover {
+    background: rgba(0, 0, 0, 0.04);
+    color: var(--text-primary);
+}
+
+.route-tab.active {
+    background: var(--bg-card);
+    border-color: rgba(0, 0, 0, 0.05);
+    color: var(--primary-600);
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.02);
+}
+
+.route-tab.active::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--bg-card);
+}
+
+.tab-title {
+    flex-shrink: 0;
+}
+
+.tab-close-wrapper {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    width: 20px;
+    height: 20px;
+    transition: all 0.2s ease;
+    margin-right: -4px;
+    color: inherit;
+}
+
+.tab-close-wrapper:hover {
+    background: rgba(0, 0, 0, 0.08);
+    color: var(--error);
+}
+
+.tab-close {
+    opacity: 0.7;
+    transition: opacity 0.2s ease;
+}
+
+.tab-close-wrapper:hover .tab-close {
+    opacity: 1;
+}
+
+.route-tabs-content {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    height: 100%;
+}
+
+.route-tab-pane {
+    height: 100%;
+}

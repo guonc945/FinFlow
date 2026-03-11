@@ -1,0 +1,191 @@
+.route-transition-fallback {
+    min-height: 100%;
+    display: flex;
+    align-items: stretch;
+    justify-content: center;
+}
+
+.route-transition-fallback.fullscreen {
+    min-height: 100vh;
+    padding: 1.5rem;
+    background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+}
+
+.route-transition-skeleton {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.route-transition-header,
+.route-transition-card,
+.route-transition-panel {
+    position: relative;
+    overflow: hidden;
+    border-radius: 1rem;
+    background: rgba(255, 255, 255, 0.86);
+    border: 1px solid rgba(255, 255, 255, 0.72);
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+}
+
+.route-transition-header {
+    height: 72px;
+}
+
+.route-transition-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
+}
+
+.route-transition-grid.stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.route-transition-grid.charts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.route-transition-grid.split {
+    grid-template-columns: 280px minmax(0, 1fr);
+    align-items: stretch;
+}
+
+.route-transition-card {
+    height: 120px;
+}
+
+.route-transition-card.compact {
+    height: 104px;
+}
+
+.route-transition-panel {
+    min-height: 360px;
+    flex: 1;
+}
+
+.route-transition-panel.chart {
+    min-height: 260px;
+}
+
+.route-transition-panel.medium {
+    min-height: 220px;
+}
+
+.route-transition-toolbar,
+.route-transition-table,
+.route-transition-sidebar,
+.route-transition-login-card {
+    position: relative;
+    overflow: hidden;
+    border-radius: 1rem;
+    background: rgba(255, 255, 255, 0.86);
+    border: 1px solid rgba(255, 255, 255, 0.72);
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+}
+
+.route-transition-toolbar {
+    height: 62px;
+}
+
+.route-transition-table {
+    min-height: 420px;
+    padding: 1rem;
+}
+
+.route-transition-table-head,
+.route-transition-table-row {
+    border-radius: 0.75rem;
+    background: rgba(148, 163, 184, 0.12);
+}
+
+.route-transition-table-head {
+    height: 46px;
+    margin-bottom: 0.875rem;
+}
+
+.route-transition-table-row {
+    height: 58px;
+    margin-bottom: 0.75rem;
+}
+
+.route-transition-table-row.short {
+    width: 72%;
+    margin-bottom: 0;
+}
+
+.route-transition-sidebar {
+    min-height: 470px;
+}
+
+.route-transition-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.route-transition-login-card {
+    width: min(440px, 100%);
+    margin: auto;
+    padding: 2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    min-height: 420px;
+    justify-content: center;
+}
+
+.route-transition-login-logo,
+.route-transition-login-title,
+.route-transition-login-input,
+.route-transition-login-button {
+    border-radius: 0.875rem;
+    background: rgba(148, 163, 184, 0.14);
+}
+
+.route-transition-login-logo {
+    width: 64px;
+    height: 64px;
+    margin: 0 auto 0.5rem;
+    border-radius: 1.25rem;
+}
+
+.route-transition-login-title {
+    width: 58%;
+    height: 24px;
+    margin: 0 auto 0.75rem;
+}
+
+.route-transition-login-input {
+    height: 52px;
+}
+
+.route-transition-login-button {
+    height: 52px;
+    margin-top: 0.5rem;
+}
+
+.shimmer::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.58), transparent);
+    animation: route-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes route-shimmer {
+    100% {
+        transform: translateX(100%);
+    }
+}
+
+@media (max-width: 1024px) {
+    .route-transition-grid,
+    .route-transition-grid.stats,
+    .route-transition-grid.charts,
+    .route-transition-grid.split {
+        grid-template-columns: 1fr;
+    }
+}

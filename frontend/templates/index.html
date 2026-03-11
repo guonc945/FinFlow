@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FinFlow 财务中台管理系统</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body>
+    <div class="app-container">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <div class="logo-icon">F</div>
+                    <div class="logo-text">FinFlow</div>
+                </div>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="/" class="nav-item active" data-page="dashboard">
+                    <span class="nav-icon">📊</span>
+                    <span class="nav-text">仪表盘</span>
+                </a>
+                <a href="/bills" class="nav-item" data-page="bills">
+                    <span class="nav-icon">📋</span>
+                    <span class="nav-text">账单管理</span>
+                </a>
+                <a href="/charge-items" class="nav-item" data-page="charge-items">
+                    <span class="nav-icon">💰</span>
+                    <span class="nav-text">收费项目</span>
+                </a>
+                <a href="/projects" class="nav-item" data-page="projects">
+                    <span class="nav-icon">🏢</span>
+                    <span class="nav-text">项目管理</span>
+                </a>
+                <a href="/reports" class="nav-item" data-page="reports">
+                    <span class="nav-icon">📈</span>
+                    <span class="nav-text">报表分析</span>
+                </a>
+                <a href="/settings" class="nav-item" data-page="settings">
+                    <span class="nav-icon">⚙️</span>
+                    <span class="nav-text">系统设置</span>
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <div class="user-info">
+                    <div class="user-avatar">U</div>
+                    <div class="user-details">
+                        <div class="user-name">管理员</div>
+                        <div class="user-role">系统管理员</div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            <header class="top-bar">
+                <div class="top-bar-left">
+                    <button class="menu-toggle">☰</button>
+                    <h1 class="page-title">仪表盘</h1>
+                </div>
+                <div class="top-bar-right">
+                    <div class="search-box">
+                        <input type="text" placeholder="搜索..." id="global-search">
+                        <span class="search-icon">🔍</span>
+                    </div>
+                    <button class="icon-btn" id="notifications-btn">🔔</button>
+                    <button class="icon-btn" id="settings-btn">⚙️</button>
+                    <div class="user-profile">
+                        <div class="user-avatar-small">U</div>
+                    </div>
+                </div>
+            </header>
+
+            <div class="content-wrapper">
+                <div class="stats-grid" id="stats-grid">
+                    <div class="stat-card loading">
+                        <div class="stat-icon blue">📋</div>
+                        <div class="stat-info">
+                            <div class="stat-label">总账单数</div>
+                            <div class="stat-value">--</div>
+                            <div class="stat-change">--</div>
+                        </div>
+                    </div>
+                    <div class="stat-card loading">
+                        <div class="stat-icon green">💰</div>
+                        <div class="stat-info">
+                            <div class="stat-label">本月收入</div>
+                            <div class="stat-value">--</div>
+                            <div class="stat-change">--</div>
+                        </div>
+                    </div>
+                    <div class="stat-card loading">
+                        <div class="stat-icon orange">⏳</div>
+                        <div class="stat-info">
+                            <div class="stat-label">待处理</div>
+                            <div class="stat-value">--</div>
+                            <div class="stat-change">--</div>
+                        </div>
+                    </div>
+                    <div class="stat-card loading">
+                        <div class="stat-icon purple">🏢</div>
+                        <div class="stat-info">
+                            <div class="stat-label">项目数量</div>
+                            <div class="stat-value">--</div>
+                            <div class="stat-change">--</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="dashboard-grid">
+                    <div class="card chart-card">
+                        <div class="card-header">
+                            <h3 class="card-title">收入趋势</h3>
+                            <div class="card-actions">
+                                <button class="btn-sm" data-period="month">本月</button>
+                                <button class="btn-sm btn-outline" data-period="quarter">季度</button>
+                                <button class="btn-sm btn-outline" data-period="year">年度</button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="chart-placeholder" id="income-chart">
+                                <div class="loading-placeholder">加载中...</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">收费项目排行</h3>
+                            <button class="btn-sm" id="view-all-charge-items">查看全部</button>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table">
+                                    <thead>
+                                        <tr>
+                                            <th>排名</th>
+                                            <th>项目名称</th>
+                                            <th>金额</th>
+                                            <th>占比</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="charge-items-ranking">
+                                        <tr>
+                                            <td colspan="4" class="loading-data">加载中...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">最近账单</h3>
+                            <button class="btn-sm" id="view-all-bills">查看全部</button>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table">
+                                    <thead>
+                                        <tr>
+                                            <th>账单ID</th>
+                                            <th>项目</th>
+                                            <th>金额</th>
+                                            <th>状态</th>
+                                            <th>创建时间</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="recent-bills">
+                                        <tr>
+                                            <td colspan="5" class="loading-data">加载中...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">项目状态</h3>
+                            <button class="btn-sm" id="view-all-projects">查看全部</button>
+                        </div>
+                        <div class="card-body">
+                            <div class="project-status-list" id="project-status-list">
+                                <div class="loading-placeholder">加载中...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Page Templates -->
+    <template id="bills-page-template">
+        <div class="page-content">
+            <div class="page-header">
+                <h2>账单管理</h2>
+                <div class="page-actions">
+                    <button class="btn btn-primary" id="refresh-bills">刷新</button>
+                    <button class="btn btn-success" id="export-bills">导出</button>
+                </div>
+            </div>
+            <div class="filters">
+                <select id="bills-status-filter">
+                    <option value="">全部状态</option>
+                    <option value="已缴">已缴</option>
+                    <option value="待缴">待缴</option>
+                </select>
+                <input type="date" id="bills-date-from">
+                <input type="date" id="bills-date-to">
+                <button class="btn btn-outline" id="apply-bills-filter">筛选</button>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>账单ID</th>
+                            <th>项目名称</th>
+                            <th>房屋信息</th>
+                            <th>金额</th>
+                            <th>状态</th>
+                            <th>创建时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="bills-table-body">
+                        <tr>
+                            <td colspan="7" class="loading-data">加载中...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="pagination" id="bills-pagination"></div>
+        </div>
+    </template>
+
+    <template id="charge-items-page-template">
+        <div class="page-content">
+            <div class="page-header">
+                <h2>收费项目</h2>
+                <div class="page-actions">
+                    <button class="btn btn-primary" id="add-charge-item">新增项目</button>
+                    <button class="btn btn-outline" id="refresh-charge-items">刷新</button>
+                </div>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>项目ID</th>
+                            <th>社区ID</th>
+                            <th>项目名称</th>
+                            <th>创建时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="charge-items-table-body">
+                        <tr>
+                            <td colspan="5" class="loading-data">加载中...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="pagination" id="charge-items-pagination"></div>
+        </div>
+    </template>
+
+    <template id="projects-page-template">
+        <div class="page-content">
+            <div class="page-header">
+                <h2>项目管理</h2>
+                <div class="page-actions">
+                    <button class="btn btn-primary" id="add-project">新增项目</button>
+                    <button class="btn btn-outline" id="refresh-projects">刷新</button>
+                </div>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>项目ID</th>
+                            <th>项目名称</th>
+                            <th>创建时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="projects-table-body">
+                        <tr>
+                            <td colspan="4" class="loading-data">加载中...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="pagination" id="projects-pagination"></div>
+        </div>
+    </template>
+
+    <script src="/static/js/api.js"></script>
+    <script src="/static/js/main.js"></script>
+</body>
+</html>

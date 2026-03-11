@@ -1,0 +1,38 @@
+13: from fetch_houses import sync_houses
+216: # Houses
+217: @app.get("/api/houses", response_model=List[schemas.HouseResponse])
+218: def get_houses(community_id: Optional[str] = None, skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+219: query = db.query(models.House)
+221: query = query.filter(models.House.community_id == community_id)
+222: houses = query.order_by(models.House.created_at.desc()).offset(skip).limit(limit).all()
+223: return houses
+225: @app.post("/api/houses/sync")
+226: def sync_houses_endpoint(
+228: request: schemas.HouseSyncRequest,
+233: print(f"DEBUG: Syncing houses for community IDs: {community_ids}")
+240: sync_houses(c_ids, t_id)
+247: "message": "House sync started",
+334: "full_house_name": bill.full_house_name,
+394: "full_house_name": bill.full_house_name,
+2117: # ===================== Kingdee House Management =====================
+2119: @app.get("/api/finance/kd-houses", response_model=schemas.PaginatedKingdeeHouseResponse)
+2120: def get_kd_houses(
+2126: query = db.query(models.KingdeeHouse)
+2130: (models.KingdeeHouse.number.ilike(search_filter)) |
+2131: (models.KingdeeHouse.wtw8_number.ilike(search_filter)) |
+2132: (models.KingdeeHouse.name.ilike(search_filter))
+2135: kd_houses = query.order_by(models.KingdeeHouse.wtw8_number).offset(skip).limit(limit).all()
+2136: return {"items": kd_houses, "total": total}
+2138: @app.post("/api/finance/kd-houses/sync")
+2139: def sync_kd_houses(
+2140: request: schemas.KingdeeHouseSyncRequest,
+2144: """Sync kingdee houses using configured API"""
+2156: logger.error("No configuration found for kd_houses: '查询金蝶系统房号信息' external API not found.")
+2198: db_session.query(models.KingdeeHouse).delete()
+2210: logger.info(f"Syncing kd_houses page {page_no}...")
+2305: kdhouse_data = {
+2316: unique_rows[api_native_id] = kdhouse_data
+2323: stmt = insert(models.KingdeeHouse).values(batch)
+2349: logger.info(f"Finished. Total synced kd_houses: {total_synced}")
+2352: logger.error(f"Sync kd_houses failed: {e}")
+2357: return {"message": "Kingdee House sync started"}

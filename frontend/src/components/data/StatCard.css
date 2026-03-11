@@ -1,0 +1,140 @@
+.stat-card {
+    padding: var(--space-6);
+    border-radius: var(--radius-lg);
+    background: white;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    box-shadow: var(--shadow-sm);
+    transition: transform var(--transition-normal), box-shadow var(--transition-normal);
+}
+
+.stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.stat-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.stat-title {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.stat-value {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    line-height: 1.2;
+}
+
+.stat-change {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+.stat-change.up {
+    color: var(--success);
+}
+
+.stat-change.down {
+    color: var(--error);
+}
+
+.stat-change.neutral {
+    color: var(--text-tertiary);
+}
+
+.trend-label {
+    color: var(--text-tertiary);
+    font-weight: 400;
+    font-size: 0.75rem;
+}
+
+.stat-icon-wrapper {
+    padding: var(--space-3);
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.stat-icon-wrapper.blue {
+    background-color: var(--primary-50);
+    color: var(--primary-600);
+}
+
+.stat-icon-wrapper.green {
+    background-color: var(--success-bg);
+    color: var(--success);
+}
+
+.stat-icon-wrapper.orange {
+    background-color: var(--warning-bg);
+    color: var(--warning);
+}
+
+.stat-icon-wrapper.red {
+    background-color: var(--error-bg);
+    color: var(--error);
+}
+
+.stat-icon-wrapper.purple {
+    background-color: var(--secondary-50);
+    color: var(--secondary-600);
+}
+
+/* Skeleton Loading Styles */
+.skeleton {
+    background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+    background-size: 200% 100%;
+    animation: skeleton-loading 1.5s infinite;
+    border-radius: 4px;
+}
+
+@keyframes skeleton-loading {
+    0% {
+        background-position: 200% 0;
+    }
+
+    100% {
+        background-position: -200% 0;
+    }
+}
+
+.title-skeleton {
+    width: 60px;
+    height: 14px;
+}
+
+.value-skeleton {
+    width: 100px;
+    height: 32px;
+    margin-top: 4px;
+}
+
+.change-skeleton {
+    width: 80px;
+    height: 12px;
+    margin-top: 8px;
+}
+
+.skeleton-icon {
+    width: 48px;
+    height: 48px;
+    background: #f0f0f0;
+    animation: skeleton-loading 1.5s infinite;
+}
+
+.dark-mode .skeleton {
+    background: linear-gradient(90deg, #2d3748 25%, #4a5568 50%, #2d3748 75%);
+    background-size: 200% 100%;
+}

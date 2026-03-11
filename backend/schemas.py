@@ -1,0 +1,769 @@
+from pydantic import BaseModel, Field
+from typing import Optional, List, Any, Literal, Dict
+from datetime import datetime
+from decimal import Decimal
+
+# Project Schemas
+class ProjectUpdate(BaseModel):
+    kingdee_project_id: Optional[str] = None
+    default_receive_bank_id: Optional[str] = None
+    default_pay_bank_id: Optional[str] = None
+    kingdee_account_book_id: Optional[str] = None
+
+# OA Callback Schema
+class OACallback(BaseModel):
+    flow_id: str
+    business_type: str
+    applicant_id: str
+    applicant_name: str
+    department_code: str
+    total_amount: Decimal
+    approved_at: datetime
+    form_data: dict
+
+# Journal Response Schema
+class CashJournalResponse(BaseModel):
+    id: int
+    flow_id: str
+    amount: Decimal
+    direction: Optional[str]
+    status: str
+    voucher_id: Optional[str]
+    error_msg: Optional[str]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+# Voucher Preview Schema
+class VoucherEntry(BaseModel):
+    line_no: int
+    dr_cr: str
+    account_code: str
+    amount: Decimal
+    summary: str
+    aux_items: Optional[dict]
+
+class VoucherPreview(BaseModel):
+    entries: List[VoucherEntry]
+    total_debit: Decimal
+    total_credit: Decimal
+    is_balanced: bool
+
+class PushResult(BaseModel):
+    success: bool
+    voucher_id: Optional[str]
+    message: Optional[str]
+
+
+# Organization Schemas
+class OrganizationBase(BaseModel):
+    name: str
+    code: Optional[str] = None
+    parent_id: Optional[int] = None
+    level: Optional[int] = 1
+    sort_order: Optional[int] = 0
+    status: Optional[int] = 1
+    description: Optional[str] = None
+
+
+class OrganizationCreate(OrganizationBase):
+    pass
+
+
+class OrganizationUpdate(BaseModel):
+    name: Optional[str] = None
+    code: Optional[str] = None
+    parent_id: Optional[int] = None
+    level: Optional[int] = None
+    sort_order: Optional[int] = None
+    status: Optional[int] = None
+    description: Optional[str] = None
+
+
+class OrganizationResponse(OrganizationBase):
+    id: int
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class OrganizationTree(OrganizationResponse):
+    children: List["OrganizationTree"] = []
+
+
+# User Schemas
+class UserBase(BaseModel):
+    username: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    real_name: Optional[str] = None
+    org_id: Optional[int] = None
+    status: Optional[int] = 1
+    role: Optional[str] = "user"
+
+
+class UserCreate(UserBase):
+    password: str
+
+
+class UserUpdate(BaseModel):
+    username: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    real_name: Optional[str] = None
+    org_id: Optional[int] = None
+    status: Optional[int] = None
+    password: Optional[str] = None
+    account_book_ids: Optional[List[str]] = None
+
+
+class UserResponse(UserBase):
+    id: int
+    avatar: Optional[str] = None
+    last_login: Optional[datetime] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    org_name: Optional[str] = None
+    account_book_ids: Optional[List[str]] = None
+    role: Optional[str] = "user"
+
+    class Config:
+        from_attributes = True
+
+
+# Bill Sync Request Schema
+class BillSyncRequest(BaseModel):
+    community_ids: Optional[List[int]] = None
+
+
+class BillPreviewRef(BaseModel):
+    bill_id: int
+    community_id: int
+
+
+class BatchVoucherPreviewRequest(BaseModel):
+    bills: List[BillPreviewRef] = Field(default_factory=list)
+
+
+class VoucherPushRequest(BaseModel):
+    kingdee_json: Dict[str, Any]
+    api_id: Optional[int] = None
+    bills: List[BillPreviewRef] = Field(default_factory=list)
+    force_push: bool = False
+
+
+class BillVoucherResetRequest(BaseModel):
+    bills: List[BillPreviewRef] = Field(default_factory=list)
+    reason: Optional[str] = None
+
+
+class VoucherQueryRequest(BaseModel):
+    voucher_id: str
+    page_no: int = 1
+    page_size: int = 10
+
+# External Service Schemas
+class ExternalServiceBase(BaseModel):
+    service_name: str
+    display_name: Optional[str] = None
+    app_id: Optional[str] = None
+    app_secret: Optional[str] = None
+    auth_url: Optional[str] = None
+    base_url: Optional[str] = None
+    is_active: Optional[bool] = True
+    auth_type: Optional[str] = "oauth2"
+    auth_method: Optional[str] = "POST"
+    auth_headers: Optional[str] = None
+    auth_body: Optional[str] = None
+    refresh_token: Optional[str] = None
+
+
+
+
+class ExternalServiceCreate(ExternalServiceBase):
+    pass
+
+class ExternalServiceUpdate(BaseModel):
+    display_name: Optional[str] = None
+    app_id: Optional[str] = None
+    app_secret: Optional[str] = None
+    auth_url: Optional[str] = None
+    base_url: Optional[str] = None
+    is_active: Optional[bool] = None
+    auth_type: Optional[str] = None
+    auth_method: Optional[str] = None
+    auth_headers: Optional[str] = None
+    auth_body: Optional[str] = None
+    refresh_token: Optional[str] = None
+
+
+
+
+class ExternalServiceResponse(ExternalServiceBase):
+    id: int
+    expires_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+# External API Schemas
+class ExternalApiBase(BaseModel):
+    service_id: int
+    name: str
+    method: Optional[str] = "POST"
+    url_path: str
+    description: Optional[str] = None
+    is_active: Optional[bool] = True
+    request_headers: Optional[str] = None
+    request_body: Optional[str] = None
+    response_example: Optional[str] = None
+    notes: Optional[str] = None
+    category: Optional[str] = None
+
+class ExternalApiCreate(ExternalApiBase):
+    pass
+
+class ExternalApiUpdate(BaseModel):
+    name: Optional[str] = None
+    method: Optional[str] = None
+    url_path: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+    request_headers: Optional[str] = None
+    request_body: Optional[str] = None
+    response_example: Optional[str] = None
+    notes: Optional[str] = None
+    category: Optional[str] = None
+
+class ExternalApiResponse(ExternalApiBase):
+    id: int
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+class ExternalServiceWithApis(ExternalServiceResponse):
+    apis: List[ExternalApiResponse] = []
+
+# Global Variable Schemas
+class GlobalVariableBase(BaseModel):
+    key: str
+    value: str
+    description: Optional[str] = None
+    category: Optional[str] = "common"
+    is_secret: Optional[bool] = False
+
+class GlobalVariableCreate(GlobalVariableBase):
+    pass
+
+class GlobalVariableUpdate(BaseModel):
+    key: Optional[str] = None
+    value: Optional[str] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    is_secret: Optional[bool] = None
+
+class GlobalVariableResponse(GlobalVariableBase):
+    id: int
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ExpressionFunctionResponse(BaseModel):
+    key: str
+    category: str
+    description: str
+    syntax: str
+    example: str
+    insert_text: str
+
+# Voucher Template Schemas
+class VoucherEntryRuleBase(BaseModel):
+    line_no: int = Field(..., ge=1)
+    dr_cr: Literal["D", "C"]
+    account_code: str
+    amount_expr: str
+    summary_expr: str
+    currency_expr: Optional[str] = "'CNY'"
+    localrate_expr: Optional[str] = "1"
+    aux_items: Optional[str] = None
+    main_cf_assgrp: Optional[str] = None
+
+class VoucherEntryRuleCreate(VoucherEntryRuleBase):
+    pass
+
+class VoucherEntryRuleResponse(VoucherEntryRuleBase):
+    rule_id: int
+    template_id: str
+
+    class Config:
+        from_attributes = True
+
+class VoucherTemplateBase(BaseModel):
+    template_id: str
+    template_name: str
+    business_type: str
+    description: Optional[str] = None
+    active: Optional[bool] = True
+    priority: Optional[int] = Field(100, ge=0)
+    source_type: Optional[str] = None
+    trigger_condition: Optional[str] = None
+    book_number_expr: Optional[str] = "'BU-35256'"
+    vouchertype_number_expr: Optional[str] = "'0001'"
+    attachment_expr: Optional[str] = "0"
+    bizdate_expr: Optional[str] = "{CURRENT_DATE}"
+    bookeddate_expr: Optional[str] = "{CURRENT_DATE}"
+
+class VoucherTemplateCreate(VoucherTemplateBase):
+    rules: List[VoucherEntryRuleCreate] = Field(default_factory=list)
+
+class VoucherTemplateUpdate(BaseModel):
+    template_name: Optional[str] = None
+    business_type: Optional[str] = None
+    description: Optional[str] = None
+    active: Optional[bool] = None
+    priority: Optional[int] = Field(None, ge=0)
+    book_number_expr: Optional[str] = None
+    vouchertype_number_expr: Optional[str] = None
+    attachment_expr: Optional[str] = None
+    bizdate_expr: Optional[str] = None
+    bookeddate_expr: Optional[str] = None
+    source_type: Optional[str] = None
+    trigger_condition: Optional[str] = None
+    rules: Optional[List[VoucherEntryRuleCreate]] = None
+
+class VoucherTemplateResponse(VoucherTemplateBase):
+    rules: List[VoucherEntryRuleResponse] = Field(default_factory=list)
+
+    class Config:
+        from_attributes = True
+
+
+class AccountingSubjectBase(BaseModel):
+    id: str
+    number: str
+    name: str
+    fullname: Optional[str] = None
+    level: Optional[int] = None
+    is_leaf: Optional[bool] = None
+    direction: Optional[str] = None
+    is_active: Optional[bool] = True
+    long_number: Optional[str] = None
+    is_cash: Optional[bool] = False
+    is_bank: Optional[bool] = False
+    is_cash_equivalent: Optional[bool] = False
+    account_type_number: Optional[str] = None
+    acct_currency: Optional[str] = None
+    
+    ac_check: Optional[bool] = False
+    is_qty: Optional[bool] = False
+    currency_entry: Optional[str] = None
+    
+    check_items: Optional[str] = None
+    raw_data: Optional[str] = None
+
+class AccountingSubjectCreate(AccountingSubjectBase):
+    pass
+
+class AccountingSubjectResponse(AccountingSubjectBase):
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+class AccountingSubjectSyncRequest(BaseModel):
+    override_config: Optional[dict] = None
+
+class PaginatedAccountingSubjectResponse(BaseModel):
+    items: List[AccountingSubjectResponse]
+    total: int
+
+
+# Customer Schemas
+class CustomerBase(BaseModel):
+    id: str
+    number: str
+    name: str
+    status: Optional[str] = None
+    enable: Optional[str] = None
+    type: Optional[str] = None
+    linkman: Optional[str] = None
+    bizpartner_phone: Optional[str] = None
+    bizpartner_address: Optional[str] = None
+    societycreditcode: Optional[str] = None
+    org_name: Optional[str] = None
+    createorg_name: Optional[str] = None
+    
+    entry_bank: Optional[str] = None
+    entry_linkman: Optional[str] = None
+    raw_data: Optional[str] = None
+
+class CustomerResponse(CustomerBase):
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+class CustomerSyncRequest(BaseModel):
+    override_config: Optional[dict] = None
+
+class PaginatedCustomerResponse(BaseModel):
+    items: List[CustomerResponse]
+    total: int
+
+# Supplier Schemas
+class SupplierBase(BaseModel):
+    id: str
+    number: str
+    name: str
+    status: Optional[str] = None
+    enable: Optional[str] = None
+    type: Optional[str] = None
+    createorg_number: Optional[str] = None
+    supplier_status_name: Optional[str] = None
+    raw_data: Optional[str] = None
+
+class SupplierResponse(SupplierBase):
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+class SupplierSyncRequest(BaseModel):
+    override_config: Optional[dict] = None
+
+class PaginatedSupplierResponse(BaseModel):
+    items: List[SupplierResponse]
+    total: int
+
+# KingdeeHouse Schemas
+class KingdeeHouseBase(BaseModel):
+    id: str
+    number: Optional[str] = None
+    wtw8_number: Optional[str] = None
+    name: str
+    tzqslx: Optional[str] = None
+    splx: Optional[str] = None
+    createorg_name: Optional[str] = None
+    createorg_number: Optional[str] = None
+    raw_data: Optional[str] = None
+
+class KingdeeHouseResponse(KingdeeHouseBase):
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+class KingdeeHouseSyncRequest(BaseModel):
+    override_config: Optional[dict] = None
+
+class PaginatedKingdeeHouseResponse(BaseModel):
+    items: List[KingdeeHouseResponse]
+    total: int
+
+# KingdeeAccountBook Schemas
+class KingdeeAccountBookBase(BaseModel):
+    id: str
+    number: Optional[str] = None
+    name: str
+    org_number: Optional[str] = None
+    org_name: Optional[str] = None
+    accountingsys_number: Optional[str] = None
+    accountingsys_name: Optional[str] = None
+    booknature: Optional[str] = None
+    accounttable_name: Optional[str] = None
+    basecurrency_name: Optional[str] = None
+    status: Optional[str] = None
+    enable: Optional[str] = None
+    raw_data: Optional[str] = None
+
+class KingdeeAccountBookResponse(KingdeeAccountBookBase):
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+class KingdeeAccountBookSyncRequest(BaseModel):
+    override_config: Optional[dict] = None
+
+class PaginatedKingdeeAccountBookResponse(BaseModel):
+    items: List[KingdeeAccountBookResponse]
+    total: int
+
+# House Schemas
+class HouseUserItemResponse(BaseModel):
+    id: int
+    house_fk: int
+    origin_id: Optional[int] = None
+    item_id: int
+    name: Optional[str] = None
+    item_type: Optional[int] = None
+    licence: Optional[str] = None
+    park_name: Optional[str] = None
+    owner_name: Optional[str] = None
+    owner_phone: Optional[str] = None
+    charge_item_info: Optional[str] = None
+    start_time: Optional[int] = None
+    end_time: Optional[int] = None
+    community_name: Optional[str] = None
+    natural_period: Optional[int] = None
+    period_type: Optional[int] = None
+    period_num: Optional[int] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class HouseParkBriefResponse(BaseModel):
+    """房屋下的车位列表（从 parks 表反查）"""
+
+    id: int
+    park_id: str
+    name: str
+    park_type_name: Optional[str] = None
+    state: Optional[int] = None
+    user_name: Optional[str] = None
+    house_name: Optional[str] = None
+    house_id: Optional[str] = None
+    house_fk: Optional[int] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class HouseResponse(BaseModel):
+    id: int
+    house_id: str
+    community_id: str
+    community_name: Optional[str] = None
+    house_name: str
+    building_id: Optional[int] = None
+    building_name: Optional[str] = None
+    unit_id: Optional[int] = None
+    unit_name: Optional[str] = None
+    layer: Optional[int] = None
+    building_size: Optional[Decimal] = None
+    usable_size: Optional[Decimal] = None
+    floor_name: Optional[str] = None
+    area: Optional[Decimal] = None
+    user_num: Optional[int] = None
+    charge_num: Optional[int] = None
+    park_num: Optional[int] = None
+    car_num: Optional[int] = None
+    combina_name: Optional[str] = None
+    create_uid: Optional[int] = None
+    disable: Optional[bool] = None
+    expand: Optional[str] = None
+    expand_info: Optional[str] = None
+    tag_list: Optional[str] = None
+    attachment_list: Optional[str] = None
+    house_type_name: Optional[str] = None
+    house_status_name: Optional[str] = None
+    user_list: Optional[List[HouseUserItemResponse]] = None
+    park_list: Optional[List[HouseParkBriefResponse]] = None
+    kingdee_house_id: Optional[str] = None
+    kingdee_house: Optional[KingdeeHouseResponse] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class HouseUpdate(BaseModel):
+    kingdee_house_id: Optional[str] = None
+
+class HouseSyncRequest(BaseModel):
+    community_ids: List[Any]
+
+class ResidentResponse(BaseModel):
+    id: int
+    resident_id: str
+    community_id: str
+    community_name: Optional[str] = None
+    name: str
+    phone: Optional[str] = None
+    houses: Optional[str] = None
+    labels: Optional[str] = None
+    kingdee_customer_id: Optional[str] = None
+    kingdee_customer: Optional[CustomerResponse] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class ResidentUpdate(BaseModel):
+    kingdee_customer_id: Optional[str] = None
+
+class ResidentSyncRequest(BaseModel):
+    community_ids: List[Any]
+
+class ParkResponse(BaseModel):
+    id: int
+    park_id: str
+    community_id: str
+    community_name: Optional[str] = None
+    name: str
+    park_type_name: Optional[str] = None
+    state: Optional[int] = None
+    user_name: Optional[str] = None
+    house_name: Optional[str] = None
+    house_id: Optional[str] = None
+    house_fk: Optional[int] = None
+    kingdee_house_id: Optional[str] = None
+    kingdee_house: Optional[KingdeeHouseResponse] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class ParkUpdate(BaseModel):
+    kingdee_house_id: Optional[str] = None
+
+class ParkSyncRequest(BaseModel):
+    community_ids: List[Any]
+
+
+# AuxiliaryData Schemas
+class AuxiliaryDataBase(BaseModel):
+    id: str
+    number: str
+    name: str
+    issyspreset: Optional[bool] = None
+    ctrlstrategy: Optional[str] = None
+    enable: Optional[str] = None
+    group_number: Optional[str] = None
+    group_name: Optional[str] = None
+    parent_number: Optional[str] = None
+    parent_name: Optional[str] = None
+    createorg_number: Optional[str] = None
+    createorg_name: Optional[str] = None
+    raw_data: Optional[str] = None
+
+class AuxiliaryDataResponse(AuxiliaryDataBase):
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+class AuxiliaryDataSyncRequest(BaseModel):
+    override_config: Optional[dict] = None
+    categories: Optional[List[str]] = None
+
+class PaginatedAuxiliaryDataResponse(BaseModel):
+    items: List[AuxiliaryDataResponse]
+    total: int
+
+# AuxiliaryDataCategory Schemas
+class AuxiliaryDataCategoryBase(BaseModel):
+    id: str
+    number: str
+    name: str
+    fissyspreset: Optional[bool] = None
+    description: Optional[str] = None
+    ctrlstrategy: Optional[str] = None
+    createorg_name: Optional[str] = None
+    createorg_number: Optional[str] = None
+    createorg_id: Optional[str] = None
+    raw_data: Optional[str] = None
+
+class AuxiliaryDataCategoryResponse(AuxiliaryDataCategoryBase):
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+class AuxiliaryDataCategorySyncRequest(BaseModel):
+    override_config: Optional[dict] = None
+
+class PaginatedAuxiliaryDataCategoryResponse(BaseModel):
+    items: List[AuxiliaryDataCategoryResponse]
+    total: int
+
+# ChargeItem Schemas
+class ChargeItemBase(BaseModel):
+    item_id: int
+    communityid: str
+    item_name: str
+    charge_type: Optional[int] = None
+    charge_type_str: Optional[str] = None
+    category_id: Optional[int] = None
+    category_name: Optional[str] = None
+    period_type_str: Optional[str] = None
+    remark: Optional[str] = None
+    current_account_subject_id: Optional[str] = None
+    profit_loss_subject_id: Optional[str] = None
+
+class ChargeItemResponse(ChargeItemBase):
+    created_at: datetime
+    current_account_subject: Optional[AccountingSubjectResponse] = None
+    profit_loss_subject: Optional[AccountingSubjectResponse] = None
+
+    class Config:
+        from_attributes = True
+
+class ChargeItemUpdate(BaseModel):
+    current_account_subject_id: Optional[str] = None
+    profit_loss_subject_id: Optional[str] = None
+
+# KingdeeBankAccount Schemas
+class KingdeeBankAccountBase(BaseModel):
+    id: str
+    bankaccountnumber: Optional[str] = None
+    name: Optional[str] = None
+    acctname: Optional[str] = None
+    company_number: Optional[str] = None
+    company_name: Optional[str] = None
+    openorg_number: Optional[str] = None
+    openorg_name: Optional[str] = None
+    defaultcurrency_number: Optional[str] = None
+    defaultcurrency_name: Optional[str] = None
+    accttype: Optional[str] = None
+    acctstyle: Optional[str] = None
+    finorgtype: Optional[str] = None
+    banktype_number: Optional[str] = None
+    banktype_name: Optional[str] = None
+    bank_number: Optional[str] = None
+    bank_name: Optional[str] = None
+    acctproperty_number: Optional[str] = None
+    acctproperty_name: Optional[str] = None
+    status: Optional[str] = None
+    acctstatus: Optional[str] = None
+    isdefaultrec: Optional[bool] = False
+    isdefaultpay: Optional[bool] = False
+    comment: Optional[str] = None
+    raw_data: Optional[str] = None
+
+class KingdeeBankAccountResponse(KingdeeBankAccountBase):
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+class KingdeeBankAccountSyncRequest(BaseModel):
+    override_config: Optional[dict] = None
+
+class PaginatedKingdeeBankAccountResponse(BaseModel):
+    items: List[KingdeeBankAccountResponse]
+    total: int
+
+class MarkiConfigRequest(BaseModel):
+    app_id: str
+    app_secret: str

@@ -1,0 +1,176 @@
+/* Houses page - Kingdee house mapping modal (scoped) */
+
+.kd-house-mapping-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-4);
+    background: rgba(15, 23, 42, 0.45);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+.kd-house-mapping-modal {
+    width: min(720px, calc(100vw - (2 * var(--space-4))));
+    max-height: min(640px, calc(100vh - (2 * var(--space-4))));
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-color);
+    background: var(--bg-card);
+    box-shadow: var(--shadow-lg);
+    animation: kdHouseModalIn 160ms ease-out;
+}
+
+.kd-house-mapping-modal.kd-house-edit-modal {
+    width: min(920px, calc(100vw - (2 * var(--space-4))));
+    /* 更高的编辑窗口：用最小高度撑开，而不是用固定 max-height 限制 */
+    min-height: min(720px, calc(100vh - (2 * var(--space-4))));
+    /* 仅受视口限制，避免在大屏上被 640/820 上限截断 */
+    max-height: calc(100vh - (2 * var(--space-4)));
+}
+
+.kd-house-mapping-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding: var(--space-5) var(--space-6);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.kd-house-mapping-title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.kd-house-mapping-title h3 {
+    margin: 0;
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.kd-house-mapping-subtitle {
+    margin-top: 0.25rem;
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+}
+
+.kd-house-mapping-close {
+    width: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-md);
+    color: var(--text-tertiary);
+    transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.kd-house-mapping-close:hover {
+    background: var(--gray-100);
+    color: var(--text-primary);
+}
+
+.kd-house-mapping-body {
+    padding: var(--space-6);
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+    /* 让 body 吃掉剩余高度，footer 贴底，内容在 body 内滚动 */
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.kd-house-mapping-housecard {
+    padding: var(--space-4);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+    background: var(--gray-50);
+}
+
+.kd-house-mapping-housecard-label {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--text-tertiary);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 0.25rem;
+}
+
+.kd-house-mapping-housecard-name {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 0.1rem;
+}
+
+.kd-house-mapping-housecard-meta {
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+}
+
+.kd-house-mapping-hint {
+    margin-top: var(--space-2);
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.kd-house-mapping-hint code {
+    display: inline-block;
+    padding: 0 0.35rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--gray-200);
+    background: var(--gray-50);
+    color: var(--text-primary);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.75rem;
+}
+
+.kd-house-mapping-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-6);
+    border-top: 1px solid var(--border-color);
+    background: var(--gray-50);
+}
+
+@keyframes kdHouseModalIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@media (max-width: 640px) {
+    .kd-house-mapping-overlay {
+        padding: var(--space-3);
+    }
+
+    .kd-house-mapping-modal {
+        width: calc(100vw - (2 * var(--space-3)));
+        max-height: calc(100vh - (2 * var(--space-3)));
+    }
+
+    .kd-house-mapping-header,
+    .kd-house-mapping-body,
+    .kd-house-mapping-footer {
+        padding-left: var(--space-4);
+        padding-right: var(--space-4);
+    }
+}

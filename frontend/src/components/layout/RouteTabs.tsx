@@ -1,0 +1,97 @@
+import React, { startTransition, useEffect, useState } from 'react';
+import { useLocation, useNavigate, useOutlet } from 'react-router-dom';
+import { X } from 'lucide-react';
+import classNames from 'classnames';
+import { preloadRoute } from '../../routes/lazyRoutes';
+import './RouteTabs.css';
+
+interface Tab {
+    key: string;
+    path: string;
+    title: string;
+    element: React.ReactNode;
+}
+
+const RouteTabs: React.FC<{ getPageTitle: (path: string) => { title: string } }> = ({ getPageTitle }) => {
+    const location = useLocation();
+    const navigate = useNavigate();
+    const outlet = useOutlet();
+    const [tabs, setTabs] = useState<Tab[]>([]);
+
+    const openTab = (path: string) => {
+        if (location.pathname === path) return;
+        void preloadRoute(path);
+        startTransition(() => navigate(path));
+    };
+
+    useEffect(() => {
+        const { pathname } = location;
+
+        setTabs(prev => {
+            const exists = prev.find(t => t.path === pathname);
+            if (!exists) {
+                const { title } = getPageTitle(pathname);
+                return [...prev, {
+                    key: pathname,
+                    path: pathname,
+                    title,
+                    element: outlet
+                }];
+            }
+            // Update the element of the active tab to the latest outlet so it receives router context updates
+            return prev.map(t => t.path === pathname ? { ...t, element: outlet } : t);
+        });
+    }, [location.pathname, location.search, getPageTitle]); // we must update the active tab's outlet when it changes
+
+    const closeTab = (e: React.MouseEvent, key: string) => {
+        e.stopPropagation();
+        setTabs(prev => {
+            const newTabs = prev.filter(t => t.key !== key);
+            if (newTabs.length === 0) {
+                startTransition(() => navigate('/'));
+                return prev; // Let the next render handle adding the index page if it was cleared
+            }
+            if (key === location.pathname) {
+                const nextPath = newTabs[newTabs.length - 1].path;
+                void preloadRoute(nextPath);
+                startTransition(() => navigate(nextPath));
+            }
+            return newTabs;
+        });
+    };
+
+    return (
+        <div className="route-tabs-container">
+            <div className="route-tabs-header">
+                {tabs.map(tab => (
+                    <div
+                        key={tab.key}
+                        className={classNames('route-tab', { active: location.pathname === tab.path })}
+                        onClick={() => openTab(tab.path)}
+                        onMouseEnter={() => void preloadRoute(tab.path)}
+                    >
+                        <span className="tab-title">{tab.title}</span>
+                        {tab.key !== '/' && (
+                            <div className="tab-close-wrapper" onClick={(e) => closeTab(e, tab.key)}>
+                                <X size={14} className="tab-close" />
+                            </div>
+                        )}
+                    </div>
+                ))}
+            </div>
+            <main className="page-content route-tabs-content">
+                {tabs.map(tab => (
+                    <div
+                        key={tab.key}
+                        className={classNames('route-tab-pane', { 'pane-active': location.pathname === tab.path })}
+                        style={{ display: location.pathname === tab.path ? 'block' : 'none', height: '100%' }}
+                    >
+                        {tab.path === location.pathname ? outlet : tab.element}
+                    </div>
+                ))}
+            </main>
+        </div>
+    );
+};
+
+export default RouteTabs;

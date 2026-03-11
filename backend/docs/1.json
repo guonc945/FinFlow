@@ -1,0 +1,134 @@
+{
+    "code": 0,
+    "msg": "",
+    "data": {
+        "list": [
+            {
+                "id": 2804714,
+                "communityID": 10956,
+                "communityName": "双柏未来森林A区",
+                "buildingID": 67178,
+                "buildingName": "1栋",
+                "unitID": 107441,
+                "unitName": "1单元",
+                "name": "1-1-101",
+                "combinaName": "1栋/1单元",
+                "layer": 1,
+                "usableSize": 135.74,
+                "buildingSize": 135.74,
+                "createUid": 4805616209,
+                "expand": "{\"direction\":\"\",\"model\":{\"room\":\"\",\"office\":\"\",\"guard\":\"\"}}",
+                "communityId": 0,
+                "houseID": 0,
+                "userNum": 1,
+                "chargeNum": 2,
+                "parkNum": 1,
+                "carNum": 0,
+                "parkList": [
+                    {
+                        "originId": 2804714,
+                        "id": 571711,
+                        "name": "产权36号",
+                        "itemType": 0,
+                        "licence": "",
+                        "parkName": "",
+                        "ownerName": "",
+                        "ownerPhone": "",
+                        "chargeItemInfo": "",
+                        "startTime": 0,
+                        "endTime": 0,
+                        "communityName": "",
+                        "naturalPeriod": 0,
+                        "periodType": 0,
+                        "periodNum": 0
+                    }
+                ],
+                "carList": null,
+                "userList": [
+                    {
+                        "originId": 2804714,
+                        "id": 1955787,
+                        "name": "陈敏(18987808016)",
+                        "itemType": 1,
+                        "licence": "",
+                        "parkName": "",
+                        "ownerName": "",
+                        "ownerPhone": "",
+                        "chargeItemInfo": "",
+                        "startTime": 0,
+                        "endTime": 0,
+                        "communityName": "",
+                        "naturalPeriod": 0,
+                        "periodType": 0,
+                        "periodNum": 0
+                    }
+                ],
+                "chargeItemList": [
+                    {
+                        "originId": 2804714,
+                        "id": 306688,
+                        "name": "住宅物业费",
+                        "itemType": 0,
+                        "licence": "",
+                        "parkName": "",
+                        "ownerName": "",
+                        "ownerPhone": "",
+                        "chargeItemInfo": "收费ID：306688\n类型：周期性收费\n计算精度：分（保留两位小数），四舍五入\n收费方式：按月收费,不足一月:按天收费\n金额计算方式：单价*计量方式:\n建筑面积*1.2\n账单生成日期：账期本月1号\n违约金：无\n备注：",
+                        "startTime": 1767196800,
+                        "endTime": 0,
+                        "communityName": "",
+                        "naturalPeriod": 0,
+                        "periodType": 101,
+                        "periodNum": 1
+                    },
+                    {
+                        "originId": 2804714,
+                        "id": 306691,
+                        "name": "生活垃圾清理费",
+                        "itemType": 0,
+                        "licence": "",
+                        "parkName": "",
+                        "ownerName": "",
+                        "ownerPhone": "",
+                        "chargeItemInfo": "收费ID：306691\n类型：周期性收费\n计算精度：元（不保留小数），四舍五入\n收费方式：按月收费,不足一月:按天收费\n金额计算方式：固定金额:8元\n账单生成日期：账期本月1号\n违约金：无\n备注：",
+                        "startTime": 1767196800,
+                        "endTime": 0,
+                        "communityName": "",
+                        "naturalPeriod": 0,
+                        "periodType": 101,
+                        "periodNum": 1
+                    }
+                ],
+                "disable": false,
+                "ExpandInfo": {
+                    "handingTime": 0,
+                    "direction": "",
+                    "model": {
+                        "room": "",
+                        "office": "",
+                        "guard": ""
+                    }
+                },
+                "tagList": null,
+                "attachmentList": null,
+                "houseTypeName": "-",
+                "houseStatusName": "-"
+            }
+        ],
+        "hasMore": true,
+        "total": 302,
+        "noCreateBillTotal": 0,
+        "blockIndex": "",
+        "maxAccessible": 0,
+        "statusData": null,
+        "tabNameInfo": {
+            "communityNumName": "",
+            "houseNumName": "",
+            "houseSizeName": "",
+            "userNumName": "",
+            "parkNumName": "",
+            "carNumName": ""
+        },
+        "communityName": ""
+    }
+}

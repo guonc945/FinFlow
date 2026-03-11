@@ -1,0 +1,123 @@
+.json-editor-container {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #282c34;
+    transition: all 0.3s ease;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.json-editor-container.has-error {
+    border-color: #ef4444;
+}
+
+.json-editor-container.is-expanded {
+    position: fixed;
+    top: 2rem;
+    left: 2rem;
+    right: 2rem;
+    bottom: 2rem;
+    z-index: 9999;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+}
+
+.json-editor-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0.75rem;
+    background: #21252b;
+    border-bottom: 1px solid #181a1f;
+}
+
+.json-editor-status {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.status-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    text-transform: uppercase;
+}
+
+.status-badge.valid {
+    background: #064e3b;
+    color: #34d399;
+}
+
+.status-badge.invalid {
+    background: #7f1d1d;
+    color: #f87171;
+}
+
+.json-editor-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.json-action-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    background: #2c313a;
+    border: 1px solid #3e4451;
+    color: #abb2bf;
+    padding: 0.25rem 0.6rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.json-action-btn:hover {
+    background: #3e4451;
+    color: #ffffff;
+}
+
+.json-action-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.json-editor-wrapper {
+    flex: 1;
+    overflow: hidden;
+}
+
+.json-editor-error-footer {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: #7f1d1d;
+    color: #fca5a5;
+    font-size: 0.75rem;
+    border-top: 1px solid #991b1b;
+}
+
+/* CodeMirror overrides */
+.cm-editor {
+    outline: none !important;
+}
+
+.cm-scroller {
+    font-family: 'Fira Code', 'Cascadia Code', 'Source Code Pro', monospace !important;
+}
+
+.cm-editor .cm-content {
+    padding: 10px 0;
+}
+
+.cm-editor .cm-line {
+    padding-left: 10px;
+}

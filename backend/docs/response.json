@@ -1,0 +1,56 @@
+{
+  "success": true,
+  "message": "Push successful",
+  "status_code": 200,
+  "duration_ms": 542.31,
+  "api_id": 1,
+  "api_name": "推送金蝶记账凭证",
+  "api_url": "https://hygroup.kdgalaxy.com/kapi/v2/gl/gl_voucher/voucherAdd",
+  "push_batch_no": "VP2026030915300087AB12CD",
+  "voucher_number": "记-202603-000123",
+  "voucher_id": "100019",
+  "tracked_bills": [
+    {
+      "bill_id": 1024001,
+      "community_id": 16,
+      "push_status": "success",
+      "push_status_label": "已推送",
+      "push_batch_no": "VP2026030915300087AB12CD",
+      "voucher_number": "记-202603-000123",
+      "voucher_id": "100019",
+      "pushed_at": "2026-03-09T15:30:01",
+      "message": "Push successful",
+      "account_book_number": "016"
+    },
+    {
+      "bill_id": 1024002,
+      "community_id": 16,
+      "push_status": "success",
+      "push_status_label": "已推送",
+      "push_batch_no": "VP2026030915300087AB12CD",
+      "voucher_number": "记-202603-000123",
+      "voucher_id": "100019",
+      "pushed_at": "2026-03-09T15:30:01",
+      "message": "Push successful",
+      "account_book_number": "016"
+    }
+  ],
+  "response": {
+    "status": true,
+    "errorCode": "0",
+    "message": "操作成功",
+    "data": {
+      "successCount": "1",
+      "failCount": "0",
+      "result": [
+        {
+          "billIndex": 0,
+          "billStatus": true,
+          "id": "100019",
+          "number": "记-202603-000123",
+          "type": "Add"
+        }
+      ]
+    }
+  }
+}

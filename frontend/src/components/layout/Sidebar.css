@@ -1,0 +1,128 @@
+.sidebar {
+    width: 260px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-sidebar);
+    border-right: 1px solid var(--border-color);
+    transition: all var(--transition-normal);
+    z-index: 10;
+}
+
+.sidebar-header {
+    padding: var(--space-6);
+    display: flex;
+    align-items: center;
+}
+
+.logo-container {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+}
+
+.logo-icon {
+    width: 32px;
+    height: 32px;
+    background: linear-gradient(135deg, var(--primary-600), var(--secondary-600));
+    border-radius: var(--radius-md);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 1.2rem;
+}
+
+.logo-text {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.025em;
+}
+
+.sidebar-nav {
+    flex: 1;
+    padding: var(--space-4) var(--space-3);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+}
+
+/* 自定义侧边栏滚动条 */
+.sidebar-nav::-webkit-scrollbar {
+    width: 6px;
+}
+
+.sidebar-nav::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.sidebar-nav::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 10px;
+}
+
+.sidebar-nav:hover::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.1);
+}
+
+.sidebar-nav::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.2);
+}
+
+.nav-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    color: var(--text-secondary);
+    border-radius: var(--radius-md);
+    transition: all var(--transition-fast);
+    font-size: 0.95rem;
+    font-weight: 500;
+    text-decoration: none;
+}
+
+.nav-item:hover {
+    background-color: var(--primary-50);
+    color: var(--primary-700);
+}
+
+.nav-item.active {
+    background: linear-gradient(90deg, var(--primary-50) 0%, transparent 100%);
+    color: var(--primary-600);
+    border-left: 3px solid var(--primary-600);
+}
+
+.nav-item.active .nav-icon {
+    color: var(--primary-600);
+}
+
+.nav-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.nav-children {
+    display: flex;
+    flex-direction: column;
+    padding-left: var(--space-4);
+    gap: 2px;
+}
+
+.nested-group {
+    margin-top: 2px;
+}
+
+.nested-nav-item {
+    padding-left: var(--space-6);
+}
+
+.nav-child {
+    padding-top: var(--space-2);
+    padding-bottom: var(--space-2);
+    padding-left: var(--space-6);
+}
