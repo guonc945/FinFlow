@@ -395,7 +395,7 @@ const Houses = () => {
     ];
 
     return (
-        <div className="page-container fade-in">
+        <div className="page-container fade-in houses-page">
             {/* Filter Section - Consistent with Bills.tsx style */}
             <div className={`bills-filter-section ${isFilterCollapsed ? 'collapsed' : ''}`}>
                 <div className="filter-header-row">
