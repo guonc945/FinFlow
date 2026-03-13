@@ -61,6 +61,8 @@ def _ensure_voucher_columns():
             conn.execute(text("ALTER TABLE voucher_template ADD COLUMN bizdate_expr VARCHAR(100) DEFAULT '{CURRENT_DATE}'"))
         if "bookeddate_expr" not in existing_cols:
             conn.execute(text("ALTER TABLE voucher_template ADD COLUMN bookeddate_expr VARCHAR(100) DEFAULT '{CURRENT_DATE}'"))
+        if "source_module" not in existing_cols:
+            conn.execute(text("ALTER TABLE voucher_template ADD COLUMN source_module VARCHAR(50)"))
 
 
 _ensure_voucher_columns()
@@ -2796,6 +2798,63 @@ def _serialize_rule(rule: models.VoucherEntryRule) -> Dict[str, Any]:
 
 _BILL_RUNTIME_EXTRA_FIELDS: Set[str] = {"customer_name", "customer_id"}
 _BILL_FIELD_LABELS: Dict[str, str] = {
+    "id": "账单ID",
+    "community_id": "园区ID",
+    "charge_item_id": "收费项目ID",
+    "ci_snapshot_id": "收费项目快照ID",
+    "charge_item_name": "收费项目名称",
+    "charge_item_type": "收费项目类型",
+    "category_name": "类目名称",
+    "asset_id": "资产ID",
+    "asset_name": "资产名称",
+    "asset_type": "资产类型",
+    "asset_type_str": "资产类型(文本)",
+    "house_id": "房屋ID",
+    "full_house_name": "房屋全名",
+    "bind_house_id": "绑定房屋ID",
+    "bind_house_name": "绑定房屋名称",
+    "park_id": "车位ID",
+    "park_name": "车位名称",
+    "bill_month": "账单月份",
+    "in_month": "所属月份",
+    "start_time": "计费开始时间",
+    "end_time": "计费结束时间",
+    "amount": "金额",
+    "bill_amount": "账单金额",
+    "discount_amount": "折扣金额",
+    "late_money_amount": "滞纳金",
+    "deposit_amount": "押金",
+    "second_pay_amount": "二次支付金额",
+    "pay_status": "支付状态编码",
+    "pay_status_str": "支付状态",
+    "pay_type": "支付方式编码",
+    "pay_type_str": "支付方式",
+    "pay_time": "支付时间",
+    "second_pay_channel": "二次支付渠道",
+    "bill_type": "账单类型编码",
+    "bill_type_str": "账单类型",
+    "deal_log_id": "交易日志ID",
+    "receipt_id": "收据号",
+    "sub_mch_id": "子商户ID",
+    "sub_mch_name": "子商户名称",
+    "bad_bill_state": "坏账状态",
+    "is_bad_bill": "是否坏账",
+    "has_split": "是否拆分",
+    "split_desc": "拆分说明",
+    "visible_type": "可见类型编码",
+    "visible_desc_str": "可见描述",
+    "can_revoke": "是否可撤销",
+    "version": "版本",
+    "meter_type": "表计类型",
+    "snapshot_size": "快照大小",
+    "now_size": "当前大小",
+    "remark": "备注",
+    "bind_toll": "收费项目快照(JSON)",
+    "user_list": "客户列表(JSON)",
+    "create_time": "创建时间",
+    "last_op_time": "最后操作时间",
+    "created_at": "创建时间(系统)",
+    "updated_at": "更新时间(系统)",
     "kd_house_number": "金蝶房号编码",
     "kd_house_name": "金蝶房号名称",
     "kd_park_house_number": "车位映射房号编码",
@@ -2816,6 +2875,8 @@ _BILL_FIELD_LABELS: Dict[str, str] = {
 
 _RECEIPT_BILL_RUNTIME_EXTRA_FIELDS: Set[str] = {"community_name", "payer_name"}
 _RECEIPT_BILL_FIELD_LABELS: Dict[str, str] = {
+    "id": "收款明细ID",
+    "community_id": "园区ID",
     "community_name": "园区名称",
     "payer_name": "付款人",
     "deal_time": "交易时间",
@@ -2828,9 +2889,13 @@ _RECEIPT_BILL_FIELD_LABELS: Dict[str, str] = {
     "deposit_amount": "押金",
     "pay_channel_str": "支付方式",
     "pay_channel": "支付方式编码",
+    "pay_channel_list": "支付方式列表(JSON)",
     "payee": "收款人",
     "receipt_id": "收据号",
+    "receipt_record_id": "收据记录ID",
+    "receipt_version": "收据版本",
     "invoice_number": "发票号",
+    "invoice_urls": "发票链接(JSON)",
     "invoice_status": "发票状态",
     "open_invoice": "是否开票",
     "asset_name": "资产名称",
@@ -2839,6 +2904,9 @@ _RECEIPT_BILL_FIELD_LABELS: Dict[str, str] = {
     "deal_type": "交易类型",
     "remark": "备注",
     "fk_id": "FK_ID",
+    "bind_users_raw": "关联住户备份(JSON)",
+    "created_at": "创建时间(系统)",
+    "updated_at": "更新时间(系统)",
 }
 
 
@@ -2988,7 +3056,7 @@ def get_voucher_source_modules():
     }
 
 
-def _build_allowed_placeholders(source_type: Optional[str], db: Session) -> Set[str]:
+def _build_allowed_placeholders(source_type: Optional[str], source_module: Optional[str], db: Session) -> Set[str]:
     from utils.variable_parser import build_variable_map
 
     allowed = set()
@@ -3009,15 +3077,36 @@ def _build_allowed_placeholders(source_type: Optional[str], db: Session) -> Set[
     })
 
     normalized_source = (source_type or "").strip().lower()
+    normalized_module = (source_module or "").strip().lower()
+    module_prefix = normalized_module or "marki"
+
+    source_types: Set[str] = set()
+    # Module-level binding: allow placeholders from all sources inside the module.
+    # Backward compatibility: legacy templates may not persist `source_module` yet.
+    # If the template targets Marki sources (bills/receipt_bills), default to Marki module behavior.
+    if normalized_module in ("", "marki") and normalized_source in ("", "bills", "receipt_bills"):
+        source_types.update({"bills", "receipt_bills"})
+
+    # Always keep backward compatible behavior based on source_type.
     if normalized_source in ("", "bills"):
+        source_types.add("bills")
+    elif normalized_source:
+        source_types.add(normalized_source)
+
+    if "bills" in source_types:
         bills_fields = _build_bills_fields()
         allowed.update(bills_fields)
         allowed.update({f"bills.{name}" for name in bills_fields})
+        allowed.update({f"{module_prefix}.bills.{name}" for name in bills_fields})
+        # Backward compatible module prefix.
         allowed.update({f"marki.bills.{name}" for name in bills_fields})
-    if normalized_source in ("receipt_bills",):
+
+    if "receipt_bills" in source_types:
         receipt_fields = _build_receipt_bills_fields()
         allowed.update(receipt_fields)
         allowed.update({f"receipt_bills.{name}" for name in receipt_fields})
+        allowed.update({f"{module_prefix}.receipt_bills.{name}" for name in receipt_fields})
+        # Backward compatible module prefix.
         allowed.update({f"marki.receipt_bills.{name}" for name in receipt_fields})
     return allowed
 
@@ -3180,7 +3269,8 @@ def _validate_trigger_condition(
 def _validate_voucher_template_payload(payload: Dict[str, Any], db: Session) -> None:
     errors: List[str] = []
     source_type = payload.get("source_type")
-    allowed_placeholders = _build_allowed_placeholders(source_type, db)
+    source_module = payload.get("source_module")
+    allowed_placeholders = _build_allowed_placeholders(source_type, source_module, db)
     normalized_source = (source_type or "").strip().lower()
     if normalized_source in ("", "bills"):
         base_fields = _build_bills_fields()
@@ -3384,6 +3474,7 @@ def update_voucher_template(template_id: str, template: schemas.VoucherTemplateU
     rules_data = update_data.pop('rules', None)
 
     full_payload = {
+        "source_module": update_data.get("source_module", getattr(db_template, "source_module", None)),
         "source_type": update_data.get("source_type", db_template.source_type),
         "trigger_condition": update_data.get("trigger_condition", db_template.trigger_condition),
         "book_number_expr": update_data.get("book_number_expr", db_template.book_number_expr),

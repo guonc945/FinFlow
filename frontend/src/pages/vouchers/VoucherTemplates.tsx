@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import {
     Layers, FileText, Settings, Hash, Info, X, Sliders, ArrowUp, ArrowDown, AlertTriangle,
-    Plus, Save, Trash2, ChevronLeft, ChevronDown, Database, Copy
+    Plus, Save, Trash2, ChevronLeft, Database, Copy
 } from 'lucide-react';
 import axios from 'axios';
 import VariablePicker from '../settings/VariablePicker';
@@ -314,7 +314,6 @@ const ExpressionInputWithActions = ({
                             title="选择数据源字段"
                         >
                             <Database size={size === 'mini' ? 12 : 14} />
-                            <ChevronDown size={size === 'mini' ? 12 : 14} />
                         </button>
                         <SourceFieldPickerModal
                             open={fieldPickerOpen}
@@ -346,7 +345,6 @@ const DimensionFormEditor = ({
     onChange,
     onFocusField,
     onOpenPicker,
-    dataSourceType,
     fieldModules,
     requiredKeys
 }: {
@@ -354,7 +352,6 @@ const DimensionFormEditor = ({
     onChange: (json: string) => void,
     onFocusField: (insert: (text: string) => void) => void,
     onOpenPicker: () => void,
-    dataSourceType?: string | null,
     fieldModules?: VoucherFieldModule[] | null,
     requiredKeys?: string[]
 }) => {
@@ -436,9 +433,7 @@ const DimensionFormEditor = ({
                                     onChange={val => handleRowChange(idx, 'value', val)}
                                     onGlobalFocus={onFocusField}
                                     onOpenPicker={onOpenPicker}
-                                    fieldModules={(!dataSourceType || dataSourceType === 'bills' || dataSourceType === 'receipt_bills')
-                                        ? (fieldModules || buildDefaultVoucherFieldModules(FALLBACK_BILL_SOURCE_FIELDS, FALLBACK_RECEIPT_BILL_SOURCE_FIELDS))
-                                        : null}
+                                    fieldModules={fieldModules || buildDefaultVoucherFieldModules(FALLBACK_BILL_SOURCE_FIELDS, FALLBACK_RECEIPT_BILL_SOURCE_FIELDS)}
                                 />
                             </td>
                             <td>
@@ -474,6 +469,7 @@ interface VoucherTemplate {
     description: string;
     active: boolean;
     priority: number;
+    source_module?: string;
     source_type?: string;
     trigger_condition?: string; // JSON string
     book_number_expr: string;
@@ -509,6 +505,24 @@ const filterModulesBySourceType = (modules: VoucherFieldModule[], sourceType: st
         if (sources.length > 0) next.push({ ...m, sources });
     });
     return next.length > 0 ? next : modules;
+};
+
+const filterModulesByModuleId = (modules: VoucherFieldModule[], moduleId: string | null | undefined) => {
+    const mid = String(moduleId || '').trim();
+    if (!mid) return modules;
+    const found = modules.find(m => String(m?.id) === mid);
+    return found ? [found] : modules;
+};
+
+const inferModuleIdFromSourceType = (modules: VoucherFieldModule[], sourceType: string | null | undefined) => {
+    const st = String(sourceType || '').trim().toLowerCase();
+    if (!st) return 'marki';
+    for (const m of modules || []) {
+        for (const s of m.sources || []) {
+            if (String(s?.source_type || '').trim().toLowerCase() === st) return String(m.id);
+        }
+    }
+    return 'marki';
 };
 
 // Empty/NULL source_type is treated as bills by backend matching & validation.
@@ -597,7 +611,15 @@ const VoucherTemplates = () => {
                 description: t.description || '',
                 active: t.active !== false,
                 priority: Number.isFinite(Number(t.priority)) ? Number(t.priority) : 100,
-                source_type: t.source_type || '',
+                source_module: (t?.source_module || '').trim() || inferModuleIdFromSourceType(voucherFieldModules, t.source_type),
+                source_type: (() => {
+                    const raw = String(t?.source_type || '').trim();
+                    if (raw) return raw;
+                    const mid = (String(t?.source_module || '').trim() || inferModuleIdFromSourceType(voucherFieldModules, t.source_type));
+                    const mod = voucherFieldModules.find(m => String(m?.id) === mid) || voucherFieldModules[0];
+                    const fallback = String(mod?.sources?.[0]?.source_type || '').trim();
+                    return fallback || 'bills';
+                })(),
                 trigger_condition: t.trigger_condition || '',
                 book_number_expr: t.book_number_expr || "'BU-35256'",
                 vouchertype_number_expr: t.vouchertype_number_expr || "'0001'",
@@ -668,24 +690,34 @@ const VoucherTemplates = () => {
 
     const normalizeTemplateFieldBindings = (template: VoucherTemplate) => {
         const effectiveSourceType = getEffectiveSourceType(template.source_type);
-        const sourceFields = effectiveSourceType === 'receipt_bills' ? receiptBillSourceFields : billSourceFields;
-        const fieldKeySet = new Set((sourceFields || []).map(f => String(f.value || '').trim()).filter(Boolean));
+        const moduleId = String(template.source_module || '').trim() || inferModuleIdFromSourceType(voucherFieldModules, effectiveSourceType);
+        const module = (voucherFieldModules || []).find(m => String(m?.id) === moduleId) || (voucherFieldModules || [])[0];
 
-        const ctx = (() => {
-            for (const m of voucherFieldModules || []) {
-                for (const s of m.sources || []) {
-                    if (String(s?.source_type || '').trim() === effectiveSourceType) {
-                        return { module_id: String(m.id), source_id: String(s.id), source_type: String(s.source_type) };
-                    }
-                }
-            }
-            return { module_id: 'marki', source_id: effectiveSourceType, source_type: effectiveSourceType };
-        })();
+        type SourceCtx = { module_id: string; source_id: string; source_type: string; fieldKeys: Set<string> };
+        const ctxByPrefix = new Map<string, SourceCtx>();
 
-        const buildTargetKey = (baseKey: string) => {
+        (module?.sources || []).forEach(s => {
+            const sid = String(s?.id || '').trim();
+            const st = String(s?.source_type || '').trim();
+            const fieldKeys = new Set(
+                (s?.fields || [])
+                    .map((f: any) => String(f?.value || '').trim())
+                    .filter(Boolean)
+            );
+            const ctx: SourceCtx = { module_id: String(module?.id || 'marki'), source_id: sid, source_type: st, fieldKeys };
+            if (sid) ctxByPrefix.set(sid.toLowerCase(), ctx);
+            if (st) ctxByPrefix.set(st.toLowerCase(), ctx);
+        });
+
+        const defaultCtx =
+            ctxByPrefix.get(String(effectiveSourceType || '').trim().toLowerCase()) ||
+            (module?.sources?.[0] ? ctxByPrefix.get(String(module.sources[0].id || '').toLowerCase()) : undefined);
+
+        const buildTargetKey = (ctx: SourceCtx | undefined, baseKey: string) => {
             const b = String(baseKey || '').trim();
-            if (!b) return b;
-            return (ctx.module_id && ctx.source_id) ? `${ctx.module_id}.${ctx.source_id}.${b}` : (ctx.source_type ? `${ctx.source_type}.${b}` : b);
+            if (!ctx || !b) return '';
+            if (!ctx.module_id || !ctx.source_id) return '';
+            return `${ctx.module_id}.${ctx.source_id}.${b}`;
         };
 
         let replaced = 0;
@@ -697,9 +729,15 @@ const VoucherTemplates = () => {
                 const rawKey = String(key || '').trim();
                 if (!rawKey) return match;
                 const parts = rawKey.split('.').filter(Boolean);
-                const base = (parts.length > 0 ? parts[parts.length - 1] : rawKey).trim();
-                if (!fieldKeySet.has(base)) return match;
-                const next = buildTargetKey(base);
+                if (parts.length >= 3) return match;
+
+                const [prefix, base] =
+                    parts.length === 2 ? [String(parts[0] || '').trim(), String(parts[1] || '').trim()] : ['', String(parts[0] || '').trim()];
+
+                const ctx = prefix ? ctxByPrefix.get(prefix.toLowerCase()) : defaultCtx;
+                if (!ctx || !base || !ctx.fieldKeys.has(base)) return match;
+
+                const next = buildTargetKey(ctx, base);
                 if (!next || rawKey === next) return match;
                 replaced += 1;
                 return `{${next}}`;
@@ -710,9 +748,15 @@ const VoucherTemplates = () => {
             const raw = field == null ? '' : String(field).trim();
             if (!raw) return raw;
             const parts = raw.split('.').filter(Boolean);
-            const base = (parts.length > 0 ? parts[parts.length - 1] : raw).trim();
-            if (!fieldKeySet.has(base)) return raw;
-            const next = buildTargetKey(base);
+            if (parts.length >= 3) return raw;
+
+            const [prefix, base] =
+                parts.length === 2 ? [String(parts[0] || '').trim(), String(parts[1] || '').trim()] : ['', String(parts[0] || '').trim()];
+
+            const ctx = prefix ? ctxByPrefix.get(prefix.toLowerCase()) : defaultCtx;
+            if (!ctx || !base || !ctx.fieldKeys.has(base)) return raw;
+
+            const next = buildTargetKey(ctx, base);
             if (!next || raw === next) return raw;
             replaced += 1;
             return next;
@@ -782,7 +826,8 @@ const VoucherTemplates = () => {
             attachment_expr: "0",
             bizdate_expr: "{CURRENT_DATE}",
             bookeddate_expr: "{CURRENT_DATE}",
-            source_type: '',
+            source_module: 'marki',
+            source_type: 'bills',
             rules: [
                 { line_no: 1, dr_cr: 'D', account_code: '', amount_expr: '', summary_expr: '', currency_expr: "'CNY'", localrate_expr: "1" },
                 { line_no: 2, dr_cr: 'C', account_code: '', amount_expr: '', summary_expr: '', currency_expr: "'CNY'", localrate_expr: "1" }
@@ -795,7 +840,10 @@ const VoucherTemplates = () => {
 
     const handleEdit = (template: VoucherTemplate) => {
         setSaveErrors([]);
-        setCurrentTemplate({ ...template });
+        setCurrentTemplate({
+            ...template,
+            source_module: template.source_module || inferModuleIdFromSourceType(voucherFieldModules, template.source_type),
+        });
         setEditingTemplateId(template.template_id);
         setIsEditing(true);
         setActiveTab('basic');
@@ -807,6 +855,7 @@ const VoucherTemplates = () => {
             ...template,
             template_id: getUniqueCopiedTemplateId(template.template_id, templates),
             template_name: getUniqueCopiedTemplateName(template.template_name, templates),
+            source_module: template.source_module || inferModuleIdFromSourceType(voucherFieldModules, template.source_type),
             rules: (template.rules || []).map((rule, index) => ({
                 ...rule,
                 rule_id: null,
@@ -1081,20 +1130,39 @@ const VoucherTemplates = () => {
                                 </div>
                             <div className="field-grid-three">
                                     <div className="field-item">
-                                        <label>数据源绑定</label>
+                                        <label>业务模块</label>
                                         <select
-                                            value={currentTemplate.source_type || ''}
-                                            onChange={e => setCurrentTemplate({ ...currentTemplate, source_type: e.target.value })}
+                                            value={currentTemplate.source_module || ''}
+                                            onChange={e => {
+                                                const nextModuleId = String(e.target.value || '').trim();
+                                                const nextModule = voucherFieldModules.find(m => String(m?.id) === nextModuleId);
+
+                                                const allowed = new Set(
+                                                    (nextModule?.sources || [])
+                                                        .map(s => String(s?.source_type || '').trim())
+                                                        .filter(Boolean)
+                                                        .map(s => s.toLowerCase())
+                                                );
+
+                                                const currentSt = String(currentTemplate.source_type || '').trim();
+                                                let nextSt = currentSt;
+                                                if (allowed.size > 0) {
+                                                    if (!currentSt || !allowed.has(currentSt.toLowerCase())) {
+                                                        nextSt = String(nextModule?.sources?.[0]?.source_type || '').trim();
+                                                    }
+                                                }
+
+                                                setCurrentTemplate({
+                                                    ...currentTemplate,
+                                                    source_module: nextModuleId,
+                                                    source_type: nextSt,
+                                                });
+                                            }}
                                         >
-                                            <option value="">通用模板（默认：运营账单）</option>
                                             {voucherFieldModules.map(m => (
-                                                <optgroup key={m.id} label={m.label}>
-                                                    {(m.sources || []).map(s => (
-                                                        <option key={`${m.id}:${s.id}`} value={String(s.source_type || '')}>
-                                                            {s.label} ({s.source_type})
-                                                        </option>
-                                                    ))}
-                                                </optgroup>
+                                                <option key={m.id} value={String(m.id)}>
+                                                    {m.label}
+                                                </option>
                                             ))}
                                         </select>
                                     </div>
@@ -1136,7 +1204,7 @@ const VoucherTemplates = () => {
                     {activeTab === 'condition' && (
                         <div className="modern-editor-layout animate-slide-up">
                             {/* 第二层级：触发条件区域 (仅在有数据源时显示) */}
-                            {currentTemplate.source_type ? (
+                            {['bills', 'receipt_bills'].includes(getEffectiveSourceType(currentTemplate.source_type)) ? (
                                 <div className="editor-card animate-slide-up">
                                     <div className="card-header-styled">
                                         <Sliders size={18} />
@@ -1146,6 +1214,32 @@ const VoucherTemplates = () => {
                                         </div>
                                     </div>
                                     <div className="nested-body" style={{ padding: '1.5rem' }}>
+                                        <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', marginBottom: '1rem' }}>
+                                            <div className="field-item" style={{ paddingBottom: 0, minWidth: 240 }}>
+                                                <label>{'\u89e6\u53d1\u6570\u636e\u6e90'}</label>
+                                                <select
+                                                    value={getEffectiveSourceType(currentTemplate.source_type)}
+                                                    onChange={e => setCurrentTemplate({ ...currentTemplate, source_type: String(e.target.value || '').trim() })}
+                                                >
+                                                    {(() => {
+                                                        const mid = String(currentTemplate.source_module || '').trim()
+                                                            || inferModuleIdFromSourceType(voucherFieldModules, currentTemplate.source_type);
+                                                        const mod = voucherFieldModules.find(m => String(m?.id) === mid) || voucherFieldModules[0];
+                                                        const triggerSources = (mod?.sources || []).filter(s =>
+                                                            ['bills', 'receipt_bills'].includes(String(s?.source_type || '').trim())
+                                                        );
+                                                        return triggerSources.map(s => (
+                                                            <option key={`${mod?.id}:${s.id}`} value={String(s.source_type || '')}>
+                                                                {s.label} ({s.source_type})
+                                                            </option>
+                                                        ));
+                                                    })()}
+                                                </select>
+                                            </div>
+                                            <div style={{ fontSize: '0.75rem', color: '#94a3b8', paddingBottom: '0.25rem' }}>
+                                                仅用于触发条件判断，不限制分录取数来源
+                                            </div>
+                                        </div>
                                         <ConditionBuilder
                                             value={currentTemplate.trigger_condition}
                                             onChange={(val) => setCurrentTemplate({ ...currentTemplate, trigger_condition: val })}
@@ -1157,8 +1251,8 @@ const VoucherTemplates = () => {
                             ) : (
                                 <div className="editor-card animate-slide-up" style={{ padding: '3rem', textAlign: 'center', color: '#64748b' }}>
                                     <AlertTriangle size={48} style={{ margin: '0 auto 1rem', opacity: 0.5 }} />
-                                    <h3>未绑定数据源</h3>
-                                    <p>请先在“基本配置”中选择数据源绑定，方可配置触发条件。</p>
+                                    <h3>当前业务模块不支持触发条件</h3>
+                                    <p>请选择支持触发条件的业务模块（例如：马克系统）。</p>
                                 </div>
                             )}
                         </div>
@@ -1192,6 +1286,7 @@ const VoucherTemplates = () => {
                                             onChange={val => setCurrentTemplate({ ...currentTemplate, book_number_expr: val })}
                                             onGlobalFocus={ins => setLastFocusedField({ insert: ins })}
                                             onOpenPicker={() => setIsVariablePickerOpen(true)}
+                                            fieldModules={filterModulesByModuleId(voucherFieldModules, currentTemplate.source_module)}
                                             placeholder="'BU-CODE'"
                                         />
                                     </div>
@@ -1202,6 +1297,7 @@ const VoucherTemplates = () => {
                                             onChange={val => setCurrentTemplate({ ...currentTemplate, vouchertype_number_expr: val })}
                                             onGlobalFocus={ins => setLastFocusedField({ insert: ins })}
                                             onOpenPicker={() => setIsVariablePickerOpen(true)}
+                                            fieldModules={filterModulesByModuleId(voucherFieldModules, currentTemplate.source_module)}
                                             placeholder="'0001'"
                                         />
                                     </div>
@@ -1212,6 +1308,7 @@ const VoucherTemplates = () => {
                                             onChange={val => setCurrentTemplate({ ...currentTemplate, attachment_expr: val })}
                                             onGlobalFocus={ins => setLastFocusedField({ insert: ins })}
                                             onOpenPicker={() => setIsVariablePickerOpen(true)}
+                                            fieldModules={filterModulesByModuleId(voucherFieldModules, currentTemplate.source_module)}
                                             placeholder="0"
                                         />
                                     </div>
@@ -1224,9 +1321,7 @@ const VoucherTemplates = () => {
                                             onChange={val => setCurrentTemplate({ ...currentTemplate, bizdate_expr: val })}
                                             onGlobalFocus={ins => setLastFocusedField({ insert: ins })}
                                             onOpenPicker={() => setIsVariablePickerOpen(true)}
-                                            fieldModules={(!currentTemplate.source_type || currentTemplate.source_type === 'bills' || currentTemplate.source_type === 'receipt_bills')
-                                                ? filterModulesBySourceType(voucherFieldModules, getEffectiveSourceType(currentTemplate.source_type))
-                                                : null}
+                                            fieldModules={filterModulesByModuleId(voucherFieldModules, currentTemplate.source_module)}
                                         />
                                     </div>
                                     <div className="field-item">
@@ -1236,9 +1331,7 @@ const VoucherTemplates = () => {
                                             onChange={val => setCurrentTemplate({ ...currentTemplate, bookeddate_expr: val })}
                                             onGlobalFocus={ins => setLastFocusedField({ insert: ins })}
                                             onOpenPicker={() => setIsVariablePickerOpen(true)}
-                                            fieldModules={(!currentTemplate.source_type || currentTemplate.source_type === 'bills' || currentTemplate.source_type === 'receipt_bills')
-                                                ? filterModulesBySourceType(voucherFieldModules, getEffectiveSourceType(currentTemplate.source_type))
-                                                : null}
+                                            fieldModules={filterModulesByModuleId(voucherFieldModules, currentTemplate.source_module)}
                                         />
                                     </div>
                                 </div>
@@ -1276,9 +1369,7 @@ const VoucherTemplates = () => {
                                                         onChange={val => updateRule(idx, { summary_expr: val })}
                                                         onGlobalFocus={ins => setLastFocusedField({ insert: ins })}
                                                         onOpenPicker={() => setIsVariablePickerOpen(true)}
-                                                        fieldModules={(!currentTemplate.source_type || currentTemplate.source_type === 'bills' || currentTemplate.source_type === 'receipt_bills')
-                                                            ? filterModulesBySourceType(voucherFieldModules, getEffectiveSourceType(currentTemplate.source_type))
-                                                            : null}
+                                                        fieldModules={filterModulesByModuleId(voucherFieldModules, currentTemplate.source_module)}
                                                     />
                                                 </td>
                                                 <td>
@@ -1307,9 +1398,7 @@ const VoucherTemplates = () => {
                                                         onChange={val => updateRule(idx, { amount_expr: val })}
                                                         onGlobalFocus={ins => setLastFocusedField({ insert: ins })}
                                                         onOpenPicker={() => setIsVariablePickerOpen(true)}
-                                                        fieldModules={(!currentTemplate.source_type || currentTemplate.source_type === 'bills' || currentTemplate.source_type === 'receipt_bills')
-                                                            ? filterModulesBySourceType(voucherFieldModules, getEffectiveSourceType(currentTemplate.source_type))
-                                                            : null}
+                                                        fieldModules={filterModulesByModuleId(voucherFieldModules, currentTemplate.source_module)}
                                                     />
                                                 </td>
                                                 <td>
@@ -1408,8 +1497,7 @@ const VoucherTemplates = () => {
                                                 onChange={(val) => updateCurrentRuleDetail('aux_items', val)}
                                                 onFocusField={(insert) => setLastFocusedField({ insert })}
                                                 onOpenPicker={() => setIsVariablePickerOpen(true)}
-                                                dataSourceType={currentTemplate.source_type}
-                                                fieldModules={filterModulesBySourceType(voucherFieldModules, getEffectiveSourceType(currentTemplate.source_type))}
+                                                fieldModules={filterModulesByModuleId(voucherFieldModules, currentTemplate.source_module)}
                                                 requiredKeys={(() => {
                                                     const accountCode = currentTemplate.rules[currentRuleIndex].account_code;
                                                     const subject = subjects.find(s => s.number === accountCode);
@@ -1443,8 +1531,7 @@ const VoucherTemplates = () => {
                                                 onChange={(val) => updateCurrentRuleDetail('main_cf_assgrp', val)}
                                                 onFocusField={(insert) => setLastFocusedField({ insert })}
                                                 onOpenPicker={() => setIsVariablePickerOpen(true)}
-                                                dataSourceType={currentTemplate.source_type}
-                                                fieldModules={filterModulesBySourceType(voucherFieldModules, getEffectiveSourceType(currentTemplate.source_type))}
+                                                fieldModules={filterModulesByModuleId(voucherFieldModules, currentTemplate.source_module)}
                                             />
                                         </div>
                                     )}

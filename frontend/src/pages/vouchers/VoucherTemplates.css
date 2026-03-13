@@ -579,7 +579,7 @@
     outline: none;
 }
 
-.input-with-action button {
+.input-with-action > button {
     background: #f8fafc;
     border: none;
     border-left: 1px solid #e2e8f0;
@@ -593,7 +593,7 @@
     height: auto;
     align-self: stretch;
 }
-.input-with-action button:hover {
+.input-with-action > button:hover {
     background: #eeefff;
     color: #6366f1;
 }

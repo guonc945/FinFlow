@@ -42,6 +42,8 @@ class VoucherTemplate(Base):
     description = Column(String(255))
     active = Column(Boolean, default=True)
     priority = Column(Integer, default=100)
+    # Business module binding (e.g. 'marki'). A module can contain multiple sources/models.
+    source_module = Column(String(50))
     source_type = Column(String(50))  # e.g. 'bills'
     trigger_condition = Column(Text)  # JSON string for logic rules
     

@@ -319,6 +319,7 @@ class VoucherTemplateBase(BaseModel):
     description: Optional[str] = None
     active: Optional[bool] = True
     priority: Optional[int] = Field(100, ge=0)
+    source_module: Optional[str] = None
     source_type: Optional[str] = None
     trigger_condition: Optional[str] = None
     book_number_expr: Optional[str] = "'BU-35256'"
@@ -341,6 +342,7 @@ class VoucherTemplateUpdate(BaseModel):
     attachment_expr: Optional[str] = None
     bizdate_expr: Optional[str] = None
     bookeddate_expr: Optional[str] = None
+    source_module: Optional[str] = None
     source_type: Optional[str] = None
     trigger_condition: Optional[str] = None
     rules: Optional[List[VoucherEntryRuleCreate]] = None

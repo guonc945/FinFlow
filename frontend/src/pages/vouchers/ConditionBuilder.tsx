@@ -681,7 +681,7 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
                                 <span className="cb-adv-field-text">
                                     {getDisplayFieldLabel(node.field)}
                                 </span>
-                                <ChevronDown size={14} />
+                                <Database size={14} />
                             </button>
                         ) : (
                             <select
