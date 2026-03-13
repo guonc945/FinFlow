@@ -60,6 +60,7 @@ export interface Bill {
 
     pay_status_str: string;
     pay_time: number | null;
+    receive_date?: string | null;
     deal_log_id?: number | null;
     created_at: string;
     push_status: 'not_pushed' | 'pushing' | 'success' | 'failed';

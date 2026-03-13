@@ -1272,6 +1272,8 @@ def get_bills(
     end_date: Optional[str] = None,
     in_month_start: Optional[str] = None,
     in_month_end: Optional[str] = None,
+    pay_date_start: Optional[str] = None,
+    pay_date_end: Optional[str] = None,
     pay_time_start: Optional[str] = None,
     pay_time_end: Optional[str] = None,
     deal_log_id: Optional[int] = None,
@@ -1371,6 +1373,20 @@ def get_bills(
         query = query.filter(models.Bill.in_month >= in_month_start)
     if in_month_end:
         query = query.filter(models.Bill.in_month <= in_month_end)
+
+    if pay_date_start:
+        try:
+            date_start = datetime.strptime(pay_date_start, '%Y-%m-%d').date()
+            query = query.filter(models.Bill.receive_date >= date_start)
+        except ValueError:
+            pass
+
+    if pay_date_end:
+        try:
+            date_end = datetime.strptime(pay_date_end, '%Y-%m-%d').date()
+            query = query.filter(models.Bill.receive_date <= date_end)
+        except ValueError:
+            pass
 
     if pay_time_start:
         try:
@@ -2829,7 +2845,7 @@ _BILL_FIELD_LABELS: Dict[str, str] = {
     "pay_status_str": "支付状态",
     "pay_type": "支付方式编码",
     "pay_type_str": "支付方式",
-    "pay_time": "支付时间",
+    "pay_time": "支付时间戳",
     "second_pay_channel": "二次支付渠道",
     "bill_type": "账单类型编码",
     "bill_type_str": "账单类型",
@@ -2869,7 +2885,7 @@ _BILL_FIELD_LABELS: Dict[str, str] = {
     "kd_pay_bank_name": "付款银行账户名称",
     "customer_name": "账单关联客户名称",
     "customer_id": "账单关联客户ID",
-    "receive_date": "收款日期",
+    "receive_date": "支付日期",
 }
 
 
@@ -2917,7 +2933,7 @@ def _group_bills_field(field_name: str) -> str:
         return "运行时字段"
     if field_name == "amount" or field_name.endswith("_amount"):
         return "金额信息"
-    if field_name.startswith("pay_") or field_name.startswith("bill_") or field_name in {"receipt_id", "in_month"}:
+    if field_name.startswith("pay_") or field_name.startswith("bill_") or field_name in {"receipt_id", "in_month", "receive_date"}:
         return "支付与状态"
     if field_name in {"id", "community_id", "charge_item_id", "asset_id", "house_id", "park_id", "bind_house_id", "deal_log_id"}:
         return "关联ID"

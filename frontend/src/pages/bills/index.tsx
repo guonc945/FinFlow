@@ -608,8 +608,8 @@ const Bills = () => {
                 customer_name: customerNameFilter || undefined,
                 in_month_start: inMonthStart || undefined,
                 in_month_end: inMonthEnd || undefined,
-                pay_time_start: payTimeStart || undefined,
-                pay_time_end: payTimeEnd || undefined,
+                pay_date_start: payTimeStart || undefined,
+                pay_date_end: payTimeEnd || undefined,
                 deal_log_id: dealLogIdFilter ? Number(dealLogIdFilter) : undefined,
             };
             if (debouncedSearchQuery) {
@@ -879,9 +879,9 @@ const Bills = () => {
             ),
         },
         {
-            key: 'pay_time' as keyof Bill,
-            title: '支付时间',
-            render: (val: any) => <span className="text-secondary text-sm">{val ? new Date(val * 1000).toLocaleString() : '-'}</span>,
+            key: 'receive_date' as keyof Bill,
+            title: '支付日期',
+            render: (val: any) => <span className="text-secondary text-sm">{val || '-'}</span>,
         },
         {
             key: 'created_at' as keyof Bill,
@@ -1186,7 +1186,7 @@ const Bills = () => {
                                 </div>
 
                                 <div className="flex items-center gap-1">
-                                    <span className="text-secondary text-xs" style={{ whiteSpace: 'nowrap' }}>支付时间:</span>
+                                    <span className="text-secondary text-xs" style={{ whiteSpace: 'nowrap' }}>支付日期:</span>
                                     <select
                                         className="enhanced-select text-xs"
                                         style={{ width: '90px' }}

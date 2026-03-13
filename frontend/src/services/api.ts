@@ -193,6 +193,8 @@ export const getBills = async (params?: {
     end_date?: string;
     in_month_start?: string;
     in_month_end?: string;
+    pay_date_start?: string;
+    pay_date_end?: string;
     pay_time_start?: string;
     pay_time_end?: string;
     deal_log_id?: number;
