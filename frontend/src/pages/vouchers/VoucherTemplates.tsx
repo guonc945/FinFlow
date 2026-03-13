@@ -832,12 +832,18 @@ const VoucherTemplates = () => {
         if (!currentTemplate) return;
         setSaveErrors([]);
 
+        const normalized = normalizeTemplateFieldBindings(currentTemplate);
+        const workingTemplate = normalized.replaced > 0 ? normalized.template : currentTemplate;
+        if (normalized.replaced > 0) {
+            setCurrentTemplate(workingTemplate);
+        }
+
         const payload: VoucherTemplate = {
-            ...currentTemplate,
-            template_id: currentTemplate.template_id.trim(),
-            template_name: currentTemplate.template_name.trim(),
-            priority: Number.isFinite(Number(currentTemplate.priority))
-                ? Math.max(0, Number(currentTemplate.priority))
+            ...workingTemplate,
+            template_id: workingTemplate.template_id.trim(),
+            template_name: workingTemplate.template_name.trim(),
+            priority: Number.isFinite(Number(workingTemplate.priority))
+                ? Math.max(0, Number(workingTemplate.priority))
                 : 100
         };
 
