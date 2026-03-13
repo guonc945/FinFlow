@@ -2814,6 +2814,34 @@ _BILL_FIELD_LABELS: Dict[str, str] = {
 }
 
 
+_RECEIPT_BILL_RUNTIME_EXTRA_FIELDS: Set[str] = {"community_name", "payer_name"}
+_RECEIPT_BILL_FIELD_LABELS: Dict[str, str] = {
+    "community_name": "园区名称",
+    "payer_name": "付款人",
+    "deal_time": "交易时间",
+    "deal_date": "交易日期",
+    "income_amount": "实收金额",
+    "amount": "收款金额",
+    "bill_amount": "账单金额",
+    "discount_amount": "折扣金额",
+    "late_money_amount": "滞纳金",
+    "deposit_amount": "押金",
+    "pay_channel_str": "支付方式",
+    "pay_channel": "支付方式编码",
+    "payee": "收款人",
+    "receipt_id": "收据号",
+    "invoice_number": "发票号",
+    "invoice_status": "发票状态",
+    "open_invoice": "是否开票",
+    "asset_name": "资产名称",
+    "asset_id": "资产ID",
+    "asset_type": "资产类型",
+    "deal_type": "交易类型",
+    "remark": "备注",
+    "fk_id": "FK_ID",
+}
+
+
 def _group_bills_field(field_name: str) -> str:
     if field_name.startswith("kd_"):
         return "银行账户" if "_bank_" in field_name else "金蝶关联"
@@ -2828,6 +2856,24 @@ def _group_bills_field(field_name: str) -> str:
     return "账单字段"
 
 
+def _group_receipt_bills_field(field_name: str) -> str:
+    if field_name in _RECEIPT_BILL_RUNTIME_EXTRA_FIELDS:
+        return "运行时字段"
+    if field_name == "income_amount" or field_name == "amount" or field_name.endswith("_amount"):
+        return "金额信息"
+    if field_name.startswith("pay_") or field_name in {"receipt_id"}:
+        return "支付信息"
+    if field_name.startswith("invoice_") or field_name in {"open_invoice"}:
+        return "发票信息"
+    if field_name.startswith("deal_"):
+        return "交易时间"
+    if field_name in {"id", "community_id", "asset_id", "receipt_record_id", "receipt_version"}:
+        return "关联ID"
+    if field_name.startswith("asset_"):
+        return "资产信息"
+    return "收款字段"
+
+
 def _build_bills_fields() -> Set[str]:
     fields = {col.name for col in models.Bill.__table__.columns}
     try:
@@ -2840,23 +2886,40 @@ def _build_bills_fields() -> Set[str]:
     return fields
 
 
+def _build_receipt_bills_fields() -> Set[str]:
+    fields = {col.name for col in models.ReceiptBill.__table__.columns}
+    fields.update(_RECEIPT_BILL_RUNTIME_EXTRA_FIELDS)
+    return fields
+
+
 @app.get("/api/vouchers/source-fields")
 def get_voucher_source_fields(source_type: str = Query("bills")):
     normalized_source = (source_type or "").strip().lower()
-    if normalized_source not in ("", "bills"):
+    if normalized_source not in ("", "bills", "receipt_bills"):
         return {"source_type": normalized_source, "fields": []}
 
+    if normalized_source in ("", "bills"):
+        fields = []
+        for field_name in sorted(_build_bills_fields()):
+            display_name = _BILL_FIELD_LABELS.get(field_name)
+            label = f"{display_name} ({field_name})" if display_name else field_name
+            fields.append({
+                "label": label,
+                "value": field_name,
+                "group": _group_bills_field(field_name),
+            })
+        return {"source_type": "bills", "fields": fields}
+
     fields = []
-    for field_name in sorted(_build_bills_fields()):
-        display_name = _BILL_FIELD_LABELS.get(field_name)
+    for field_name in sorted(_build_receipt_bills_fields()):
+        display_name = _RECEIPT_BILL_FIELD_LABELS.get(field_name)
         label = f"{display_name} ({field_name})" if display_name else field_name
         fields.append({
             "label": label,
             "value": field_name,
-            "group": _group_bills_field(field_name),
+            "group": _group_receipt_bills_field(field_name),
         })
-
-    return {"source_type": "bills", "fields": fields}
+    return {"source_type": "receipt_bills", "fields": fields}
 
 
 @app.get("/api/vouchers/source-modules")
@@ -2878,6 +2941,16 @@ def get_voucher_source_modules():
             "group": _group_bills_field(field_name),
         })
 
+    receipt_bills_fields = []
+    for field_name in sorted(_build_receipt_bills_fields()):
+        display_name = _RECEIPT_BILL_FIELD_LABELS.get(field_name)
+        label = f"{display_name} ({field_name})" if display_name else field_name
+        receipt_bills_fields.append({
+            "label": label,
+            "value": field_name,
+            "group": _group_receipt_bills_field(field_name),
+        })
+
     return {
         "modules": [
             {
@@ -2889,7 +2962,13 @@ def get_voucher_source_modules():
                         "label": "运营账单",
                         "source_type": "bills",
                         "fields": bills_fields,
-                    }
+                    },
+                    {
+                        "id": "receipt_bills",
+                        "label": "收款账单",
+                        "source_type": "receipt_bills",
+                        "fields": receipt_bills_fields,
+                    },
                 ],
             },
             {
@@ -2931,7 +3010,15 @@ def _build_allowed_placeholders(source_type: Optional[str], db: Session) -> Set[
 
     normalized_source = (source_type or "").strip().lower()
     if normalized_source in ("", "bills"):
-        allowed.update(_build_bills_fields())
+        bills_fields = _build_bills_fields()
+        allowed.update(bills_fields)
+        allowed.update({f"bills.{name}" for name in bills_fields})
+        allowed.update({f"marki.bills.{name}" for name in bills_fields})
+    if normalized_source in ("receipt_bills",):
+        receipt_fields = _build_receipt_bills_fields()
+        allowed.update(receipt_fields)
+        allowed.update({f"receipt_bills.{name}" for name in receipt_fields})
+        allowed.update({f"marki.receipt_bills.{name}" for name in receipt_fields})
     return allowed
 
 
@@ -3048,7 +3135,8 @@ def _validate_trigger_condition(
         errors.append("trigger_condition must be a JSON object")
         return
 
-    enforce_field_check = (source_type or "").strip().lower() in ("", "bills")
+    normalized_source = (source_type or "").strip().lower()
+    enforce_field_check = normalized_source in ("", "bills", "receipt_bills")
 
     def walk(node: Any, path: str) -> None:
         if not isinstance(node, dict):
@@ -3073,7 +3161,7 @@ def _validate_trigger_condition(
             if not field_name:
                 errors.append(f"{path}.field is required")
             elif enforce_field_check and field_name not in allowed_fields:
-                errors.append(f"{path}.field is not a supported bills field: {field_name}")
+                errors.append(f"{path}.field is not a supported field for source_type={normalized_source or 'bills'}: {field_name}")
 
             raw_operator = node.get("operator", "==")
             operator = _canonicalize_trigger_operator(raw_operator)
@@ -3093,7 +3181,19 @@ def _validate_voucher_template_payload(payload: Dict[str, Any], db: Session) -> 
     errors: List[str] = []
     source_type = payload.get("source_type")
     allowed_placeholders = _build_allowed_placeholders(source_type, db)
-    allowed_bills_fields = _build_bills_fields()
+    normalized_source = (source_type or "").strip().lower()
+    if normalized_source in ("", "bills"):
+        base_fields = _build_bills_fields()
+        allowed_source_fields = set(base_fields)
+        allowed_source_fields.update({f"bills.{name}" for name in base_fields})
+        allowed_source_fields.update({f"marki.bills.{name}" for name in base_fields})
+    elif normalized_source in ("receipt_bills",):
+        base_fields = _build_receipt_bills_fields()
+        allowed_source_fields = set(base_fields)
+        allowed_source_fields.update({f"receipt_bills.{name}" for name in base_fields})
+        allowed_source_fields.update({f"marki.receipt_bills.{name}" for name in base_fields})
+    else:
+        allowed_source_fields = set()
 
     _validate_unknown_placeholders(payload.get("book_number_expr"), "book_number_expr", allowed_placeholders, errors)
     _validate_unknown_placeholders(payload.get("vouchertype_number_expr"), "vouchertype_number_expr", allowed_placeholders, errors)
@@ -3110,7 +3210,7 @@ def _validate_voucher_template_payload(payload: Dict[str, Any], db: Session) -> 
         payload.get("trigger_condition"),
         source_type,
         allowed_placeholders,
-        allowed_bills_fields,
+        allowed_source_fields,
         errors,
     )
 

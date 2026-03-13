@@ -378,6 +378,19 @@ def enrich_bill_data(bill_data: Dict[str, Any], db: Session) -> Dict[str, Any]:
         enriched['customer_name'] = ''
         enriched['customer_id'] = ''
 
+    # Add source-bound aliases so templates can reference fields with an explicit source binding:
+    # - {bills.amount}
+    # - {marki.bills.amount} (module + source + field)
+    # while keeping backward compatibility with legacy {amount}.
+    _prefix = "bills"
+    _module_prefix = "marki.bills"
+    for key, val in list(enriched.items()):
+        # Avoid re-prefixing keys that are already qualified.
+        if not isinstance(key, str) or "." in key:
+            continue
+        enriched[f"{_prefix}.{key}"] = val
+        enriched[f"{_module_prefix}.{key}"] = val
+
     return enriched
 
 

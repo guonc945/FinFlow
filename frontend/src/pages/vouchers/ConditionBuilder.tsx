@@ -194,6 +194,38 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
         return null;
     };
 
+    const getDisplayFieldLabel = (fieldKey: string) => {
+        const raw = String(fieldKey || '').trim();
+        if (!raw) return '选择字段';
+
+        const parts = raw.split('.').filter(Boolean);
+        if (parts.length >= 3) {
+            const moduleId = parts[0];
+            const sourceId = parts[1];
+            const baseKey = parts.slice(2).join('.');
+            const baseLabel = fields.find(f => f.value === baseKey)?.label || baseKey;
+
+            const moduleLabel = fieldModules?.find(m => m.id === moduleId)?.label || moduleId;
+            const sourceLabel = fieldModules
+                ?.find(m => m.id === moduleId)
+                ?.sources
+                ?.find(s => s.id === sourceId)?.label || sourceId;
+
+            return `${moduleLabel}.${sourceLabel}.${baseLabel}`;
+        }
+        if (parts.length === 2) {
+            const [sourcePrefix, baseKey] = parts as [string, string];
+            const baseLabel = fields.find(f => f.value === baseKey)?.label || baseKey;
+            const matched = fieldModules
+                ?.flatMap(m => (m.sources || []).map(s => ({ module: m, source: s })))
+                ?.find(x => String(x.source.source_type || '').toLowerCase() === String(sourcePrefix).toLowerCase());
+            const sourceLabel = matched?.source?.label || sourcePrefix;
+            return `${sourceLabel}.${baseLabel}`;
+        }
+
+        return fields.find(f => f.value === raw)?.label || raw;
+    };
+
     const collectGroupIds = (node: ConditionNode): string[] => {
         if (node.type !== 'group') return [];
         return [node.id, ...node.children.flatMap(child => collectGroupIds(child))];
@@ -647,7 +679,7 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
                                 title="选择字段"
                             >
                                 <span className="cb-adv-field-text">
-                                    {fields.find(f => f.value === node.field)?.label || node.field || '选择字段'}
+                                    {getDisplayFieldLabel(node.field)}
                                 </span>
                                 <ChevronDown size={14} />
                             </button>
@@ -770,15 +802,18 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
                         setSourceFieldPickerTarget(null);
                     }}
                     modules={fieldModules}
-                    onPick={(f) => {
+                    onPick={(f, ctx) => {
                         const target = sourceFieldPickerTarget;
                         if (!target) return;
+                        const key = (ctx?.module_id && ctx?.source_id)
+                            ? `${ctx.module_id}.${ctx.source_id}.${f.value}`
+                            : (ctx?.source_type ? `${ctx.source_type}.${f.value}` : f.value);
                         if (target.mode === 'field') {
-                            updateNode(target.nodeId, { field: f.value });
+                            updateNode(target.nodeId, { field: key });
                         } else {
                             const node = findNode(root, target.nodeId) as Condition | null;
                             const prevValue = node && node.type === 'rule' ? (node.value || '') : '';
-                            updateNode(target.nodeId, { value: prevValue + `{${f.value}}` });
+                            updateNode(target.nodeId, { value: prevValue + `{${key}}` });
                         }
                         setSourceFieldPickerOpen(false);
                         setSourceFieldPickerTarget(null);

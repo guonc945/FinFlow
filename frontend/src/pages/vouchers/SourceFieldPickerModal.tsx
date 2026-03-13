@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Database, Search, X } from 'lucide-react';
 import type { VoucherFieldModule, VoucherFieldSource, VoucherSourceFieldOption } from '../../types';
 import './SourceFieldPickerModal.css';
@@ -78,6 +79,15 @@ export default function SourceFieldPickerModal({
         return () => window.removeEventListener('keydown', onKeyDown);
     }, [open, onClose]);
 
+    useEffect(() => {
+        if (!open) return;
+        const prevOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        return () => {
+            document.body.style.overflow = prevOverflow;
+        };
+    }, [open]);
+
     const filteredFields = useMemo(() => {
         const list = (activeSource?.fields || []) as VoucherSourceFieldOption[];
         const q = normalizeText(query);
@@ -90,9 +100,21 @@ export default function SourceFieldPickerModal({
 
     const grouped = useMemo(() => groupBy(filteredFields), [filteredFields]);
 
+    const getFieldKey = (field: VoucherSourceFieldOption) => {
+        const baseKey = String(field?.value || '').trim();
+        if (!baseKey) return baseKey;
+
+        const mid = String(activeModule?.id || '').trim();
+        const sid = String(activeSource?.id || '').trim();
+        if (mid && sid) return `${mid}.${sid}.${baseKey}`;
+
+        const st = String(activeSource?.source_type || '').trim();
+        return st ? `${st}.${baseKey}` : baseKey;
+    };
+
     if (!open) return null;
 
-    return (
+    const modalNode = (
         <div className="sfpm-overlay" onMouseDown={(e) => {
             if (e.target === e.currentTarget) onClose();
         }}>
@@ -181,10 +203,10 @@ export default function SourceFieldPickerModal({
                                                             source_type: activeSource.source_type,
                                                         });
                                                     }}
-                                                    title={f.value}
+                                                    title={`${getFieldKey(f)} (raw=${f.value})`}
                                                 >
                                                     <span className="sfpm-field-label">{f.label}</span>
-                                                    <code className="sfpm-field-key">{f.value}</code>
+                                                    <code className="sfpm-field-key">{getFieldKey(f)}</code>
                                                 </button>
                                             ))}
                                         </div>
@@ -197,4 +219,7 @@ export default function SourceFieldPickerModal({
             </div>
         </div>
     );
+
+    const portalTarget = typeof document !== 'undefined' ? document.body : null;
+    return portalTarget ? createPortal(modalNode, portalTarget) : modalNode;
 }

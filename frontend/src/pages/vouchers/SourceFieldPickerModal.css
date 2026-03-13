@@ -203,7 +203,7 @@
     border-radius: 10px;
     border: 1px solid #e2e8f0;
     background: #fbfdff;
-    max-width: 240px;
+    max-width: 420px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -238,4 +238,3 @@
         border-bottom: none;
     }
 }
-
