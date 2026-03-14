@@ -11,15 +11,13 @@ import {
     ChevronsLeft,
     ChevronsRight,
     ChevronUp,
-    FileText,
     Link2Off,
     ShieldCheck
 } from 'lucide-react';
 import DataTable from '../../components/data/DataTable';
-import type { Bill, Project, BillVoucherPushStatus } from '../../types';
+import type { Bill, Project } from '../../types';
 import './Bills.css';
-import { syncBills, getProjects, getSyncStatus, getBills, previewVoucherForBill, previewBatchVoucherForBills, pushVoucherToKingdee, getBillChargeItems, resetBillVoucherBinding, queryVoucherById } from '../../services/api';
-import VoucherPreviewModal from '../../components/common/VoucherPreviewModal';
+import { syncBills, getProjects, getSyncStatus, getBills, getBillChargeItems, resetBillVoucherBinding, queryVoucherById } from '../../services/api';
 import ConfirmModal from '../../components/common/ConfirmModal';
 import { useToast, ToastContainer } from '../../components/Toast';
 import { useLocation } from 'react-router-dom';
@@ -325,39 +323,7 @@ const Bills = () => {
         }
     }, [closeConfirmModal, showToast]);
 
-    // 凭证预览状态
-    const [voucherPreview, setVoucherPreview] = useState<{ isOpen: boolean; data: any; isLoading: boolean; error: string | null }>({
-        isOpen: false, data: null, isLoading: false, error: null
-    });
-
     const buildBillSelectionKey = (billId: string | number, communityId?: number) => `${communityId ?? ''}|${billId}`;
-    const summarizePushStatuses = (items: BillVoucherPushStatus[]) => items.reduce((acc, item) => {
-        acc.total += 1;
-        const statusKey = item.push_status || 'not_pushed';
-        if (statusKey in acc) {
-            acc[statusKey as keyof typeof acc] += 1;
-        }
-        return acc;
-    }, {
-        total: 0,
-        not_pushed: 0,
-        pushing: 0,
-        success: 0,
-        failed: 0,
-    });
-
-    const handlePreviewVoucher = async (billId: number, communityId?: number) => {
-        setVoucherPreview({ isOpen: true, data: null, isLoading: true, error: null });
-        try {
-            const result = await previewVoucherForBill(billId, communityId);
-            setVoucherPreview({ isOpen: true, data: result, isLoading: false, error: null });
-        } catch (err: any) {
-            setVoucherPreview({
-                isOpen: true, data: null, isLoading: false,
-                error: err.response?.data?.detail || err.message || '预览失败'
-            });
-        }
-    };
 
     const handleResetVoucherBinding = async (billId: number, communityId?: number) => {
         if (!Number.isFinite(billId) || !Number.isFinite(Number(communityId))) {
@@ -518,82 +484,6 @@ const Bills = () => {
                 }
             }
         });
-    };
-
-    const handlePreviewBatchVoucher = async () => {
-        const refs = Array.from(selectedBillRefs.values());
-        if (refs.length === 0) {
-            showToast('info', '提示', '请先选择账单');
-            return;
-        }
-
-        setVoucherPreview({ isOpen: true, data: null, isLoading: true, error: null });
-        try {
-            const result = await previewBatchVoucherForBills(refs);
-            if (Array.isArray(result?.skipped_bills) && result.skipped_bills.length > 0) {
-                const preview = result.skipped_bills
-                    .slice(0, 5)
-                    .map((b: any) => `${b.community_id}:${b.bill_id}`)
-                    .join(', ');
-                showToast('info', '部分账单未匹配模板', `已跳过：${preview}`);
-            }
-            setVoucherPreview({ isOpen: true, data: result, isLoading: false, error: null });
-        } catch (err: any) {
-            setVoucherPreview({
-                isOpen: true, data: null, isLoading: false,
-                error: err.response?.data?.detail || err.message || 'Batch voucher preview failed'
-            });
-        }
-    };
-
-    const handlePushVoucher = async (kingdeeJson: any) => {
-        try {
-            const sourceBills = Array.isArray(voucherPreview.data?.source_bills)
-                ? voucherPreview.data.source_bills
-                    .map((item: BillVoucherPushStatus) => ({
-                        bill_id: Number(item.bill_id),
-                        community_id: Number(item.community_id),
-                    }))
-                    .filter((item: { bill_id: number; community_id: number }) => Number.isFinite(item.bill_id) && Number.isFinite(item.community_id))
-                : [];
-
-            const result = await pushVoucherToKingdee(kingdeeJson, sourceBills);
-            if (result?.success) {
-                const successText = result?.voucher_number
-                    ? `${result?.message || '凭证已推送到金蝶系统'}（凭证号：${result.voucher_number}）`
-                    : (result?.message || '凭证已推送到金蝶系统');
-                showToast('success', '推送成功', successText);
-
-                if (Array.isArray(result?.tracked_bills) && result.tracked_bills.length > 0) {
-                    const trackedBills = result.tracked_bills as BillVoucherPushStatus[];
-                    const trackedSummary = summarizePushStatuses(trackedBills);
-                    setVoucherPreview(prev => {
-                        if (!prev.data) return prev;
-                        return {
-                            ...prev,
-                            data: {
-                                ...prev.data,
-                                selected_bills: trackedBills,
-                                source_bills: trackedBills,
-                                selected_bill_push_summary: trackedSummary,
-                                source_bill_push_summary: trackedSummary,
-                                push_blocked: true,
-                                push_block_reason: `当前凭证已推送完成${result?.voucher_number ? `，凭证号：${result.voucher_number}` : ''}`,
-                            }
-                        };
-                    });
-                }
-
-                await fetchBillsList();
-            } else {
-                showToast('error', '推送失败', result?.message || '金蝶接口返回失败');
-            }
-            return result;
-        } catch (err: any) {
-            const msg = err.response?.data?.detail || err.response?.data?.message || err.message || '推送失败';
-            showToast('error', '推送失败', typeof msg === 'string' ? msg : JSON.stringify(msg));
-            throw err;
-        }
     };
 
     const fetchBillsList = useCallback(async () => {
@@ -895,21 +785,6 @@ const Bills = () => {
             fixed: 'right' as const,
             render: (_: any, row: Bill) => (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                <button
-                    onClick={() => handlePreviewVoucher(Number(row.id), row.community_id)}
-                    style={{
-                        display: 'flex', alignItems: 'center', gap: '0.25rem',
-                        padding: '0.25rem 0.625rem', borderRadius: '0.375rem',
-                        border: '1px solid #e2e8f0', background: '#fafafa',
-                        cursor: 'pointer', fontSize: '0.7rem', fontWeight: 500,
-                        color: '#3b82f6', transition: 'all 0.15s',
-                    }}
-                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#eff6ff'; }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = '#fafafa'; }}
-                    title="预览凭证"
-                >
-                    <FileText size={12} /> 凭证
-                </button>
                 {(row.push_status || '') === 'success' && (
                     <button
                         onClick={() => handleResetVoucherBinding(Number(row.id), row.community_id)}
@@ -1020,13 +895,6 @@ const Bills = () => {
                                 </button>
                                 <button className="btn-outline btn-refresh-list" onClick={fetchBillsList}>
                                     <RefreshCw size={14} /> 刷新列表
-                                </button>
-                                <button
-                                    className={`btn-outline btn-batch-voucher ${selectedBillRefs.size === 0 ? 'disabled' : ''}`}
-                                    onClick={handlePreviewBatchVoucher}
-                                    disabled={selectedBillRefs.size === 0}
-                                >
-                                    <FileText size={14} /> 批量凭证预览
                                 </button>
                                 <button
                                     className={`btn-outline btn-batch-check ${!canBatchVerify ? 'disabled' : ''}`}
@@ -1315,16 +1183,6 @@ const Bills = () => {
                     </label>
                 ) : null}
             </ConfirmModal>
-
-            {/* 凭证预览弹窗 */}
-            <VoucherPreviewModal
-                isOpen={voucherPreview.isOpen}
-                onClose={() => setVoucherPreview(prev => ({ ...prev, isOpen: false }))}
-                data={voucherPreview.data}
-                isLoading={voucherPreview.isLoading}
-                error={voucherPreview.error}
-                onPushVoucher={handlePushVoucher}
-            />
             <ToastContainer toasts={toasts} removeToast={removeToast} />
         </div>
     );

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     RefreshCw,
     Search,
@@ -10,12 +10,14 @@ import {
     ChevronRight,
     ChevronsLeft,
     ChevronsRight,
+    FileText,
 } from 'lucide-react';
 import DataTable from '../../components/data/DataTable';
-import type { Bill, Project, ReceiptBill } from '../../types';
+import type { Bill, BillVoucherPushStatus, Project, ReceiptBill } from '../../types';
 import '../bills/Bills.css'; // reuse bills styling
-import { getBills, getProjects, getReceiptBills, getReceiptBillSyncStatus, syncReceiptBills } from '../../services/api';
+import { getBills, getProjects, getReceiptBills, getReceiptBillSyncStatus, previewBatchVoucherForBills, pushVoucherToKingdee, syncReceiptBills } from '../../services/api';
 import { useToast, ToastContainer } from '../../components/Toast';
+import VoucherPreviewModal from '../../components/common/VoucherPreviewModal';
 
 const SyncProgressModal = ({
     isOpen,
@@ -260,7 +262,46 @@ const ReceiptBills = () => {
     const [relatedBillsPageSize, setRelatedBillsPageSize] = useState(25);
     const [relatedReceiptBill, setRelatedReceiptBill] = useState<ReceiptBill | null>(null);
 
+    // Voucher preview state (moved from bills page)
+    const [voucherPreview, setVoucherPreview] = useState<{ isOpen: boolean; data: any; isLoading: boolean; error: string | null }>({
+        isOpen: false, data: null, isLoading: false, error: null
+    });
+
+    // Batch selection (receipt bills)
+    const [selectedReceiptKeys, setSelectedReceiptKeys] = useState<Set<string>>(new Set());
+    const [selectedReceiptRefs, setSelectedReceiptRefs] = useState<Map<string, { receipt_bill_id: number; community_id: number }>>(new Map());
+    const [selectedReceiptAmounts, setSelectedReceiptAmounts] = useState<Map<string, number>>(new Map());
+
     const totalPages = useMemo(() => Math.max(1, Math.ceil(totalRecords / pageSize)), [totalRecords, pageSize]);
+    const selectedTotalAmount = useMemo(() => {
+        let total = 0;
+        for (const value of selectedReceiptAmounts.values()) {
+            total += Number(value || 0);
+        }
+        return total;
+    }, [selectedReceiptAmounts]);
+
+    const clearReceiptSelection = useCallback(() => {
+        setSelectedReceiptKeys(new Set());
+        setSelectedReceiptRefs(new Map());
+        setSelectedReceiptAmounts(new Map());
+    }, []);
+
+    const buildReceiptSelectionKey = (receiptBillId: string | number, communityId?: number) => `${communityId ?? ''}|${receiptBillId}`;
+    const summarizePushStatuses = (items: BillVoucherPushStatus[]) => items.reduce((acc, item) => {
+        acc.total += 1;
+        const statusKey = item.push_status || 'not_pushed';
+        if (statusKey in acc) {
+            acc[statusKey as keyof typeof acc] += 1;
+        }
+        return acc;
+    }, {
+        total: 0,
+        not_pushed: 0,
+        pushing: 0,
+        success: 0,
+        failed: 0,
+    });
 
     const fetchProjects = useCallback(async () => {
         const resp = await getProjects({ skip: 0, limit: 2000 });
@@ -300,6 +341,10 @@ const ReceiptBills = () => {
     useEffect(() => {
         void fetchReceiptBills();
     }, [fetchReceiptBills]);
+
+    useEffect(() => {
+        clearReceiptSelection();
+    }, [clearReceiptSelection, searchQuery, communityFilter, payChannelStrFilter, payeeFilter, dealDateStart, dealDateEnd, page, pageSize]);
 
     // Close dropdown on outside click
     useEffect(() => {
@@ -399,7 +444,243 @@ const ReceiptBills = () => {
         await loadRelatedBills(receiptBill, 1, 25);
     }, [loadRelatedBills]);
 
-    const columns = useMemo(() => ([
+    const fetchRelatedBillRefsForReceipt = useCallback(async (receiptBillIdRaw: string | number, communityIdRaw: number) => {
+        const dealLogId = Number(receiptBillIdRaw);
+        const communityId = Number(communityIdRaw);
+        if (!Number.isFinite(dealLogId) || !Number.isFinite(communityId)) return [];
+
+        const limit = 200;
+        const maxLoops = 50; // safety cap
+        const refs: Array<{ bill_id: number; community_id: number }> = [];
+        const seen = new Set<string>();
+
+        let skip = 0;
+        let expectedTotal = Infinity;
+        for (let i = 0; i < maxLoops; i += 1) {
+            const resp = await getBills({
+                community_ids: String(communityId),
+                deal_log_id: dealLogId,
+                skip,
+                limit,
+            });
+
+            const rows = Array.isArray(resp?.items) ? (resp.items as Bill[]) : [];
+            expectedTotal = Number(resp?.total || expectedTotal);
+
+            for (const bill of rows) {
+                const billId = Number(bill.id);
+                const billCommunityId = Number(bill.community_id ?? communityId);
+                if (!Number.isFinite(billId) || !Number.isFinite(billCommunityId)) continue;
+                const key = `${billCommunityId}|${billId}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                refs.push({ bill_id: billId, community_id: billCommunityId });
+            }
+
+            skip += rows.length;
+            if (rows.length === 0) break;
+            if (Number.isFinite(expectedTotal) && refs.length >= expectedTotal) break;
+            if (skip >= expectedTotal) break;
+        }
+
+        return refs;
+    }, []);
+
+    const handlePreviewVoucherForReceipt = useCallback(async (receipt: { id: string | number; community_id: number }) => {
+        setVoucherPreview({ isOpen: true, data: null, isLoading: true, error: null });
+        try {
+            const refs = await fetchRelatedBillRefsForReceipt(receipt.id, receipt.community_id);
+            if (!refs.length) {
+                setVoucherPreview({ isOpen: false, data: null, isLoading: false, error: null });
+                showToast('info', '提示', '当前收款单下没有关联的运营账单，无法预览凭证');
+                return;
+            }
+
+            const result = await previewBatchVoucherForBills(refs);
+            if (Array.isArray(result?.skipped_bills) && result.skipped_bills.length > 0) {
+                const preview = result.skipped_bills
+                    .slice(0, 5)
+                    .map((b: any) => `${b.community_id}:${b.bill_id}`)
+                    .join(', ');
+                showToast('info', '部分账单未匹配模板', `已跳过：${preview}`);
+            }
+            setVoucherPreview({ isOpen: true, data: result, isLoading: false, error: null });
+        } catch (err: any) {
+            setVoucherPreview({
+                isOpen: true, data: null, isLoading: false,
+                error: err?.response?.data?.detail || err?.message || '预览失败'
+            });
+        }
+    }, [fetchRelatedBillRefsForReceipt, showToast]);
+
+    const handlePreviewBatchVoucher = useCallback(async () => {
+        const receipts = Array.from(selectedReceiptRefs.values());
+        if (receipts.length === 0) {
+            showToast('info', '提示', '请先选择收款账单');
+            return;
+        }
+
+        setVoucherPreview({ isOpen: true, data: null, isLoading: true, error: null });
+        try {
+            const allRefs: Array<{ bill_id: number; community_id: number }> = [];
+            const seen = new Set<string>();
+            let missingCount = 0;
+
+            for (const receipt of receipts) {
+                const refs = await fetchRelatedBillRefsForReceipt(receipt.receipt_bill_id, receipt.community_id);
+                if (!refs.length) {
+                    missingCount += 1;
+                    continue;
+                }
+                for (const r of refs) {
+                    const key = `${r.community_id}|${r.bill_id}`;
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    allRefs.push(r);
+                }
+            }
+
+            if (!allRefs.length) {
+                setVoucherPreview({ isOpen: false, data: null, isLoading: false, error: null });
+                showToast('info', '提示', '所选收款单下均没有关联的运营账单，无法预览凭证');
+                return;
+            }
+
+            const result = await previewBatchVoucherForBills(allRefs);
+            if (Array.isArray(result?.skipped_bills) && result.skipped_bills.length > 0) {
+                const preview = result.skipped_bills
+                    .slice(0, 5)
+                    .map((b: any) => `${b.community_id}:${b.bill_id}`)
+                    .join(', ');
+                showToast('info', '部分账单未匹配模板', `已跳过：${preview}`);
+            }
+            if (missingCount > 0) {
+                showToast('info', '提示', `有 ${missingCount} 条收款单没有关联账单，已自动跳过`);
+            }
+            setVoucherPreview({ isOpen: true, data: result, isLoading: false, error: null });
+        } catch (err: any) {
+            setVoucherPreview({
+                isOpen: true, data: null, isLoading: false,
+                error: err?.response?.data?.detail || err?.message || '预览失败'
+            });
+        }
+    }, [fetchRelatedBillRefsForReceipt, selectedReceiptRefs, showToast]);
+
+    const handlePushVoucher = useCallback(async (kingdeeJson: any) => {
+        try {
+            const sourceBills = Array.isArray(voucherPreview.data?.source_bills)
+                ? voucherPreview.data.source_bills
+                    .map((item: BillVoucherPushStatus) => ({
+                        bill_id: Number(item.bill_id),
+                        community_id: Number(item.community_id),
+                    }))
+                    .filter((item: { bill_id: number; community_id: number }) => Number.isFinite(item.bill_id) && Number.isFinite(item.community_id))
+                : [];
+
+            const result = await pushVoucherToKingdee(kingdeeJson, sourceBills);
+            if (result?.success) {
+                const successText = result?.voucher_number
+                    ? `${result?.message || '凭证已推送到金蝶系统'}（凭证号：${result.voucher_number}）`
+                    : (result?.message || '凭证已推送到金蝶系统');
+
+                showToast('success', '推送成功', successText);
+                if (Array.isArray(result?.tracked_bills) && result.tracked_bills.length > 0) {
+                    const trackedBills = result.tracked_bills as BillVoucherPushStatus[];
+                    const trackedSummary = summarizePushStatuses(trackedBills);
+                    setVoucherPreview(prev => {
+                        if (!prev.data) return prev;
+                        return {
+                            ...prev,
+                            data: {
+                                ...prev.data,
+                                selected_bills: trackedBills,
+                                source_bills: trackedBills,
+                                selected_bill_push_summary: trackedSummary,
+                                source_bill_push_summary: trackedSummary,
+                                push_blocked: true,
+                                push_block_reason: `当前凭证已推送完成${result?.voucher_number ? `，凭证号：${result.voucher_number}` : ''}`,
+                            }
+                        };
+                    });
+                }
+
+                await fetchReceiptBills();
+            } else {
+                showToast('error', '推送失败', result?.message || '金蝶接口返回失败');
+            }
+            return result;
+        } catch (err: any) {
+            const msg = err?.response?.data?.detail || err?.response?.data?.message || err?.message || '推送失败';
+            showToast('error', '推送失败', typeof msg === 'string' ? msg : JSON.stringify(msg));
+            throw err;
+        }
+    }, [fetchReceiptBills, showToast, summarizePushStatuses, voucherPreview.data]);
+
+    const columns = [
+        {
+            key: '_selection',
+            width: 40,
+            title: (
+                <input
+                    type="checkbox"
+                    checked={items.length > 0 && items.every(r => selectedReceiptKeys.has(buildReceiptSelectionKey(r.id, r.community_id)))}
+                    onChange={(e) => {
+                        const checked = e.target.checked;
+                        const newKeys = new Set(selectedReceiptKeys);
+                        const newRefs = new Map(selectedReceiptRefs);
+                        const newAmounts = new Map(selectedReceiptAmounts);
+                        items.forEach((row) => {
+                            const key = buildReceiptSelectionKey(row.id, row.community_id);
+                            const receiptBillId = Number(row.id);
+                            const communityId = Number(row.community_id);
+                            if (checked) {
+                                newKeys.add(key);
+                                newAmounts.set(key, Number(row.income_amount || 0));
+                                if (Number.isFinite(receiptBillId) && Number.isFinite(communityId)) {
+                                    newRefs.set(key, { receipt_bill_id: receiptBillId, community_id: communityId });
+                                }
+                            } else {
+                                newKeys.delete(key);
+                                newRefs.delete(key);
+                                newAmounts.delete(key);
+                            }
+                        });
+                        setSelectedReceiptKeys(newKeys);
+                        setSelectedReceiptRefs(newRefs);
+                        setSelectedReceiptAmounts(newAmounts);
+                    }}
+                />
+            ),
+            render: (_: any, row: ReceiptBill) => (
+                <input
+                    type="checkbox"
+                    checked={selectedReceiptKeys.has(buildReceiptSelectionKey(row.id, row.community_id))}
+                    onChange={(e) => {
+                        const checked = e.target.checked;
+                        const newKeys = new Set(selectedReceiptKeys);
+                        const newRefs = new Map(selectedReceiptRefs);
+                        const newAmounts = new Map(selectedReceiptAmounts);
+                        const key = buildReceiptSelectionKey(row.id, row.community_id);
+                        const receiptBillId = Number(row.id);
+                        const communityId = Number(row.community_id);
+                        if (checked) {
+                            newKeys.add(key);
+                            newAmounts.set(key, Number(row.income_amount || 0));
+                            if (Number.isFinite(receiptBillId) && Number.isFinite(communityId)) {
+                                newRefs.set(key, { receipt_bill_id: receiptBillId, community_id: communityId });
+                            }
+                        } else {
+                            newKeys.delete(key);
+                            newRefs.delete(key);
+                            newAmounts.delete(key);
+                        }
+                        setSelectedReceiptKeys(newKeys);
+                        setSelectedReceiptRefs(newRefs);
+                        setSelectedReceiptAmounts(newAmounts);
+                    }}
+                />
+            )
+        },
         { key: 'community_name', title: '园区' },
         { key: 'receipt_id', title: '收据号' },
         { key: 'id', title: '明细ID' },
@@ -438,19 +719,33 @@ const ReceiptBills = () => {
             fixed: 'right' as const,
             className: 'dt-sticky-right',
             render: (_: any, record: ReceiptBill) => (
-                <button
-                    className="btn-outline"
-                    style={{ height: '30px', padding: '0 0.75rem' }}
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        void openRelatedBills(record);
-                    }}
-                >
-                    账单
-                </button>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button
+                        className="btn-outline"
+                        style={{ height: '30px', padding: '0 0.75rem' }}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            void handlePreviewVoucherForReceipt({ id: record.id, community_id: record.community_id });
+                        }}
+                        title="预览凭证（按当前收款单关联账单生成）"
+                    >
+                        <FileText size={14} /> 凭证
+                    </button>
+                    <button
+                        className="btn-outline"
+                        style={{ height: '30px', padding: '0 0.75rem' }}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            void openRelatedBills(record);
+                        }}
+                        title="查看关联账单"
+                    >
+                        账单
+                    </button>
+                </div>
             )
         },
-    ]), []);
+    ];
 
     return (
         <div className="page-container">
@@ -544,6 +839,15 @@ const ReceiptBills = () => {
                                 <RefreshCw size={14} /> 同步收款账单
                             </button>
 
+                            <button
+                                className={`btn-outline btn-batch-voucher ${selectedReceiptRefs.size === 0 ? 'disabled' : ''}`}
+                                onClick={handlePreviewBatchVoucher}
+                                disabled={selectedReceiptRefs.size === 0}
+                                title={selectedReceiptRefs.size === 0 ? '请先勾选收款账单' : '批量预览凭证（按收款单关联账单生成）'}
+                            >
+                                <FileText size={14} /> 批量凭证预览
+                            </button>
+
                             <button className="btn-outline" style={{ color: '#ef4444' }} onClick={() => {
                                 setSearchQuery('');
                                 setCommunityFilter([]);
@@ -570,6 +874,17 @@ const ReceiptBills = () => {
                         </span>
                         <span className="text-secondary">|</span>
                         <span>入账总额: <strong style={{ color: '#2563eb' }}>¥{totalIncomeAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong></span>
+                        {selectedReceiptKeys.size > 0 && (
+                            <>
+                                <span className="text-secondary">|</span>
+                                <span>
+                                    已选 {selectedReceiptKeys.size} 条 / 入账合计:
+                                    <strong style={{ color: '#16a34a', marginLeft: '0.25rem' }}>
+                                        ¥{selectedTotalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                    </strong>
+                                </span>
+                            </>
+                        )}
                     </div>
 
                     <div className="pagination-controls">
@@ -628,9 +943,19 @@ const ReceiptBills = () => {
                 }}
             />
 
+            <VoucherPreviewModal
+                isOpen={voucherPreview.isOpen}
+                onClose={() => setVoucherPreview(prev => ({ ...prev, isOpen: false }))}
+                data={voucherPreview.data}
+                isLoading={voucherPreview.isLoading}
+                error={voucherPreview.error}
+                onPushVoucher={handlePushVoucher}
+            />
+
             <ToastContainer toasts={toasts} removeToast={removeToast} />
         </div>
     );
 };
 
 export default ReceiptBills;
+
