@@ -779,6 +779,9 @@ const VoucherTemplates = () => {
     const [viewMode, setViewMode] = useState<'card' | 'list'>(() => getInitialViewMode());
     const [batchMenuOpen, setBatchMenuOpen] = useState(false);
     const batchMenuRef = useRef<HTMLDivElement | null>(null);
+    const templatesMainRef = useRef<HTMLDivElement | null>(null);
+    const [currentPage, setCurrentPage] = useState(1);
+    const [pageSize, setPageSize] = useState(12);
 
     const categoryOptions = useMemo(() => flattenTemplateCategories(templateCategories), [templateCategories]);
     const categoryPathMap = useMemo(() => {
@@ -832,6 +835,13 @@ const VoucherTemplates = () => {
                 return list.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
         }
     }, [searchedTemplates, sortKey]);
+    const totalPages = useMemo(() => {
+        return Math.max(1, Math.ceil(displayedTemplates.length / pageSize));
+    }, [displayedTemplates.length, pageSize]);
+    const pagedTemplates = useMemo(() => {
+        const start = (currentPage - 1) * pageSize;
+        return displayedTemplates.slice(start, start + pageSize);
+    }, [displayedTemplates, currentPage, pageSize]);
 
     const currentFilterLabel = useMemo(() => {
         if (categoryFilter === 'all') return '全部';
@@ -841,11 +851,24 @@ const VoucherTemplates = () => {
         return categoryPathMap[targetId] || '未分类';
     }, [categoryFilter, categoryPathMap]);
     const selectedCount = selectedTemplateIds.size;
-    const isAllSelected = displayedTemplates.length > 0 && displayedTemplates.every(t => selectedTemplateIds.has(t.template_id));
+    const isAllSelected = pagedTemplates.length > 0 && pagedTemplates.every(t => selectedTemplateIds.has(t.template_id));
 
     useEffect(() => {
         setSelectedTemplateIds(new Set());
+        setCurrentPage(1);
     }, [categoryFilter, searchText, templates]);
+
+    useEffect(() => {
+        if (currentPage > totalPages) {
+            setCurrentPage(totalPages);
+        }
+    }, [currentPage, totalPages]);
+
+    useEffect(() => {
+        if (templatesMainRef.current) {
+            templatesMainRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+    }, [currentPage, pageSize, viewMode]);
 
     useEffect(() => {
         if (categoryPickerOpen) {
@@ -934,7 +957,7 @@ const VoucherTemplates = () => {
             return;
         }
         const next = new Set<string>();
-        displayedTemplates.forEach(t => next.add(t.template_id));
+        pagedTemplates.forEach(t => next.add(t.template_id));
         setSelectedTemplateIds(next);
     };
 
@@ -2143,7 +2166,7 @@ const VoucherTemplates = () => {
                                     </div>
                                 </div>
                             </aside>
-                            <div className="templates-main">
+                            <div className="templates-main" ref={templatesMainRef}>
                                 {loadError && (
                                     <div className="save-error-panel" style={{ marginBottom: '1.25rem' }}>
                                         <div className="save-error-title">
@@ -2225,11 +2248,11 @@ const VoucherTemplates = () => {
                                                             handleToggleSelectAll();
                                                             setBatchMenuOpen(false);
                                                         }}
-                                                        disabled={displayedTemplates.length === 0}
+                                                        disabled={pagedTemplates.length === 0}
                                                     >
                                                         <span className="menu-left">
                                                             {isAllSelected ? <Square size={14} /> : <CheckSquare size={14} />}
-                                                            {isAllSelected ? '取消全选' : '全选当前'}
+                                                            {isAllSelected ? '取消全选' : '全选当前页'}
                                                         </span>
                                                         <span className="menu-shortcut">Alt+A</span>
                                                     </button>
@@ -2317,7 +2340,7 @@ const VoucherTemplates = () => {
                             </div>
                             {viewMode === 'card' ? (
                                 <div className="templates-grid">
-                                    {displayedTemplates.map(t => (
+                                    {pagedTemplates.map(t => (
                                         <div
                                             key={t.template_id}
                                             className={`template-card glass-card cursor-pointer group ${selectedTemplateIds.has(t.template_id) ? 'selected' : ''}`}
@@ -2360,7 +2383,7 @@ const VoucherTemplates = () => {
                                         <div className="col-meta">优先级 / 状态</div>
                                         <div className="col-actions">操作</div>
                                     </div>
-                                    {displayedTemplates.map(t => (
+                                    {pagedTemplates.map(t => (
                                         <div
                                             key={t.template_id}
                                             className={`templates-list-row ${selectedTemplateIds.has(t.template_id) ? 'selected' : ''}`}
@@ -2403,6 +2426,59 @@ const VoucherTemplates = () => {
                                     {categoryFilter === 'all' && !searchText.trim() && (
                                         <button onClick={handleCreate}>立即创建</button>
                                     )}
+                                </div>
+                            )}
+                            {displayedTemplates.length > 0 && (
+                                <div className="templates-pagination">
+                                    <div className="page-info">
+                                        共 {displayedTemplates.length} 条，第 {currentPage} / {totalPages} 页
+                                    </div>
+                                    <div className="page-controls">
+                                        <button
+                                            className="page-button"
+                                            onClick={() => setCurrentPage(1)}
+                                            disabled={currentPage === 1}
+                                        >
+                                            首页
+                                        </button>
+                                        <button
+                                            className="page-button"
+                                            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                                            disabled={currentPage === 1}
+                                        >
+                                            上一页
+                                        </button>
+                                        <span className="page-number">{currentPage}</span>
+                                        <button
+                                            className="page-button"
+                                            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                                            disabled={currentPage === totalPages}
+                                        >
+                                            下一页
+                                        </button>
+                                        <button
+                                            className="page-button"
+                                            onClick={() => setCurrentPage(totalPages)}
+                                            disabled={currentPage === totalPages}
+                                        >
+                                            末页
+                                        </button>
+                                    </div>
+                                    <div className="page-size">
+                                        <label>每页</label>
+                                        <select
+                                            value={pageSize}
+                                            onChange={e => {
+                                                setPageSize(Number(e.target.value));
+                                                setCurrentPage(1);
+                                            }}
+                                        >
+                                            <option value={8}>8</option>
+                                            <option value={12}>12</option>
+                                            <option value={20}>20</option>
+                                            <option value={40}>40</option>
+                                        </select>
+                                    </div>
                                 </div>
                             )}
                         </div>

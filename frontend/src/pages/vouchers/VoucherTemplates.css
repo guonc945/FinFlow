@@ -81,6 +81,7 @@
     padding: 0.85rem;
     box-shadow: 0 6px 16px -12px rgba(15, 23, 42, 0.35);
     min-height: 0;
+    overflow: hidden;
 }
 
 .sidebar-card {
@@ -830,6 +831,69 @@
 
 .templates-list .delete-btn {
     padding: 0.35rem 0.5rem;
+}
+
+.templates-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    background: #f8fafc;
+    flex-wrap: wrap;
+    margin-top: auto;
+}
+
+.page-info {
+    font-size: 0.85rem;
+    color: #64748b;
+}
+
+.page-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.page-button {
+    border: 1px solid #e2e8f0;
+    background: white;
+    border-radius: 8px;
+    padding: 0.35rem 0.6rem;
+    font-size: 0.8rem;
+    cursor: pointer;
+    color: #1e293b;
+}
+
+.page-button:disabled {
+    color: #cbd5f5;
+    cursor: not-allowed;
+}
+
+.page-number {
+    min-width: 32px;
+    text-align: center;
+    font-weight: 600;
+    color: #475569;
+}
+
+.page-size {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.8rem;
+    color: #64748b;
+}
+
+.page-size select {
+    border: 1px solid #e2e8f0;
+    background: white;
+    padding: 0.3rem 0.55rem;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    color: #1e293b;
 }
 
 .template-card {
