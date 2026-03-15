@@ -275,8 +275,8 @@ button {
 .page-content {
     flex: 1;
     overflow-y: auto;
-    padding: var(--space-6);
-    padding-bottom: var(--space-12);
+    padding: 0;
+    padding-bottom: 0;
 }
 
 /* Custom Scrollbar */

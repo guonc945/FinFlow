@@ -42,6 +42,7 @@ class VoucherTemplate(Base):
     description = Column(String(255))
     active = Column(Boolean, default=True)
     priority = Column(Integer, default=100)
+    category_id = Column(Integer, ForeignKey("voucher_template_categories.id"), nullable=True)
     # Business module binding (e.g. 'marki'). A module can contain multiple sources/models.
     source_module = Column(String(50))
     source_type = Column(String(50))  # e.g. 'bills'
@@ -55,6 +56,7 @@ class VoucherTemplate(Base):
     bookeddate_expr = Column(String(100), default="{CURRENT_DATE}")
 
     rules = relationship("VoucherEntryRule", back_populates="template")
+    category = relationship("VoucherTemplateCategory", foreign_keys=[category_id])
 
 class VoucherEntryRule(Base):
     __tablename__ = "voucher_entry_rule"
@@ -504,6 +506,21 @@ class BillVoucherPushRecord(Base):
             unique=True
         ),
     )
+
+
+class VoucherTemplateCategory(Base):
+    __tablename__ = "voucher_template_categories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False)
+    parent_id = Column(Integer, ForeignKey("voucher_template_categories.id"), nullable=True)
+    sort_order = Column(Integer, default=0)
+    status = Column(Integer, default=1)  # 1=active, 0=inactive
+    description = Column(String(500))
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    parent = relationship("VoucherTemplateCategory", remote_side=[id], backref="children")
 
 
 class Organization(Base):

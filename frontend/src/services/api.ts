@@ -215,6 +215,38 @@ export const getVoucherFieldModules = async () => {
     return response.data;
 };
 
+export const getVoucherTemplateCategoriesTree = async () => {
+    const response = await axios.get(`${API_BASE_URL}/vouchers/template-categories/tree`);
+    return response.data;
+};
+
+export const createVoucherTemplateCategory = async (data: {
+    name: string;
+    parent_id?: number | null;
+    sort_order?: number;
+    status?: number;
+    description?: string | null;
+}) => {
+    const response = await axios.post(`${API_BASE_URL}/vouchers/template-categories`, data);
+    return response.data;
+};
+
+export const updateVoucherTemplateCategory = async (id: number, data: {
+    name?: string;
+    parent_id?: number | null;
+    sort_order?: number;
+    status?: number;
+    description?: string | null;
+}) => {
+    const response = await axios.put(`${API_BASE_URL}/vouchers/template-categories/${id}`, data);
+    return response.data;
+};
+
+export const deleteVoucherTemplateCategory = async (id: number) => {
+    const response = await axios.delete(`${API_BASE_URL}/vouchers/template-categories/${id}`);
+    return response.data;
+};
+
 export const getReceiptBills = async (params?: {
     search?: string;
     community_ids?: string;

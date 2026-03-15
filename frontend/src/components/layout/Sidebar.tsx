@@ -112,6 +112,7 @@ const Sidebar = () => {
                 { path: '/bills', label: '运营账单', icon: Receipt },
                 { path: '/receipt-bills', label: '收款账单', icon: Receipt },
                 { path: '/vouchers/templates', label: '模板管理', icon: Layers, adminOnly: true },
+                { path: '/vouchers/categories', label: '模板分类', icon: Tags, adminOnly: true },
             ]
         },
         {

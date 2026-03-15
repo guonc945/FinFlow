@@ -63,6 +63,8 @@ def _ensure_voucher_columns():
             conn.execute(text("ALTER TABLE voucher_template ADD COLUMN bookeddate_expr VARCHAR(100) DEFAULT '{CURRENT_DATE}'"))
         if "source_module" not in existing_cols:
             conn.execute(text("ALTER TABLE voucher_template ADD COLUMN source_module VARCHAR(50)"))
+        if "category_id" not in existing_cols:
+            conn.execute(text("ALTER TABLE voucher_template ADD COLUMN category_id INTEGER"))
 
 
 _ensure_voucher_columns()
@@ -1908,6 +1910,52 @@ def build_org_tree(orgs: List[models.Organization], parent_id=None):
     return tree
 
 
+# ===================== Voucher Template Category Management =====================
+
+def build_template_category_tree(categories: List[models.VoucherTemplateCategory], parent_id=None, parent_path: str = ""):
+    tree = []
+    for cat in categories:
+        if cat.parent_id == parent_id:
+            path = f"{parent_path} / {cat.name}" if parent_path else cat.name
+            node = {
+                "id": cat.id,
+                "name": cat.name,
+                "parent_id": cat.parent_id,
+                "sort_order": cat.sort_order,
+                "status": cat.status,
+                "description": cat.description,
+                "path": path,
+                "created_at": cat.created_at,
+                "updated_at": cat.updated_at,
+                "children": build_template_category_tree(categories, cat.id, path),
+            }
+            tree.append(node)
+    return tree
+
+
+def build_template_category_path_map(categories: List[models.VoucherTemplateCategory]) -> Dict[int, str]:
+    by_id = {c.id: c for c in categories}
+    cache: Dict[int, str] = {}
+
+    def resolve(cat_id: int) -> Optional[str]:
+        if cat_id in cache:
+            return cache[cat_id]
+        cat = by_id.get(cat_id)
+        if not cat:
+            return None
+        if cat.parent_id and cat.parent_id in by_id:
+            parent_path = resolve(cat.parent_id)
+            path = f"{parent_path} / {cat.name}" if parent_path else cat.name
+        else:
+            path = cat.name
+        cache[cat_id] = path
+        return path
+
+    for cid in by_id.keys():
+        resolve(cid)
+    return cache
+
+
 @app.get("/api/organizations")
 def get_organizations(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     """Get all organizations as flat list"""
@@ -2040,6 +2088,128 @@ def delete_organization(
     db.delete(org)
     db.commit()
     return {"message": "Organization deleted successfully"}
+
+
+# ===================== Voucher Template Categories =====================
+
+@app.get("/api/vouchers/template-categories")
+def get_voucher_template_categories(db: Session = Depends(get_db)):
+    categories = db.query(models.VoucherTemplateCategory).order_by(
+        models.VoucherTemplateCategory.sort_order.asc(),
+        models.VoucherTemplateCategory.id.asc()
+    ).all()
+    path_map = build_template_category_path_map(categories)
+    return [{
+        "id": c.id,
+        "name": c.name,
+        "parent_id": c.parent_id,
+        "sort_order": c.sort_order,
+        "status": c.status,
+        "description": c.description,
+        "path": path_map.get(c.id),
+        "created_at": c.created_at,
+        "updated_at": c.updated_at
+    } for c in categories]
+
+
+@app.get("/api/vouchers/template-categories/tree")
+def get_voucher_template_categories_tree(db: Session = Depends(get_db)):
+    categories = db.query(models.VoucherTemplateCategory).order_by(
+        models.VoucherTemplateCategory.sort_order.asc(),
+        models.VoucherTemplateCategory.id.asc()
+    ).all()
+    return build_template_category_tree(categories, None, "")
+
+
+@app.post("/api/vouchers/template-categories")
+def create_voucher_template_category(
+    payload: schemas.VoucherTemplateCategoryCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    if current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Only administrators can create template categories")
+
+    if payload.parent_id is not None:
+        parent = db.query(models.VoucherTemplateCategory).filter(models.VoucherTemplateCategory.id == payload.parent_id).first()
+        if not parent:
+            raise HTTPException(status_code=400, detail="Parent category not found")
+
+    category = models.VoucherTemplateCategory(
+        name=payload.name,
+        parent_id=payload.parent_id,
+        sort_order=payload.sort_order,
+        status=payload.status,
+        description=payload.description
+    )
+    db.add(category)
+    db.commit()
+    db.refresh(category)
+    return {"id": category.id, "message": "Template category created successfully"}
+
+
+@app.put("/api/vouchers/template-categories/{category_id}")
+def update_voucher_template_category(
+    category_id: int,
+    payload: schemas.VoucherTemplateCategoryUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    if current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Only administrators can update template categories")
+
+    category = db.query(models.VoucherTemplateCategory).filter(models.VoucherTemplateCategory.id == category_id).first()
+    if not category:
+        raise HTTPException(status_code=404, detail="Template category not found")
+
+    update_data = payload.dict(exclude_unset=True)
+    if "parent_id" in update_data:
+        next_parent_id = update_data["parent_id"]
+        if next_parent_id == category_id:
+            raise HTTPException(status_code=400, detail="Category cannot be its own parent")
+        if next_parent_id is not None:
+            parent = db.query(models.VoucherTemplateCategory).filter(models.VoucherTemplateCategory.id == next_parent_id).first()
+            if not parent:
+                raise HTTPException(status_code=400, detail="Parent category not found")
+
+            # prevent cycles
+            cursor = parent
+            while cursor and cursor.parent_id is not None:
+                if cursor.parent_id == category_id:
+                    raise HTTPException(status_code=400, detail="Invalid parent category (cycle detected)")
+                cursor = db.query(models.VoucherTemplateCategory).filter(models.VoucherTemplateCategory.id == cursor.parent_id).first()
+
+    for key, value in update_data.items():
+        setattr(category, key, value)
+
+    db.commit()
+    return {"message": "Template category updated successfully"}
+
+
+@app.delete("/api/vouchers/template-categories/{category_id}")
+def delete_voucher_template_category(
+    category_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    if current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Only administrators can delete template categories")
+
+    category = db.query(models.VoucherTemplateCategory).filter(models.VoucherTemplateCategory.id == category_id).first()
+    if not category:
+        raise HTTPException(status_code=404, detail="Template category not found")
+
+    has_children = db.query(models.VoucherTemplateCategory).filter(models.VoucherTemplateCategory.parent_id == category_id).first()
+    if has_children:
+        raise HTTPException(status_code=400, detail="Cannot delete category with children")
+
+    bound_template = db.query(models.VoucherTemplate).filter(models.VoucherTemplate.category_id == category_id).first()
+    if bound_template:
+        raise HTTPException(status_code=400, detail="Cannot delete category with existing voucher templates")
+
+    db.delete(category)
+    db.commit()
+    return {"message": "Template category deleted successfully"}
 
 
 # ===================== User Management =====================
@@ -3284,6 +3454,16 @@ def _validate_trigger_condition(
 
 def _validate_voucher_template_payload(payload: Dict[str, Any], db: Session) -> None:
     errors: List[str] = []
+    category_id = payload.get("category_id")
+    if category_id is not None:
+        try:
+            cat_id = int(category_id)
+        except (TypeError, ValueError):
+            errors.append("category_id must be an integer")
+        else:
+            exists = db.query(models.VoucherTemplateCategory).filter(models.VoucherTemplateCategory.id == cat_id).first()
+            if not exists:
+                errors.append("category_id not found")
     source_type = payload.get("source_type")
     source_module = payload.get("source_module")
     allowed_placeholders = _build_allowed_placeholders(source_type, source_module, db)
@@ -3440,11 +3620,14 @@ def _normalize_template_for_response(template: models.VoucherTemplate) -> None:
 @app.get("/api/vouchers/templates", response_model=List[schemas.VoucherTemplateResponse])
 def get_voucher_templates(db: Session = Depends(get_db)):
     """Get all voucher templates"""
+    categories = db.query(models.VoucherTemplateCategory).all()
+    category_path_map = build_template_category_path_map(categories)
     templates = db.query(models.VoucherTemplate).order_by(
         models.VoucherTemplate.priority.asc(),
         models.VoucherTemplate.template_id.asc()
     ).all()
     for template in templates:
+        template.category_path = category_path_map.get(getattr(template, "category_id", None))
         _normalize_template_for_response(template)
     return templates
 
@@ -3454,6 +3637,10 @@ def get_voucher_template(template_id: str, db: Session = Depends(get_db)):
     template = db.query(models.VoucherTemplate).filter(models.VoucherTemplate.template_id == template_id).first()
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
+    if getattr(template, "category_id", None) is not None:
+        categories = db.query(models.VoucherTemplateCategory).all()
+        category_path_map = build_template_category_path_map(categories)
+        template.category_path = category_path_map.get(getattr(template, "category_id", None))
     _normalize_template_for_response(template)
     return template
 
@@ -3493,6 +3680,7 @@ def update_voucher_template(template_id: str, template: schemas.VoucherTemplateU
         "source_module": update_data.get("source_module", getattr(db_template, "source_module", None)),
         "source_type": update_data.get("source_type", db_template.source_type),
         "trigger_condition": update_data.get("trigger_condition", db_template.trigger_condition),
+        "category_id": update_data.get("category_id", getattr(db_template, "category_id", None)),
         "book_number_expr": update_data.get("book_number_expr", db_template.book_number_expr),
         "vouchertype_number_expr": update_data.get("vouchertype_number_expr", db_template.vouchertype_number_expr),
         "attachment_expr": update_data.get("attachment_expr", db_template.attachment_expr),

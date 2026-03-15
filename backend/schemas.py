@@ -319,6 +319,7 @@ class VoucherTemplateBase(BaseModel):
     description: Optional[str] = None
     active: Optional[bool] = True
     priority: Optional[int] = Field(100, ge=0)
+    category_id: Optional[int] = None
     source_module: Optional[str] = None
     source_type: Optional[str] = None
     trigger_condition: Optional[str] = None
@@ -337,6 +338,7 @@ class VoucherTemplateUpdate(BaseModel):
     description: Optional[str] = None
     active: Optional[bool] = None
     priority: Optional[int] = Field(None, ge=0)
+    category_id: Optional[int] = None
     book_number_expr: Optional[str] = None
     vouchertype_number_expr: Optional[str] = None
     attachment_expr: Optional[str] = None
@@ -348,7 +350,39 @@ class VoucherTemplateUpdate(BaseModel):
     rules: Optional[List[VoucherEntryRuleCreate]] = None
 
 class VoucherTemplateResponse(VoucherTemplateBase):
+    category_path: Optional[str] = None
     rules: List[VoucherEntryRuleResponse] = Field(default_factory=list)
+
+    class Config:
+        from_attributes = True
+
+
+class VoucherTemplateCategoryBase(BaseModel):
+    name: str
+    parent_id: Optional[int] = None
+    sort_order: Optional[int] = 0
+    status: Optional[int] = 1
+    description: Optional[str] = None
+
+
+class VoucherTemplateCategoryCreate(VoucherTemplateCategoryBase):
+    pass
+
+
+class VoucherTemplateCategoryUpdate(BaseModel):
+    name: Optional[str] = None
+    parent_id: Optional[int] = None
+    sort_order: Optional[int] = None
+    status: Optional[int] = None
+    description: Optional[str] = None
+
+
+class VoucherTemplateCategoryResponse(VoucherTemplateCategoryBase):
+    id: int
+    path: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    children: List["VoucherTemplateCategoryResponse"] = []
 
     class Config:
         from_attributes = True

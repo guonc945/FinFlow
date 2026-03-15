@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
+import { useState, useEffect, useMemo, useRef, forwardRef, useImperativeHandle } from 'react';
 import {
     Layers, FileText, Settings, Hash, Info, X, Sliders, ArrowUp, ArrowDown, AlertTriangle,
-    Plus, Save, Trash2, ChevronLeft, Database, Copy
+    Plus, Save, Trash2, ChevronLeft, Database, Copy, ChevronRight, ChevronDown, Search, LayoutGrid, List,
+    CheckSquare, Square, ToggleLeft, ToggleRight
 } from 'lucide-react';
 import axios from 'axios';
 import VariablePicker from '../settings/VariablePicker';
@@ -12,6 +13,7 @@ import SourceFieldPickerModal from './SourceFieldPickerModal';
 import './VoucherTemplates.css';
 
 import { API_BASE_URL } from '../../services/apiBase';
+import { getVoucherTemplateCategoriesTree } from '../../services/api';
 
 const API_BASE = API_BASE_URL;
 
@@ -462,6 +464,14 @@ interface VoucherEntryRule {
     main_cf_assgrp?: string | null;
 }
 
+interface TemplateCategory {
+    id: number;
+    name: string;
+    parent_id?: number | null;
+    path?: string | null;
+    children?: TemplateCategory[];
+}
+
 interface VoucherTemplate {
     template_id: string;
     template_name: string;
@@ -469,6 +479,8 @@ interface VoucherTemplate {
     description: string;
     active: boolean;
     priority: number;
+    category_id?: number | null;
+    category_path?: string | null;
     source_module?: string;
     source_type?: string;
     trigger_condition?: string; // JSON string
@@ -531,6 +543,151 @@ const getEffectiveSourceType = (sourceType: string | null | undefined) => {
     return st ? st : 'bills';
 };
 
+const flattenTemplateCategories = (
+    nodes: TemplateCategory[] = [],
+    parentPath: string = '',
+    level: number = 0
+): Array<{ id: number; path: string; name: string; level: number; isLeaf: boolean }> => {
+    const result: Array<{ id: number; path: string; name: string; level: number; isLeaf: boolean }> = [];
+    nodes.forEach(node => {
+        const path = parentPath ? `${parentPath} / ${node.name}` : node.name;
+        const hasChildren = Boolean(node.children && node.children.length > 0);
+        result.push({ id: node.id, path, name: node.name, level, isLeaf: !hasChildren });
+        if (node.children && node.children.length > 0) {
+            result.push(...flattenTemplateCategories(node.children, path, level + 1));
+        }
+    });
+    return result;
+};
+
+const buildCategoryDescendantsMap = (nodes: TemplateCategory[] = []) => {
+    const map = new Map<number, Set<number>>();
+    const walk = (node: TemplateCategory): Set<number> => {
+        const ids = new Set<number>([node.id]);
+        (node.children || []).forEach(child => {
+            const childIds = walk(child);
+            childIds.forEach(id => ids.add(id));
+        });
+        map.set(node.id, ids);
+        return ids;
+    };
+    nodes.forEach(node => walk(node));
+    return map;
+};
+
+const CategoryPickerNode = ({
+    node,
+    level,
+    selectedId,
+    onSelect
+}: {
+    node: TemplateCategory;
+    level: number;
+    selectedId: number | null;
+    onSelect: (node: TemplateCategory) => void;
+}) => {
+    const [expanded, setExpanded] = useState(true);
+    const hasChildren = Boolean(node.children && node.children.length > 0);
+    const isLeaf = !hasChildren;
+    const isSelected = selectedId === node.id;
+
+    return (
+        <div className="category-picker-node">
+            <div
+                className={`category-picker-item ${isSelected ? 'selected' : ''} ${!isLeaf ? 'non-leaf' : ''}`}
+                style={{ paddingLeft: `${level * 18 + 12}px` }}
+            >
+                <button
+                    type="button"
+                    className="category-toggle"
+                    onClick={() => hasChildren && setExpanded(!expanded)}
+                    aria-label={expanded ? '折叠' : '展开'}
+                >
+                    {hasChildren ? (expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />) : <span className="toggle-spacer" />}
+                </button>
+                <button
+                    type="button"
+                    className="category-label"
+                    onClick={() => isLeaf && onSelect(node)}
+                    title={node.path || node.name}
+                    disabled={!isLeaf}
+                >
+                    {node.name}
+                </button>
+                {!isLeaf && <span className="category-hint">父级</span>}
+            </div>
+            {hasChildren && expanded && (
+                <div className="category-picker-children">
+                    {node.children!.map(child => (
+                        <CategoryPickerNode
+                            key={child.id}
+                            node={child}
+                            level={level + 1}
+                            selectedId={selectedId}
+                            onSelect={onSelect}
+                        />
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+};
+
+const CategoryNavNode = ({
+    node,
+    level,
+    selectedId,
+    onSelect
+}: {
+    node: TemplateCategory;
+    level: number;
+    selectedId: number | null;
+    onSelect: (id: number) => void;
+}) => {
+    const [expanded, setExpanded] = useState(true);
+    const hasChildren = Boolean(node.children && node.children.length > 0);
+    const isSelected = selectedId === node.id;
+
+    return (
+        <div className="category-nav-node">
+            <div
+                className={`category-nav-item ${isSelected ? 'active' : ''}`}
+                style={{ paddingLeft: `${level * 18 + 12}px` }}
+            >
+                <button
+                    type="button"
+                    className="category-nav-toggle"
+                    onClick={() => hasChildren && setExpanded(!expanded)}
+                    aria-label={expanded ? '折叠' : '展开'}
+                >
+                    {hasChildren ? (expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />) : <span className="toggle-spacer" />}
+                </button>
+                <button
+                    type="button"
+                    className="category-nav-label"
+                    onClick={() => onSelect(node.id)}
+                    title={node.path || node.name}
+                >
+                    {node.name}
+                </button>
+            </div>
+            {hasChildren && expanded && (
+                <div className="category-nav-children">
+                    {node.children!.map(child => (
+                        <CategoryNavNode
+                            key={child.id}
+                            node={child}
+                            level={level + 1}
+                            selectedId={selectedId}
+                            onSelect={onSelect}
+                        />
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+};
+
 const getUniqueCopiedTemplateName = (sourceName: string, templates: VoucherTemplate[]) => {
     const existingNames = new Set(
         templates.map(t => (t.template_name || '').trim()).filter(Boolean)
@@ -545,6 +702,42 @@ const getUniqueCopiedTemplateName = (sourceName: string, templates: VoucherTempl
         index += 1;
     }
     return `${baseName}（副本${index}）`;
+};
+
+const getUniqueCopiedTemplateIdFromSet = (sourceId: string, usedIds: Set<string>) => {
+    const baseId = (sourceId || 'template').trim().replace(/\s+/g, '_');
+    const copyBase = `${baseId}_copy`;
+    let candidate = copyBase;
+    let index = 2;
+    while (usedIds.has(candidate.toLowerCase())) {
+        candidate = `${copyBase}_${index}`;
+        index += 1;
+    }
+    usedIds.add(candidate.toLowerCase());
+    return candidate;
+};
+
+const getUniqueCopiedTemplateNameFromSet = (sourceName: string, usedNames: Set<string>) => {
+    const baseName = (sourceName || '未命名模板').trim();
+    const copyBase = `${baseName}（副本）`;
+    let candidate = copyBase;
+    let index = 2;
+    while (usedNames.has(candidate)) {
+        candidate = `${baseName}（副本${index}）`;
+        index += 1;
+    }
+    usedNames.add(candidate);
+    return candidate;
+};
+
+const VIEW_MODE_STORAGE_KEY = 'voucher_templates_view_mode';
+const getInitialViewMode = (): 'card' | 'list' => {
+    if (typeof window === 'undefined') return 'list';
+    try {
+        const stored = window.localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+        if (stored === 'card' || stored === 'list') return stored;
+    } catch { }
+    return 'list';
 };
 
 
@@ -576,12 +769,271 @@ const VoucherTemplates = () => {
     const [voucherFieldModules, setVoucherFieldModules] = useState<VoucherFieldModule[]>(
         buildDefaultVoucherFieldModules(FALLBACK_BILL_SOURCE_FIELDS, FALLBACK_RECEIPT_BILL_SOURCE_FIELDS)
     );
+    const [templateCategories, setTemplateCategories] = useState<TemplateCategory[]>([]);
+    const [categoryFilter, setCategoryFilter] = useState<string>('all');
+    const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
+    const [pendingCategoryId, setPendingCategoryId] = useState<number | null>(null);
+    const [searchText, setSearchText] = useState('');
+    const [sortKey, setSortKey] = useState<'priority_desc' | 'priority_asc' | 'name_asc' | 'name_desc'>('priority_desc');
+    const [selectedTemplateIds, setSelectedTemplateIds] = useState<Set<string>>(new Set());
+    const [viewMode, setViewMode] = useState<'card' | 'list'>(() => getInitialViewMode());
+    const [batchMenuOpen, setBatchMenuOpen] = useState(false);
+    const batchMenuRef = useRef<HTMLDivElement | null>(null);
+
+    const categoryOptions = useMemo(() => flattenTemplateCategories(templateCategories), [templateCategories]);
+    const categoryPathMap = useMemo(() => {
+        const map: Record<number, string> = {};
+        categoryOptions.forEach(opt => { map[opt.id] = opt.path; });
+        return map;
+    }, [categoryOptions]);
+    const categoryDescendantsMap = useMemo(() => buildCategoryDescendantsMap(templateCategories), [templateCategories]);
+    const categoryLeafSet = useMemo(() => {
+        const set = new Set<number>();
+        categoryOptions.forEach(opt => {
+            if (opt.isLeaf) set.add(opt.id);
+        });
+        return set;
+    }, [categoryOptions]);
+    const filteredTemplates = useMemo(() => {
+        if (categoryFilter === 'all') return templates;
+        if (categoryFilter === 'uncategorized') {
+            return templates.filter(t => !t.category_id);
+        }
+        const targetId = Number(categoryFilter);
+        if (!Number.isFinite(targetId)) return templates;
+        const allowedIds = categoryDescendantsMap.get(targetId) || new Set<number>([targetId]);
+        return templates.filter(t => allowedIds.has(Number(t.category_id)));
+    }, [templates, categoryFilter, categoryDescendantsMap]);
+    const searchedTemplates = useMemo(() => {
+        const query = searchText.trim().toLowerCase();
+        if (!query) return filteredTemplates;
+        return filteredTemplates.filter(t => {
+            const hay = [
+                t.template_name,
+                t.template_id,
+                t.description,
+                t.business_type,
+                t.category_path,
+            ].map(v => String(v || '').toLowerCase());
+            return hay.some(v => v.includes(query));
+        });
+    }, [filteredTemplates, searchText]);
+    const displayedTemplates = useMemo(() => {
+        const list = [...searchedTemplates];
+        switch (sortKey) {
+            case 'priority_asc':
+                return list.sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+            case 'name_asc':
+                return list.sort((a, b) => String(a.template_name || '').localeCompare(String(b.template_name || '')));
+            case 'name_desc':
+                return list.sort((a, b) => String(b.template_name || '').localeCompare(String(a.template_name || '')));
+            case 'priority_desc':
+            default:
+                return list.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+        }
+    }, [searchedTemplates, sortKey]);
+
+    const currentFilterLabel = useMemo(() => {
+        if (categoryFilter === 'all') return '全部';
+        if (categoryFilter === 'uncategorized') return '未分类';
+        const targetId = Number(categoryFilter);
+        if (!Number.isFinite(targetId)) return '全部';
+        return categoryPathMap[targetId] || '未分类';
+    }, [categoryFilter, categoryPathMap]);
+    const selectedCount = selectedTemplateIds.size;
+    const isAllSelected = displayedTemplates.length > 0 && displayedTemplates.every(t => selectedTemplateIds.has(t.template_id));
+
+    useEffect(() => {
+        setSelectedTemplateIds(new Set());
+    }, [categoryFilter, searchText, templates]);
+
+    useEffect(() => {
+        if (categoryPickerOpen) {
+            setPendingCategoryId(currentTemplate?.category_id ?? null);
+        }
+    }, [categoryPickerOpen, currentTemplate?.category_id]);
+
+    useEffect(() => {
+        try {
+            window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
+        } catch { }
+    }, [viewMode]);
+
+    useEffect(() => {
+        const handler = (event: MouseEvent) => {
+            if (!batchMenuRef.current) return;
+            if (!batchMenuRef.current.contains(event.target as Node)) {
+                setBatchMenuOpen(false);
+            }
+        };
+        if (batchMenuOpen) {
+            document.addEventListener('mousedown', handler);
+        }
+        return () => document.removeEventListener('mousedown', handler);
+    }, [batchMenuOpen]);
+
+    useEffect(() => {
+        if (!batchMenuOpen) return;
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (!event.altKey) return;
+            const key = event.key.toLowerCase();
+            switch (key) {
+                case 'a':
+                    event.preventDefault();
+                    handleToggleSelectAll();
+                    setBatchMenuOpen(false);
+                    break;
+                case 'c':
+                    event.preventDefault();
+                    setSelectedTemplateIds(new Set());
+                    setBatchMenuOpen(false);
+                    break;
+                case 'e':
+                    event.preventDefault();
+                    handleBatchSetActive(true);
+                    setBatchMenuOpen(false);
+                    break;
+                case 'd':
+                    event.preventDefault();
+                    handleBatchSetActive(false);
+                    setBatchMenuOpen(false);
+                    break;
+                case 'p':
+                    event.preventDefault();
+                    handleBatchCopy();
+                    setBatchMenuOpen(false);
+                    break;
+                case 'x':
+                    event.preventDefault();
+                    handleBatchDelete();
+                    setBatchMenuOpen(false);
+                    break;
+                default:
+                    break;
+            }
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, [batchMenuOpen, displayedTemplates.length, selectedCount, isAllSelected]);
+
+    const toggleTemplateSelected = (id: string) => {
+        setSelectedTemplateIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) {
+                next.delete(id);
+            } else {
+                next.add(id);
+            }
+            return next;
+        });
+    };
+
+    const handleToggleSelectAll = () => {
+        if (isAllSelected) {
+            setSelectedTemplateIds(new Set());
+            return;
+        }
+        const next = new Set<string>();
+        displayedTemplates.forEach(t => next.add(t.template_id));
+        setSelectedTemplateIds(next);
+    };
+
+    const handleBatchDelete = async () => {
+        if (selectedTemplateIds.size === 0) return;
+        if (!confirm(`确定要删除选中的 ${selectedTemplateIds.size} 个模板吗？`)) return;
+        try {
+            const tasks = Array.from(selectedTemplateIds).map(id => axios.delete(`${API_BASE}/vouchers/templates/${id}`));
+            const results = await Promise.allSettled(tasks);
+            const failed = results.filter(r => r.status === 'rejected');
+            if (failed.length > 0) {
+                alert(`已删除 ${selectedTemplateIds.size - failed.length} 个模板，${failed.length} 个失败`);
+            }
+            setSelectedTemplateIds(new Set());
+            fetchTemplates();
+        } catch (err) {
+            console.error('Failed to batch delete templates:', err);
+            alert('批量删除失败，请稍后重试');
+        }
+    };
+
+    const handleBatchSetActive = async (active: boolean) => {
+        if (selectedTemplateIds.size === 0) return;
+        const actionLabel = active ? '启用' : '停用';
+        if (!confirm(`确定要${actionLabel}选中的 ${selectedTemplateIds.size} 个模板吗？`)) return;
+        try {
+            const tasks = Array.from(selectedTemplateIds).map(id =>
+                axios.put(`${API_BASE}/vouchers/templates/${id}`, { active })
+            );
+            const results = await Promise.allSettled(tasks);
+            const failed = results.filter(r => r.status === 'rejected');
+            if (failed.length > 0) {
+                alert(`已${actionLabel} ${selectedTemplateIds.size - failed.length} 个模板，${failed.length} 个失败`);
+            }
+            setSelectedTemplateIds(new Set());
+            fetchTemplates();
+        } catch (err) {
+            console.error('Failed to batch update templates:', err);
+            alert(`批量${actionLabel}失败，请稍后重试`);
+        }
+    };
+
+    const handleBatchCopy = async () => {
+        if (selectedTemplateIds.size === 0) return;
+        if (!confirm(`确定要复制选中的 ${selectedTemplateIds.size} 个模板吗？`)) return;
+        try {
+            const usedIds = new Set(
+                templates.map(t => (t.template_id || '').trim().toLowerCase()).filter(Boolean)
+            );
+            const usedNames = new Set(
+                templates.map(t => (t.template_name || '').trim()).filter(Boolean)
+            );
+            const toCopy = templates.filter(t => selectedTemplateIds.has(t.template_id));
+            const payloads = toCopy.map(t => {
+                const newId = getUniqueCopiedTemplateIdFromSet(t.template_id, usedIds);
+                const newName = getUniqueCopiedTemplateNameFromSet(t.template_name, usedNames);
+                const { category_path, ...restTemplate } = t;
+                return {
+                    ...restTemplate,
+                    template_id: newId,
+                    template_name: newName,
+                    rules: (t.rules || []).map((rule, index) => ({
+                        ...rule,
+                        rule_id: null,
+                        line_no: index + 1
+                    }))
+                };
+            });
+            const results = await Promise.allSettled(
+                payloads.map(payload => axios.post(`${API_BASE}/vouchers/templates`, payload))
+            );
+            const failed = results.filter(r => r.status === 'rejected');
+            if (failed.length > 0) {
+                alert(`已复制 ${payloads.length - failed.length} 个模板，${failed.length} 个失败`);
+            }
+            setSelectedTemplateIds(new Set());
+            fetchTemplates();
+        } catch (err) {
+            console.error('Failed to batch copy templates:', err);
+            alert('批量复制失败，请稍后重试');
+        }
+    };
 
     useEffect(() => {
         fetchSubjects();
         fetchTemplates();
         fetchVoucherFieldModules();
+        fetchTemplateCategories();
     }, []);
+
+    const fetchTemplateCategories = async () => {
+        try {
+            const data = await getVoucherTemplateCategoriesTree();
+            setTemplateCategories(Array.isArray(data) ? data : []);
+        } catch (err) {
+            console.warn('Failed to fetch template categories:', err);
+            setTemplateCategories([]);
+        }
+    };
 
     const fetchSubjects = async () => {
         try {
@@ -611,6 +1063,8 @@ const VoucherTemplates = () => {
                 description: t.description || '',
                 active: t.active !== false,
                 priority: Number.isFinite(Number(t.priority)) ? Number(t.priority) : 100,
+                category_id: Number.isFinite(Number(t.category_id)) ? Number(t.category_id) : null,
+                category_path: t.category_path || (Number.isFinite(Number(t.category_id)) ? categoryPathMap[Number(t.category_id)] : null),
                 source_module: (t?.source_module || '').trim() || inferModuleIdFromSourceType(voucherFieldModules, t.source_type),
                 source_type: (() => {
                     const raw = String(t?.source_type || '').trim();
@@ -821,6 +1275,7 @@ const VoucherTemplates = () => {
             description: '',
             active: true,
             priority: 100,
+            category_id: null,
             book_number_expr: "'BU-35256'",
             vouchertype_number_expr: "'0001'",
             attachment_expr: "0",
@@ -843,6 +1298,7 @@ const VoucherTemplates = () => {
         setCurrentTemplate({
             ...template,
             source_module: template.source_module || inferModuleIdFromSourceType(voucherFieldModules, template.source_type),
+            category_path: template.category_path || (template.category_id ? categoryPathMap[template.category_id] : null),
         });
         setEditingTemplateId(template.template_id);
         setIsEditing(true);
@@ -887,8 +1343,9 @@ const VoucherTemplates = () => {
             setCurrentTemplate(workingTemplate);
         }
 
+        const { category_path, ...restTemplate } = workingTemplate;
         const payload: VoucherTemplate = {
-            ...workingTemplate,
+            ...restTemplate,
             template_id: workingTemplate.template_id.trim(),
             template_name: workingTemplate.template_name.trim(),
             priority: Number.isFinite(Number(workingTemplate.priority))
@@ -1129,6 +1586,33 @@ const VoucherTemplates = () => {
                                     </div>
                                 </div>
                             <div className="field-grid-three">
+                                    <div className="field-item">
+                                        <label>模板分类</label>
+                                        <div className="category-picker-field">
+                                            <input
+                                                type="text"
+                                                readOnly
+                                                value={currentTemplate.category_id ? (currentTemplate.category_path || categoryPathMap[currentTemplate.category_id] || '') : ''}
+                                                placeholder="未分类"
+                                            />
+                                            <button
+                                                type="button"
+                                                className="btn btn-outline"
+                                                onClick={() => setCategoryPickerOpen(true)}
+                                            >
+                                                选择分类
+                                            </button>
+                                            {currentTemplate.category_id && (
+                                                <button
+                                                    type="button"
+                                                    className="btn btn-ghost"
+                                                    onClick={() => setCurrentTemplate({ ...currentTemplate, category_id: null, category_path: null })}
+                                                >
+                                                    清除
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
                                     <div className="field-item">
                                         <label>业务模块</label>
                                         <select
@@ -1540,75 +2024,393 @@ const VoucherTemplates = () => {
                         </div>
                     )
                 }
+
+                {categoryPickerOpen && (
+                    <div className="category-picker-overlay" onClick={() => setCategoryPickerOpen(false)}>
+                        <div className="category-picker-modal glass-card" onClick={e => e.stopPropagation()}>
+                            <div className="modal-header">
+                                <h3>选择模板分类</h3>
+                                <button onClick={() => setCategoryPickerOpen(false)}><X size={20} /></button>
+                            </div>
+                            <div className="category-picker-body">
+                                <div className="category-tree">
+                                    {templateCategories.length === 0 ? (
+                                        <div className="category-empty">暂无模板分类</div>
+                                    ) : (
+                                        templateCategories.map(category => (
+                                            <CategoryPickerNode
+                                                key={category.id}
+                                                node={category}
+                                                level={0}
+                                                selectedId={pendingCategoryId}
+                                                onSelect={(node) => setPendingCategoryId(node.id)}
+                                            />
+                                        ))
+                                    )}
+                                </div>
+                                <div className="category-picker-footer">
+                                    <div className="category-selected">
+                                        已选：{pendingCategoryId ? (categoryPathMap[pendingCategoryId] || '') : '未分类'}
+                                    </div>
+                                    <div className="category-actions">
+                                        <button
+                                            type="button"
+                                            className="btn btn-outline"
+                                            onClick={() => setPendingCategoryId(null)}
+                                        >
+                                            设为未分类
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="btn btn-outline"
+                                            onClick={() => setCategoryPickerOpen(false)}
+                                        >
+                                            取消
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="btn btn-primary"
+                                            onClick={() => {
+                                                const nextId = pendingCategoryId ?? null;
+                                                setCurrentTemplate({
+                                                    ...currentTemplate,
+                                                    category_id: nextId,
+                                                    category_path: nextId ? categoryPathMap[nextId] : null,
+                                                });
+                                                setCategoryPickerOpen(false);
+                                            }}
+                                            disabled={pendingCategoryId !== null && !categoryLeafSet.has(pendingCategoryId)}
+                                        >
+                                            确定
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
             </div >
         );
     }
 
     return (
-        <div className="templates-page animate-in">
-            <div className="page-header flex justify-end mb-4">
-                <div>
-                    <h1>模板管理</h1>
-                    <p>管理业务流程触发的会计凭证自动生成规则，适配金蝶 OpenAPI 结构。</p>
+        <div className="templates-page">
+            <div className="templates-frame">
+                <div className="templates-frame-header">
+                    <div>
+                        <h1>模板管理</h1>
+                        <p>管理业务流程触发的会计凭证自动生成规则，适配金蝶 OpenAPI 结构。</p>
+                    </div>
+                    <button onClick={handleCreate} className="create-btn">
+                        <Plus size={18} /> 新建模板
+                    </button>
                 </div>
-                <button onClick={handleCreate} className="create-btn">
-                    <Plus size={18} /> 新建模板
-                </button>
-            </div>
 
-            {isLoading ? (
-                <div className="loading-state">加载中...</div>
-            ) : (
-                <>
-                    {loadError && (
-                        <div className="save-error-panel" style={{ marginBottom: '1.25rem' }}>
-                            <div className="save-error-title">
-                                <AlertTriangle size={16} />
-                                <span>模板列表加载失败</span>
-                            </div>
-                            <ul className="save-error-list">
-                                <li>{loadError}</li>
-                            </ul>
-                            <button onClick={fetchTemplates} className="create-btn" style={{ marginTop: '0.75rem', width: 'fit-content' }}>
-                                重试加载
-                            </button>
-                        </div>
-                    )}
-                    <div className="templates-grid">
-                        {templates.map(t => (
-                            <div
-                                key={t.template_id}
-                                className="template-card glass-card cursor-pointer group"
-                                onClick={() => handleEdit(t)}
-                            >
-                                <div className="card-badge">{`${t.business_type} · P${t.priority}`}</div>
-                                <div className="card-content">
-                                    <h3>{t.template_name}</h3>
-                                    <p>{t.description || '暂无描述'}</p>
-                                    <div className="card-stats">
-                                        <span><Layers size={14} /> {t.rules.length} 条分录规则</span>
-                                        <span><FileText size={14} /> {t.template_id}</span>
-                                        <span>{t.active ? '启用' : '停用'}</span>
+                {isLoading ? (
+                    <div className="loading-state">加载中...</div>
+                ) : (
+                    <div className="templates-content">
+                        <div className="templates-layout">
+                            <aside className="templates-sidebar">
+                                <div className="sidebar-card">
+                                    <div className="sidebar-title">分类导航</div>
+                                    <button
+                                        className={`sidebar-item ${categoryFilter === 'all' ? 'active' : ''}`}
+                                        onClick={() => setCategoryFilter('all')}
+                                    >
+                                        全部
+                                    </button>
+                                    <button
+                                        className={`sidebar-item ${categoryFilter === 'uncategorized' ? 'active' : ''}`}
+                                        onClick={() => setCategoryFilter('uncategorized')}
+                                    >
+                                        未分类
+                                    </button>
+                                    <div className="category-nav-tree">
+                                        {templateCategories.length === 0 ? (
+                                            <div className="category-empty">暂无模板分类</div>
+                                        ) : (
+                                            templateCategories.map(category => (
+                                                <CategoryNavNode
+                                                    key={category.id}
+                                                    node={category}
+                                                    level={0}
+                                                    selectedId={Number.isFinite(Number(categoryFilter)) ? Number(categoryFilter) : null}
+                                                    onSelect={(id) => setCategoryFilter(String(id))}
+                                                />
+                                            ))
+                                        )}
                                     </div>
                                 </div>
-                                <div className="card-actions">
-                                    <button onClick={(e) => { e.stopPropagation(); handleCopy(t); }} className="copy-btn"><Copy size={14} />复制</button>
-                                    <button onClick={(e) => { e.stopPropagation(); handleEdit(t); }} className="edit-btn">编辑</button>
-                                    <button onClick={(e) => { e.stopPropagation(); handleDelete(t.template_id); }} className="delete-btn"><Trash2 size={16} /></button>
+                            </aside>
+                            <div className="templates-main">
+                                {loadError && (
+                                    <div className="save-error-panel" style={{ marginBottom: '1.25rem' }}>
+                                        <div className="save-error-title">
+                                            <AlertTriangle size={16} />
+                                            <span>模板列表加载失败</span>
+                                        </div>
+                                        <ul className="save-error-list">
+                                            <li>{loadError}</li>
+                                        </ul>
+                                        <button onClick={fetchTemplates} className="create-btn" style={{ marginTop: '0.75rem', width: 'fit-content' }}>
+                                            重试加载
+                                        </button>
+                                    </div>
+                            )}
+                            <div className="templates-toolbar">
+                                <div className="toolbar-left">
+                                    <div className="search-box">
+                                        <Search size={16} />
+                                        <input
+                                            type="text"
+                                            placeholder="搜索模板名称 / ID / 描述"
+                                            value={searchText}
+                                            onChange={e => setSearchText(e.target.value)}
+                                        />
+                                    </div>
+                                    <div className="sort-box">
+                                        <label>排序</label>
+                                        <select value={sortKey} onChange={e => setSortKey(e.target.value as typeof sortKey)}>
+                                            <option value="priority_desc">优先级 高→低</option>
+                                            <option value="priority_asc">优先级 低→高</option>
+                                            <option value="name_asc">名称 A→Z</option>
+                                            <option value="name_desc">名称 Z→A</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div className="view-toggle">
+                                    <button
+                                        type="button"
+                                        className={viewMode === 'card' ? 'active' : ''}
+                                        onClick={() => setViewMode('card')}
+                                        title="卡片视图"
+                                    >
+                                        <LayoutGrid size={16} />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={viewMode === 'list' ? 'active' : ''}
+                                        onClick={() => setViewMode('list')}
+                                        title="列表视图"
+                                    >
+                                        <List size={16} />
+                                    </button>
+                                </div>
+                                <div className={`batch-bar ${selectedCount > 0 ? 'active' : ''}`}>
+                                    <div className="batch-info">
+                                        <span className="summary-label">当前分类</span>
+                                        <span className="summary-chip">{currentFilterLabel}</span>
+                                        <span className="summary-count">共 {displayedTemplates.length} 个模板</span>
+                                    </div>
+                                    <div className="batch-actions">
+                                        {selectedCount > 0 && (
+                                            <span className="batch-count">已选 {selectedCount} 项</span>
+                                        )}
+                                        <div className="batch-menu" ref={batchMenuRef}>
+                                            <button
+                                                type="button"
+                                                className="btn btn-outline batch-menu-button"
+                                                onClick={() => setBatchMenuOpen(prev => !prev)}
+                                            >
+                                                批量操作
+                                                <ChevronDown size={14} />
+                                            </button>
+                                            {batchMenuOpen && (
+                                                <div className="batch-menu-list">
+                                                    <button
+                                                        type="button"
+                                                        className="batch-menu-item"
+                                                        onClick={() => {
+                                                            handleToggleSelectAll();
+                                                            setBatchMenuOpen(false);
+                                                        }}
+                                                        disabled={displayedTemplates.length === 0}
+                                                    >
+                                                        <span className="menu-left">
+                                                            {isAllSelected ? <Square size={14} /> : <CheckSquare size={14} />}
+                                                            {isAllSelected ? '取消全选' : '全选当前'}
+                                                        </span>
+                                                        <span className="menu-shortcut">Alt+A</span>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="batch-menu-item"
+                                                        onClick={() => {
+                                                            setSelectedTemplateIds(new Set());
+                                                            setBatchMenuOpen(false);
+                                                        }}
+                                                        disabled={selectedCount === 0}
+                                                    >
+                                                        <span className="menu-left">
+                                                            <Square size={14} />
+                                                            清空选择
+                                                        </span>
+                                                        <span className="menu-shortcut">Alt+C</span>
+                                                    </button>
+                                                    <div className="batch-menu-divider" />
+                                                    <button
+                                                        type="button"
+                                                        className="batch-menu-item"
+                                                        onClick={() => {
+                                                            handleBatchSetActive(true);
+                                                            setBatchMenuOpen(false);
+                                                        }}
+                                                        disabled={selectedCount === 0}
+                                                    >
+                                                        <span className="menu-left">
+                                                            <ToggleRight size={14} />
+                                                            批量启用
+                                                        </span>
+                                                        <span className="menu-shortcut">Alt+E</span>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="batch-menu-item"
+                                                        onClick={() => {
+                                                            handleBatchSetActive(false);
+                                                            setBatchMenuOpen(false);
+                                                        }}
+                                                        disabled={selectedCount === 0}
+                                                    >
+                                                        <span className="menu-left">
+                                                            <ToggleLeft size={14} />
+                                                            批量停用
+                                                        </span>
+                                                        <span className="menu-shortcut">Alt+D</span>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="batch-menu-item"
+                                                        onClick={() => {
+                                                            handleBatchCopy();
+                                                            setBatchMenuOpen(false);
+                                                        }}
+                                                        disabled={selectedCount === 0}
+                                                    >
+                                                        <span className="menu-left">
+                                                            <Copy size={14} />
+                                                            批量复制
+                                                        </span>
+                                                        <span className="menu-shortcut">Alt+P</span>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="batch-menu-item danger"
+                                                        onClick={() => {
+                                                            handleBatchDelete();
+                                                            setBatchMenuOpen(false);
+                                                        }}
+                                                        disabled={selectedCount === 0}
+                                                    >
+                                                        <span className="menu-left">
+                                                            <Trash2 size={14} />
+                                                            批量删除
+                                                        </span>
+                                                        <span className="menu-shortcut">Alt+X</span>
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
-                        ))}
-                        {templates.length === 0 && !loadError && (
-                            <div className="empty-state">
-                                <Info size={40} />
-                                <p>尚未创建任何模板</p>
-                                <button onClick={handleCreate}>立即创建</button>
-                            </div>
-                        )}
+                            {viewMode === 'card' ? (
+                                <div className="templates-grid">
+                                    {displayedTemplates.map(t => (
+                                        <div
+                                            key={t.template_id}
+                                            className={`template-card glass-card cursor-pointer group ${selectedTemplateIds.has(t.template_id) ? 'selected' : ''}`}
+                                            onClick={() => handleEdit(t)}
+                                        >
+                                            <div className="template-select" onClick={e => e.stopPropagation()}>
+                                                <label>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={selectedTemplateIds.has(t.template_id)}
+                                                        onChange={() => toggleTemplateSelected(t.template_id)}
+                                                    />
+                                                </label>
+                                            </div>
+                                            <div className="card-badge">{`${t.business_type} · P${t.priority}`}</div>
+                                            <div className="card-content">
+                                                <h3>{t.template_name}</h3>
+                                                <p>{t.description || '暂无描述'}</p>
+                                                <div className="card-stats">
+                                                    <span><Layers size={14} /> {t.rules.length} 条分录规则</span>
+                                                    <span><FileText size={14} /> {t.template_id}</span>
+                                                    <span>分类: {t.category_path || (t.category_id ? categoryPathMap[t.category_id] : '未分类')}</span>
+                                                    <span>{t.active ? '启用' : '停用'}</span>
+                                                </div>
+                                            </div>
+                                            <div className="card-actions">
+                                                <button onClick={(e) => { e.stopPropagation(); handleCopy(t); }} className="copy-btn"><Copy size={14} />复制</button>
+                                                <button onClick={(e) => { e.stopPropagation(); handleEdit(t); }} className="edit-btn">编辑</button>
+                                                <button onClick={(e) => { e.stopPropagation(); handleDelete(t.template_id); }} className="delete-btn"><Trash2 size={16} /></button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="templates-list">
+                                    <div className="templates-list-header">
+                                        <div className="col-check" />
+                                        <div className="col-name">模板</div>
+                                        <div className="col-category">分类</div>
+                                        <div className="col-meta">优先级 / 状态</div>
+                                        <div className="col-actions">操作</div>
+                                    </div>
+                                    {displayedTemplates.map(t => (
+                                        <div
+                                            key={t.template_id}
+                                            className={`templates-list-row ${selectedTemplateIds.has(t.template_id) ? 'selected' : ''}`}
+                                        >
+                                            <div className="col-check">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selectedTemplateIds.has(t.template_id)}
+                                                    onChange={() => toggleTemplateSelected(t.template_id)}
+                                                />
+                                            </div>
+                                            <div className="col-name" onClick={() => handleEdit(t)}>
+                                                <div className="row-title">{t.template_name}</div>
+                                                <div className="row-sub">
+                                                    <span><FileText size={12} /> {t.template_id}</span>
+                                                    <span><Layers size={12} /> {t.rules.length} 条</span>
+                                                </div>
+                                                {t.description && <div className="row-desc">{t.description}</div>}
+                                            </div>
+                                            <div className="col-category">
+                                                {t.category_path || (t.category_id ? categoryPathMap[t.category_id] : '未分类')}
+                                            </div>
+                                            <div className="col-meta">
+                                                <span className="meta-pill">P{t.priority}</span>
+                                                <span className={`status-pill ${t.active ? 'active' : 'inactive'}`}>{t.active ? '启用' : '停用'}</span>
+                                            </div>
+                                            <div className="col-actions">
+                                                <button onClick={() => handleCopy(t)} className="copy-btn">复制</button>
+                                                <button onClick={() => handleEdit(t)} className="edit-btn">编辑</button>
+                                                <button onClick={() => handleDelete(t.template_id)} className="delete-btn"><Trash2 size={14} /></button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                            {displayedTemplates.length === 0 && !loadError && (
+                                <div className="empty-state">
+                                    <Info size={40} />
+                                    <p>{searchText.trim() ? '未找到匹配的模板' : (categoryFilter === 'all' ? '尚未创建任何模板' : '暂无符合该分类的模板')}</p>
+                                    {categoryFilter === 'all' && !searchText.trim() && (
+                                        <button onClick={handleCreate}>立即创建</button>
+                                    )}
+                                </div>
+                            )}
+                        </div>
                     </div>
-                </>
+                </div>
             )}
         </div>
+    </div>
     );
 };
 

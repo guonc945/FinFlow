@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import { X, FileText, Code, CheckCircle2, AlertTriangle, Copy } from 'lucide-react';
 import React from 'react';
 
@@ -16,6 +16,7 @@ const VoucherPreviewModal = ({ isOpen, onClose, data, isLoading, error, onPushVo
     const [copied, setCopied] = useState(false);
     const [isPushing, setIsPushing] = useState(false);
     const [pushFeedback, setPushFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+    const [mergeEnabled, setMergeEnabled] = useState(true);
 
     const handleCopyJson = () => {
         if (data?.kingdee_json) {
@@ -49,13 +50,50 @@ const VoucherPreviewModal = ({ isOpen, onClose, data, isLoading, error, onPushVo
     const sourceBillSummary = data?.source_bill_push_summary || {};
     const pushBlocked = Boolean(data?.push_blocked);
     const canPush = !!onPushVoucher && !!kdJson && !isLoading && !error && data?.matched && !pushBlocked;
+    const displayedEntries = useMemo(() => {
+        if (!acctView?.entries) return [];
+        return mergeEnabled ? mergeEntries(acctView.entries) : acctView.entries;
+    }, [acctView?.entries, mergeEnabled]);
 
     useEffect(() => {
         if (isOpen) {
             setPushFeedback(null);
             setIsPushing(false);
+            setMergeEnabled(true);
         }
     }, [isOpen, data]);
+
+    const normalizeAssgrp = (assgrp: any): Array<[string, string]> => {
+        if (!assgrp || typeof assgrp !== 'object') return [];
+        return Object.entries(assgrp)
+            .map(([key, conf]) => [String(key), getAssgrpDisplayValue(conf)])
+            .sort((a, b) => a[0].localeCompare(b[0]));
+    };
+
+    const mergeEntries = (entries: any[]) => {
+        const merged: any[] = [];
+        const indexMap = new Map<string, number>();
+
+        entries.forEach((entry) => {
+            const direction = entry.debit > 0 ? 'debit' : 'credit';
+            const accountKey = `${entry.account_display || ''}|${entry.account_code || ''}`;
+            const assgrpKey = JSON.stringify(normalizeAssgrp(entry.assgrp));
+            const key = `${direction}|${accountKey}|${assgrpKey}`;
+
+            if (indexMap.has(key)) {
+                const idx = indexMap.get(key) as number;
+                const target = merged[idx];
+                target.debit = Number(target.debit || 0) + Number(entry.debit || 0);
+                target.credit = Number(target.credit || 0) + Number(entry.credit || 0);
+                return;
+            }
+
+            indexMap.set(key, merged.length);
+            merged.push({ ...entry });
+        });
+
+        return merged.map((entry, idx) => ({ ...entry, line_no: idx + 1 }));
+    };
 
     const handlePushVoucher = async () => {
         if (!canPush || !onPushVoucher) return;
@@ -285,6 +323,21 @@ const VoucherPreviewModal = ({ isOpen, onClose, data, isLoading, error, onPushVo
                                             : <><AlertTriangle size={14} /> 借贷不平衡，差额：¥{Math.abs(acctView.total_debit - acctView.total_credit).toFixed(2)}</>
                                         }
                                     </div>
+                                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.75rem' }}>
+                                        <label style={{
+                                            display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
+                                            fontSize: '0.75rem', color: '#475569', cursor: 'pointer',
+                                            background: '#f8fafc', border: '1px solid #e2e8f0',
+                                            padding: '0.35rem 0.6rem', borderRadius: '999px',
+                                        }}>
+                                            <input
+                                                type="checkbox"
+                                                checked={mergeEnabled}
+                                                onChange={(e) => setMergeEnabled(e.target.checked)}
+                                            />
+                                            合并同核算项（借/贷方向一致）
+                                        </label>
+                                    </div>
 
                                     {/* 凭证表格 */}
                                     <div style={{ borderRadius: '0.75rem', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
@@ -300,7 +353,7 @@ const VoucherPreviewModal = ({ isOpen, onClose, data, isLoading, error, onPushVo
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {acctView.entries.map((entry: any, idx: number) => (
+                                                {displayedEntries.map((entry: any, idx: number) => (
                                                     <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
                                                         <td style={{ ...tdStyle, textAlign: 'center', color: '#94a3b8' }}>{entry.line_no}</td>
                                                         <td style={tdStyle}>{entry.summary}</td>
