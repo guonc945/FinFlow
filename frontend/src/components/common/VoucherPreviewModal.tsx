@@ -76,7 +76,12 @@ const VoucherPreviewModal = ({
   const normalizeAssgrp = (assgrp: any): Array<[string, string]> => {
     if (!assgrp || typeof assgrp !== "object") return [];
     return Object.entries(assgrp)
-      .map(([key, conf]) => [String(key), getAssgrpDisplayValue(conf)])
+      .map(
+        ([key, conf]): [string, string] => [
+          String(key),
+          getAssgrpDisplayValue(conf),
+        ],
+      )
       .sort((a, b) => a[0].localeCompare(b[0]));
   };
   const mergeEntries = (entries: any[]) => {

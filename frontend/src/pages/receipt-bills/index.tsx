@@ -486,6 +486,30 @@ const ReceiptBills = () => {
         return refs;
     }, []);
 
+    const notifySkippedBills = useCallback((skippedBills: any[]) => {
+        if (!Array.isArray(skippedBills) || skippedBills.length === 0) return;
+
+        const preview = skippedBills
+            .slice(0, 5)
+            .map((b: any) => `${b.community_id}:${b.bill_id}`)
+            .join(', ');
+        const reasons = Array.from(
+            new Set(
+                skippedBills
+                    .map((b: any) => String(b?.reason || '').trim())
+                    .filter(Boolean)
+            )
+        );
+        const title = reasons.includes('template not matched') && reasons.length === 1
+            ? '部分账单未匹配模板'
+            : '部分账单已跳过';
+        const detail = reasons.length > 0
+            ? `原因：${reasons.slice(0, 2).join('；')}`
+            : '';
+
+        showToast('info', title, detail ? `已跳过：${preview}；${detail}` : `已跳过：${preview}`);
+    }, [showToast]);
+
     const handlePreviewVoucherForReceipt = useCallback(async (receipt: { id: string | number; community_id: number }) => {
         setVoucherPreview({ isOpen: true, data: null, isLoading: true, error: null });
         try {
@@ -497,13 +521,7 @@ const ReceiptBills = () => {
             }
 
             const result = await previewBatchVoucherForBills(refs);
-            if (Array.isArray(result?.skipped_bills) && result.skipped_bills.length > 0) {
-                const preview = result.skipped_bills
-                    .slice(0, 5)
-                    .map((b: any) => `${b.community_id}:${b.bill_id}`)
-                    .join(', ');
-                showToast('info', '部分账单未匹配模板', `已跳过：${preview}`);
-            }
+            notifySkippedBills(result?.skipped_bills || []);
             setVoucherPreview({ isOpen: true, data: result, isLoading: false, error: null });
         } catch (err: any) {
             setVoucherPreview({
@@ -511,7 +529,7 @@ const ReceiptBills = () => {
                 error: err?.response?.data?.detail || err?.message || '预览失败'
             });
         }
-    }, [fetchRelatedBillRefsForReceipt, showToast]);
+    }, [fetchRelatedBillRefsForReceipt, notifySkippedBills, showToast]);
 
     const handlePreviewBatchVoucher = useCallback(async () => {
         const receipts = Array.from(selectedReceiptRefs.values());
@@ -547,13 +565,7 @@ const ReceiptBills = () => {
             }
 
             const result = await previewBatchVoucherForBills(allRefs);
-            if (Array.isArray(result?.skipped_bills) && result.skipped_bills.length > 0) {
-                const preview = result.skipped_bills
-                    .slice(0, 5)
-                    .map((b: any) => `${b.community_id}:${b.bill_id}`)
-                    .join(', ');
-                showToast('info', '部分账单未匹配模板', `已跳过：${preview}`);
-            }
+            notifySkippedBills(result?.skipped_bills || []);
             if (missingCount > 0) {
                 showToast('info', '提示', `有 ${missingCount} 条收款单没有关联账单，已自动跳过`);
             }
@@ -564,7 +576,7 @@ const ReceiptBills = () => {
                 error: err?.response?.data?.detail || err?.message || '预览失败'
             });
         }
-    }, [fetchRelatedBillRefsForReceipt, selectedReceiptRefs, showToast]);
+    }, [fetchRelatedBillRefsForReceipt, notifySkippedBills, selectedReceiptRefs, showToast]);
 
     const handlePushVoucher = useCallback(async (kingdeeJson: any) => {
         try {
