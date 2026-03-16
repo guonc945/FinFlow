@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef, forwardRef, useImperativeHandle } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
     Layers, FileText, Settings, Hash, Info, X, Sliders, ArrowUp, ArrowDown, AlertTriangle,
     Plus, Save, Trash2, ChevronLeft, Database, Copy, ChevronRight, ChevronDown, Search, LayoutGrid, List,
@@ -782,6 +783,7 @@ const VoucherTemplates = () => {
     const templatesMainRef = useRef<HTMLDivElement | null>(null);
     const [currentPage, setCurrentPage] = useState(1);
     const [pageSize, setPageSize] = useState(12);
+    const location = useLocation();
 
     const categoryOptions = useMemo(() => flattenTemplateCategories(templateCategories), [templateCategories]);
     const categoryPathMap = useMemo(() => {
@@ -1047,6 +1049,22 @@ const VoucherTemplates = () => {
         fetchVoucherFieldModules();
         fetchTemplateCategories();
     }, []);
+
+    useEffect(() => {
+        if (location.pathname.includes('/vouchers/templates')) {
+            fetchTemplateCategories();
+        }
+    }, [location.pathname]);
+
+    useEffect(() => {
+        const onVisible = () => {
+            if (document.visibilityState === 'visible' && location.pathname.includes('/vouchers/templates')) {
+                fetchTemplateCategories();
+            }
+        };
+        document.addEventListener('visibilitychange', onVisible);
+        return () => document.removeEventListener('visibilitychange', onVisible);
+    }, [location.pathname]);
 
     const fetchTemplateCategories = async () => {
         try {
