@@ -242,8 +242,6 @@ const ReceiptBills = () => {
 
     const [searchQuery, setSearchQuery] = useState('');
     const [communityFilter, setCommunityFilter] = useState<string[]>([]);
-    const [payChannelStrFilter, setPayChannelStrFilter] = useState('');
-    const [payeeFilter, setPayeeFilter] = useState('');
     const [dealDateStart, setDealDateStart] = useState('');
     const [dealDateEnd, setDealDateEnd] = useState('');
 
@@ -389,8 +387,6 @@ const ReceiptBills = () => {
             const params = {
                 search: searchQuery || undefined,
                 community_ids: communityFilter.length ? communityFilter.join(',') : undefined,
-                pay_channel_str: payChannelStrFilter || undefined,
-                payee: payeeFilter || undefined,
                 deal_date_start: dealDateStart || undefined,
                 deal_date_end: dealDateEnd || undefined,
                 skip,
@@ -406,7 +402,7 @@ const ReceiptBills = () => {
         } finally {
             setIsLoading(false);
         }
-    }, [communityFilter, dealDateEnd, dealDateStart, page, pageSize, payChannelStrFilter, payeeFilter, searchQuery, showToast]);
+    }, [communityFilter, dealDateEnd, dealDateStart, page, pageSize, searchQuery, showToast]);
 
     useEffect(() => {
         void fetchProjects();
@@ -418,7 +414,7 @@ const ReceiptBills = () => {
 
     useEffect(() => {
         clearReceiptSelection();
-    }, [clearReceiptSelection, searchQuery, communityFilter, payChannelStrFilter, payeeFilter, dealDateStart, dealDateEnd, page, pageSize]);
+    }, [clearReceiptSelection, searchQuery, communityFilter, dealDateStart, dealDateEnd, page, pageSize]);
 
     useEffect(() => {
         const validProjectIds = new Set(projects.map(project => String(project.proj_id)));
@@ -1224,24 +1220,6 @@ const ReceiptBills = () => {
                                     )}
                                 </div>
 
-                                <input
-                                    type="text"
-                                    className="enhanced-select"
-                                    style={{ width: '160px' }}
-                                    placeholder="收款渠道(模糊)"
-                                    value={payChannelStrFilter}
-                                    onChange={(e) => { setPayChannelStrFilter(e.target.value); setPage(1); }}
-                                />
-
-                                <input
-                                    type="text"
-                                    className="enhanced-select"
-                                    style={{ width: '140px' }}
-                                    placeholder="收款人"
-                                    value={payeeFilter}
-                                    onChange={(e) => { setPayeeFilter(e.target.value); setPage(1); }}
-                                />
-
                                 <div className="flex items-center gap-1">
                                     <span className="text-secondary text-xs" style={{ whiteSpace: 'nowrap' }}>收款日期:</span>
                                     <input type="date" className="enhanced-select text-xs" style={{ width: '140px' }} value={dealDateStart} onChange={(e) => { setDealDateStart(e.target.value); setPage(1); }} />
@@ -1364,8 +1342,6 @@ const ReceiptBills = () => {
                             <button className="btn-outline" style={{ color: '#ef4444' }} onClick={() => {
                                 setSearchQuery('');
                                 setCommunityFilter([]);
-                                setPayChannelStrFilter('');
-                                setPayeeFilter('');
                                 setDealDateStart('');
                                 setDealDateEnd('');
                                 setPage(1);

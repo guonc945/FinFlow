@@ -255,8 +255,6 @@ export const getReceiptBills = async (params?: {
     community_ids?: string;
     deal_date_start?: string;
     deal_date_end?: string;
-    pay_channel_str?: string;
-    payee?: string;
     skip?: number;
     limit?: number;
 }) => {
