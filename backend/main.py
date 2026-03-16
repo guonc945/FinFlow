@@ -1593,14 +1593,32 @@ def get_bills(
         ))
 
     if search:
-        search_filter = or_(
-            models.Bill.id.ilike(f"%{search}%"),
-            models.Bill.full_house_name.ilike(f"%{search}%"),
-            models.Bill.charge_item_name.ilike(f"%{search}%"),
-            models.ProjectList.proj_name.ilike(f"%{search}%"),
-            customer_subq.c.customer_name.ilike(f"%{search}%")
-        )
-        query = query.filter(search_filter)
+        keyword = search.strip()
+        if keyword:
+            like = f"%{keyword}%"
+            search_conditions = [
+                models.Bill.receipt_id.ilike(like),
+                models.Bill.full_house_name.ilike(like),
+                models.Bill.bind_house_name.ilike(like),
+                models.Bill.asset_name.ilike(like),
+                customer_subq.c.customer_name.ilike(like),
+            ]
+
+            if keyword.isdigit():
+                numeric_value = int(keyword)
+                search_conditions.extend([
+                    models.Bill.id == numeric_value,
+                    models.Bill.deal_log_id == numeric_value,
+                ])
+            else:
+                from sqlalchemy import cast, String as SAString
+
+                search_conditions.extend([
+                    cast(models.Bill.id, SAString).ilike(like),
+                    cast(models.Bill.deal_log_id, SAString).ilike(like),
+                ])
+
+            query = query.filter(or_(*search_conditions))
     
     total = query.count()
     total_amount = query.with_entities(sa_func.sum(models.Bill.amount)).scalar()

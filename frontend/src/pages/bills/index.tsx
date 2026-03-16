@@ -135,10 +135,7 @@ const Bills = () => {
     const [communityFilter, setCommunityFilter] = useState<string[]>([]);
     const [chargeItemFilter, setChargeItemFilter] = useState<string[]>([]);
     const [availableChargeItems, setAvailableChargeItems] = useState<{ value: string, label: string }[]>([]);
-    const [customerNameFilter, setCustomerNameFilter] = useState('');
-    const [billIdFilter, setBillIdFilter] = useState('');
-    const [receiptIdFilter, setReceiptIdFilter] = useState('');
-    const [houseNameFilter, setHouseNameFilter] = useState('');
+    const [keywordFilter, setKeywordFilter] = useState('');
     const [isFilterDropdownOpen, setIsFilterDropdownOpen] = useState(false);
     const [isChargeItemDropdownOpen, setIsChargeItemDropdownOpen] = useState(false);
     const filterDropdownRef = useRef<HTMLDivElement>(null);
@@ -149,8 +146,6 @@ const Bills = () => {
     const [inMonthEnd, setInMonthEnd] = useState('');
     const [payTimeStart, setPayTimeStart] = useState('');
     const [payTimeEnd, setPayTimeEnd] = useState('');
-    const [dealLogIdFilter, setDealLogIdFilter] = useState('');
-
     // Quick selection state for UI
     const [quickInMonth, setQuickInMonth] = useState('');
     const [quickPayTime, setQuickPayTime] = useState('');
@@ -204,11 +199,11 @@ const Bills = () => {
         const dealLogId = (sp.get('deal_log_id') || '').trim();
         const communityIds = (sp.get('community_ids') || '').trim();
 
-        if (dealLogId && dealLogId !== dealLogIdFilter) {
-            setDealLogIdFilter(dealLogId);
+        if (dealLogId && dealLogId !== keywordFilter) {
+            setKeywordFilter(dealLogId);
         }
-        if (!dealLogId && dealLogIdFilter) {
-            setDealLogIdFilter('');
+        if (!dealLogId && keywordFilter) {
+            setKeywordFilter('');
         }
 
         if (communityIds) {
@@ -253,23 +248,17 @@ const Bills = () => {
     const fetchBillsList = useCallback(async () => {
         setIsLoading(true);
         try {
-            const dealLogIdTrimmed = dealLogIdFilter.trim();
-            const dealLogIdValue = dealLogIdTrimmed ? Number(dealLogIdTrimmed) : NaN;
             const params: any = {
                 skip: (page - 1) * pageSize,
                 limit: pageSize,
                 status: statusFilter !== '全部状态' ? statusFilter : undefined,
                 community_ids: communityFilter.length > 0 ? communityFilter.join(',') : undefined,
                 charge_items: chargeItemFilter.length > 0 ? chargeItemFilter.join(',') : undefined,
-                customer_name: customerNameFilter || undefined,
+                search: keywordFilter || undefined,
                 in_month_start: inMonthStart || undefined,
                 in_month_end: inMonthEnd || undefined,
                 pay_date_start: payTimeStart || undefined,
                 pay_date_end: payTimeEnd || undefined,
-                bill_id: billIdFilter || undefined,
-                receipt_id: receiptIdFilter || undefined,
-                house_name: houseNameFilter || undefined,
-                deal_log_id: Number.isFinite(dealLogIdValue) ? dealLogIdValue : undefined,
             };
             const res = await getBills(params);
             if (res && res.items) {
@@ -287,7 +276,7 @@ const Bills = () => {
         } finally {
             setIsLoading(false);
         }
-    }, [page, pageSize, statusFilter, communityFilter, chargeItemFilter, customerNameFilter, billIdFilter, receiptIdFilter, houseNameFilter, inMonthStart, inMonthEnd, payTimeStart, payTimeEnd, dealLogIdFilter]);
+    }, [page, pageSize, keywordFilter, statusFilter, communityFilter, chargeItemFilter, inMonthStart, inMonthEnd, payTimeStart, payTimeEnd]);
 
     useEffect(() => {
         fetchBillsList();
@@ -632,53 +621,56 @@ const Bills = () => {
                                     )}
                                 </div>
 
-                                <div className="search-group" style={{ maxWidth: '140px', minWidth: '120px' }}>
+                                <div className="search-group" style={{ maxWidth: '360px', minWidth: '260px' }}>
                                     <input
                                         type="text"
-                                        placeholder="账单ID..."
+                                        placeholder="搜索账单ID/缴费ID/收据ID/房号/客户名称..."
                                         className="filter-input"
-                                        value={billIdFilter}
-                                        onChange={(e) => setBillIdFilter(e.target.value)}
+                                        value={keywordFilter}
+                                        onChange={(e) => {
+                                            setKeywordFilter(e.target.value);
+                                            setPage(1);
+                                        }}
                                     />
                                 </div>
 
-                                <div className="search-group" style={{ maxWidth: '140px', minWidth: '120px' }}>
+                                <div className="search-group" style={{ display: 'none' }}>
                                     <input
                                         type="text"
                                         placeholder="缴费ID..."
                                         className="filter-input"
-                                        value={dealLogIdFilter}
-                                        onChange={(e) => setDealLogIdFilter(e.target.value)}
+                                        value={keywordFilter}
+                                        onChange={(e) => setKeywordFilter(e.target.value)}
                                     />
                                 </div>
 
-                                <div className="search-group" style={{ maxWidth: '140px', minWidth: '120px' }}>
+                                <div className="search-group" style={{ display: 'none' }}>
                                     <input
                                         type="text"
                                         placeholder="收据ID..."
                                         className="filter-input"
-                                        value={receiptIdFilter}
-                                        onChange={(e) => setReceiptIdFilter(e.target.value)}
+                                        value={keywordFilter}
+                                        onChange={(e) => setKeywordFilter(e.target.value)}
                                     />
                                 </div>
 
-                                <div className="search-group" style={{ maxWidth: '160px', minWidth: '140px' }}>
+                                <div className="search-group" style={{ display: 'none' }}>
                                     <input
                                         type="text"
                                         placeholder="房号..."
                                         className="filter-input"
-                                        value={houseNameFilter}
-                                        onChange={(e) => setHouseNameFilter(e.target.value)}
+                                        value={keywordFilter}
+                                        onChange={(e) => setKeywordFilter(e.target.value)}
                                     />
                                 </div>
 
-                                <div className="search-group" style={{ maxWidth: '120px' }}>
+                                <div className="search-group" style={{ display: 'none' }}>
                                     <input
                                         type="text"
                                         placeholder="客户姓名..."
                                         className="filter-input"
-                                        value={customerNameFilter}
-                                        onChange={(e) => setCustomerNameFilter(e.target.value)}
+                                        value={keywordFilter}
+                                        onChange={(e) => setKeywordFilter(e.target.value)}
                                     />
                                 </div>
 
@@ -782,11 +774,7 @@ const Bills = () => {
                                 setCommunityFilter([]);
                                 setStatusFilter('全部状态');
                                 setChargeItemFilter([]);
-                                setCustomerNameFilter('');
-                                setBillIdFilter('');
-                                setDealLogIdFilter('');
-                                setReceiptIdFilter('');
-                                setHouseNameFilter('');
+                                setKeywordFilter('');
                                 setQuickInMonth('');
                                 setInMonthStart('');
                                 setInMonthEnd('');
