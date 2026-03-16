@@ -23,9 +23,7 @@ const VoucherPreviewModal = ({
   error,
   onPushVoucher,
 }: VoucherPreviewModalProps) => {
-  const [activeView, setActiveView] = useState<"accounting" | "json">(
-    "accounting",
-  );
+  const [isJsonOpen, setIsJsonOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [isPushing, setIsPushing] = useState(false);
   const [pushFeedback, setPushFeedback] = useState<{
@@ -113,6 +111,8 @@ const VoucherPreviewModal = ({
       setPushFeedback(null);
       setIsPushing(false);
       setMergeEnabled(true);
+      setIsJsonOpen(false);
+      setCopied(false);
     }
   }, [isOpen, data]);
   const handlePushVoucher = async () => {
@@ -203,6 +203,26 @@ const VoucherPreviewModal = ({
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            {!!kdJson && !isLoading && !error && data?.matched && (
+              <button
+                onClick={() => setIsJsonOpen(true)}
+                style={{
+                  background: "rgba(255,255,255,0.15)",
+                  border: "1px solid rgba(255,255,255,0.2)",
+                  borderRadius: "0.5rem",
+                  color: "#fff",
+                  cursor: "pointer",
+                  padding: "0.38rem 0.75rem",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.375rem",
+                  fontSize: "0.75rem",
+                  fontWeight: 600,
+                }}
+              >
+                <Code size={14} /> 查看 JSON
+              </button>
+            )}
             {!!onPushVoucher &&
               !!kdJson &&
               !isLoading &&
@@ -402,71 +422,7 @@ const VoucherPreviewModal = ({
                   </div>
                 </div>
               )}
-              {/* 视图切换标签 */}
-              <div
-                style={{
-                  display: "flex",
-                  gap: "0.25rem",
-                  marginBottom: "1rem",
-                  background: "#f1f5f9",
-                  borderRadius: "0.5rem",
-                  padding: "0.25rem",
-                }}
-              >
-                <button
-                  onClick={() => setActiveView("accounting")}
-                  style={{
-                    flex: 1,
-                    padding: "0.5rem",
-                    border: "none",
-                    borderRadius: "0.375rem",
-                    cursor: "pointer",
-                    fontSize: "0.8rem",
-                    fontWeight: 600,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: "0.375rem",
-                    background:
-                      activeView === "accounting" ? "#fff" : "transparent",
-                    color: activeView === "accounting" ? "#1e293b" : "#64748b",
-                    boxShadow:
-                      activeView === "accounting"
-                        ? "0 1px 3px rgba(0,0,0,0.1)"
-                        : "none",
-                    transition: "all 0.2s",
-                  }}
-                >
-                  <FileText size={14} /> 会计凭证视图
-                </button>
-                <button
-                  onClick={() => setActiveView("json")}
-                  style={{
-                    flex: 1,
-                    padding: "0.5rem",
-                    border: "none",
-                    borderRadius: "0.375rem",
-                    cursor: "pointer",
-                    fontSize: "0.8rem",
-                    fontWeight: 600,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: "0.375rem",
-                    background: activeView === "json" ? "#fff" : "transparent",
-                    color: activeView === "json" ? "#1e293b" : "#64748b",
-                    boxShadow:
-                      activeView === "json"
-                        ? "0 1px 3px rgba(0,0,0,0.1)"
-                        : "none",
-                    transition: "all 0.2s",
-                  }}
-                >
-                  <Code size={14} /> 金蝶推送 JSON
-                </button>
-              </div>
-              {/* 会计凭证视图 */}
-              {activeView === "accounting" && acctView && (
+              {acctView && (
                 <div>
                   {/* 平衡状态*/}
                   <div
@@ -700,63 +656,122 @@ const VoucherPreviewModal = ({
                   </div>
                 </div>
               )}
-              {/* 金蝶 JSON 视图 */}
-              {activeView === "json" && kdJson && (
-                <div>
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      marginBottom: "0.5rem",
-                    }}
-                  >
-                    <span style={{ fontSize: "0.75rem", color: "#64748b" }}>
-                      POST /v2/gl/gl_voucher/voucherAdd
-                    </span>
-                    <button
-                      onClick={handleCopyJson}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "0.375rem",
-                        padding: "0.375rem 0.75rem",
-                        borderRadius: "0.5rem",
-                        border: "1px solid #e2e8f0",
-                        background: copied ? "#f0fdf4" : "#fff",
-                        cursor: "pointer",
-                        fontSize: "0.75rem",
-                        fontWeight: 500,
-                        color: copied ? "#166534" : "#64748b",
-                        transition: "all 0.2s",
-                      }}
-                    >
-                      <Copy size={12} /> {copied ? "已复制" : "复制 JSON"}
-                    </button>
-                  </div>
-                  <pre
-                    style={{
-                      background: "#0f172a",
-                      color: "#e2e8f0",
-                      padding: "1.25rem",
-                      borderRadius: "0.75rem",
-                      fontSize: "0.78rem",
-                      lineHeight: 1.6,
-                      overflow: "auto",
-                      maxHeight: "400px",
-                      fontFamily:
-                        "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
-                      border: "1px solid #1e293b",
-                    }}
-                  >
-                    <JsonSyntaxHighlight json={kdJson} />
-                  </pre>
-                </div>
-              )}
             </>
           ) : null}
         </div>
       </div>
+      {isJsonOpen && kdJson && (
+        <div
+          onClick={() => setIsJsonOpen(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 1001,
+            backgroundColor: "rgba(15, 23, 42, 0.55)",
+            backdropFilter: "blur(6px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "1.5rem",
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "960px",
+              maxWidth: "92vw",
+              maxHeight: "82vh",
+              background: "#fff",
+              borderRadius: "1rem",
+              boxShadow: "0 25px 50px -12px rgba(0,0,0,0.35)",
+              border: "1px solid #e2e8f0",
+              overflow: "hidden",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                padding: "0.9rem 1.2rem",
+                borderBottom: "1px solid #e2e8f0",
+                background: "#f8fafc",
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    fontSize: "0.92rem",
+                    fontWeight: 700,
+                    color: "#0f172a",
+                  }}
+                >
+                  JSON Preview
+                </div>
+                <div style={{ fontSize: "0.75rem", color: "#64748b" }}>
+                  POST /v2/gl/gl_voucher/voucherAdd
+                </div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                <button
+                  onClick={handleCopyJson}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.375rem",
+                    padding: "0.375rem 0.75rem",
+                    borderRadius: "0.5rem",
+                    border: "1px solid #e2e8f0",
+                    background: copied ? "#f0fdf4" : "#fff",
+                    cursor: "pointer",
+                    fontSize: "0.75rem",
+                    fontWeight: 500,
+                    color: copied ? "#166534" : "#64748b",
+                  }}
+                >
+                  <Copy size={12} /> {copied ? "已复制" : "复制 JSON"}
+                </button>
+                <button
+                  onClick={() => setIsJsonOpen(false)}
+                  style={{
+                    background: "#fff",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: "0.5rem",
+                    color: "#475569",
+                    cursor: "pointer",
+                    padding: "0.375rem",
+                    display: "flex",
+                  }}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+            <div style={{ padding: "1rem 1.2rem", overflow: "auto" }}>
+              <pre
+                style={{
+                  margin: 0,
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                  padding: "1.25rem",
+                  borderRadius: "0.75rem",
+                  fontSize: "0.78rem",
+                  lineHeight: 1.6,
+                  overflow: "auto",
+                  maxHeight: "62vh",
+                  fontFamily:
+                    "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
+                  border: "1px solid #1e293b",
+                }}
+              >
+                <JsonSyntaxHighlight json={kdJson} />
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
       {/* 动画 keyframes */}
       <style>{`                 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }                 @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }                 @keyframes spin { to { transform: rotate(360deg); } }             `}</style>
     </div>
