@@ -134,13 +134,14 @@ const Bills = () => {
     const [selectedBillRefs, setSelectedBillRefs] = useState<Map<string, { bill_id: number; community_id: number }>>(new Map());
 
     const [isLoading, setIsLoading] = useState(true);
-    const [searchQuery, setSearchQuery] = useState('');
-    const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState('全部状态');
     const [communityFilter, setCommunityFilter] = useState<string[]>([]);
     const [chargeItemFilter, setChargeItemFilter] = useState<string[]>([]);
     const [availableChargeItems, setAvailableChargeItems] = useState<{ value: string, label: string }[]>([]);
     const [customerNameFilter, setCustomerNameFilter] = useState('');
+    const [billIdFilter, setBillIdFilter] = useState('');
+    const [receiptIdFilter, setReceiptIdFilter] = useState('');
+    const [houseNameFilter, setHouseNameFilter] = useState('');
     const [isFilterDropdownOpen, setIsFilterDropdownOpen] = useState(false);
     const [isChargeItemDropdownOpen, setIsChargeItemDropdownOpen] = useState(false);
     const filterDropdownRef = useRef<HTMLDivElement>(null);
@@ -489,6 +490,8 @@ const Bills = () => {
     const fetchBillsList = useCallback(async () => {
         setIsLoading(true);
         try {
+            const dealLogIdTrimmed = dealLogIdFilter.trim();
+            const dealLogIdValue = dealLogIdTrimmed ? Number(dealLogIdTrimmed) : NaN;
             const params: any = {
                 skip: (page - 1) * pageSize,
                 limit: pageSize,
@@ -500,11 +503,11 @@ const Bills = () => {
                 in_month_end: inMonthEnd || undefined,
                 pay_date_start: payTimeStart || undefined,
                 pay_date_end: payTimeEnd || undefined,
-                deal_log_id: dealLogIdFilter ? Number(dealLogIdFilter) : undefined,
+                bill_id: billIdFilter || undefined,
+                receipt_id: receiptIdFilter || undefined,
+                house_name: houseNameFilter || undefined,
+                deal_log_id: Number.isFinite(dealLogIdValue) ? dealLogIdValue : undefined,
             };
-            if (debouncedSearchQuery) {
-                params.search = debouncedSearchQuery;
-            }
             const res = await getBills(params);
             if (res && res.items) {
                 setBills(res.items);
@@ -521,15 +524,7 @@ const Bills = () => {
         } finally {
             setIsLoading(false);
         }
-    }, [page, pageSize, debouncedSearchQuery, statusFilter, communityFilter, chargeItemFilter, customerNameFilter, inMonthStart, inMonthEnd, payTimeStart, payTimeEnd, dealLogIdFilter]);
-
-    useEffect(() => {
-        const timer = setTimeout(() => {
-            setDebouncedSearchQuery(searchQuery);
-            setPage(1);
-        }, 500);
-        return () => clearTimeout(timer);
-    }, [searchQuery]);
+    }, [page, pageSize, statusFilter, communityFilter, chargeItemFilter, customerNameFilter, billIdFilter, receiptIdFilter, houseNameFilter, inMonthStart, inMonthEnd, payTimeStart, payTimeEnd, dealLogIdFilter]);
 
     useEffect(() => {
         fetchBillsList();
@@ -937,11 +932,6 @@ const Bills = () => {
                         {!isConditionCollapsed && (
                         <div className="action-row flex-wrap">
                             <div className="flex items-center gap-2 flex-1 flex-wrap">
-                                <div className="search-group" style={{ maxWidth: '180px' }}>
-                                    <Search size={14} className="search-icon" />
-                                    <input type="text" placeholder="搜索ID、房号..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
-                                </div>
-
                                 <div className="selection-group" ref={filterDropdownRef} style={{ maxWidth: '160px', minWidth: '150px' }}>
                                     <div className={`custom-select-trigger ${isFilterDropdownOpen ? 'active' : ''}`} onClick={() => setIsFilterDropdownOpen(!isFilterDropdownOpen)}>
                                         <div className="trigger-content">
@@ -972,12 +962,51 @@ const Bills = () => {
                                     )}
                                 </div>
 
+                                <div className="search-group" style={{ maxWidth: '140px', minWidth: '120px' }}>
+                                    <input
+                                        type="text"
+                                        placeholder="账单ID..."
+                                        className="filter-input"
+                                        value={billIdFilter}
+                                        onChange={(e) => setBillIdFilter(e.target.value)}
+                                    />
+                                </div>
+
+                                <div className="search-group" style={{ maxWidth: '140px', minWidth: '120px' }}>
+                                    <input
+                                        type="text"
+                                        placeholder="缴费ID..."
+                                        className="filter-input"
+                                        value={dealLogIdFilter}
+                                        onChange={(e) => setDealLogIdFilter(e.target.value)}
+                                    />
+                                </div>
+
+                                <div className="search-group" style={{ maxWidth: '140px', minWidth: '120px' }}>
+                                    <input
+                                        type="text"
+                                        placeholder="收据ID..."
+                                        className="filter-input"
+                                        value={receiptIdFilter}
+                                        onChange={(e) => setReceiptIdFilter(e.target.value)}
+                                    />
+                                </div>
+
+                                <div className="search-group" style={{ maxWidth: '160px', minWidth: '140px' }}>
+                                    <input
+                                        type="text"
+                                        placeholder="房号..."
+                                        className="filter-input"
+                                        value={houseNameFilter}
+                                        onChange={(e) => setHouseNameFilter(e.target.value)}
+                                    />
+                                </div>
+
                                 <div className="search-group" style={{ maxWidth: '120px' }}>
                                     <input
                                         type="text"
                                         placeholder="客户姓名..."
-                                        className="enhanced-input"
-                                        style={{ paddingLeft: '0.75rem' }}
+                                        className="filter-input"
                                         value={customerNameFilter}
                                         onChange={(e) => setCustomerNameFilter(e.target.value)}
                                     />
@@ -1080,11 +1109,14 @@ const Bills = () => {
                             </div>
 
                             <button className="btn-outline" style={{ color: '#ef4444' }} onClick={() => {
-                                setSearchQuery('');
                                 setCommunityFilter([]);
                                 setStatusFilter('全部状态');
                                 setChargeItemFilter([]);
                                 setCustomerNameFilter('');
+                                setBillIdFilter('');
+                                setDealLogIdFilter('');
+                                setReceiptIdFilter('');
+                                setHouseNameFilter('');
                                 setQuickInMonth('');
                                 setInMonthStart('');
                                 setInMonthEnd('');

@@ -1270,6 +1270,9 @@ def get_bills(
     status: Optional[str] = None,
     charge_items: Optional[str] = None,
     customer_name: Optional[str] = None,
+    bill_id: Optional[str] = None,
+    receipt_id: Optional[str] = None,
+    house_name: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     in_month_start: Optional[str] = None,
@@ -1409,6 +1412,23 @@ def get_bills(
             query = query.filter(models.Bill.deal_log_id == int(deal_log_id))
         except Exception:
             pass
+
+    if bill_id:
+        try:
+            query = query.filter(models.Bill.id == int(bill_id))
+        except Exception:
+            pass
+
+    if receipt_id:
+        query = query.filter(models.Bill.receipt_id.ilike(f"%{receipt_id}%"))
+
+    if house_name:
+        like = f"%{house_name}%"
+        query = query.filter(or_(
+            models.Bill.full_house_name.ilike(like),
+            models.Bill.bind_house_name.ilike(like),
+            models.Bill.asset_name.ilike(like)
+        ))
 
     if search:
         search_filter = or_(

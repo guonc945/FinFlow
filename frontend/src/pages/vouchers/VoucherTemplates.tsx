@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo, useRef, forwardRef, useImperativeHandle } from 'react';
 import { useLocation } from 'react-router-dom';
+import { ToastContainer, useToast } from '../../components/Toast';
+import ConfirmModal from '../../components/common/ConfirmModal';
 import {
     Layers, FileText, Settings, Hash, Info, X, Sliders, ArrowUp, ArrowDown, AlertTriangle,
     Plus, Save, Trash2, ChevronLeft, Database, Copy, ChevronRight, ChevronDown, Search, LayoutGrid, List,
@@ -689,6 +691,35 @@ const CategoryNavNode = ({
     );
 };
 
+const normalizeTemplateFromApi = (t: any, categoryPathMap: Record<number, string>, voucherFieldModules: VoucherFieldModule[]): VoucherTemplate => {
+    return {
+        template_id: t.template_id || '',
+        template_name: t.template_name || '',
+        business_type: t.business_type || '',
+        description: t.description || '',
+        active: t.active !== false,
+        priority: Number.isFinite(Number(t.priority)) ? Number(t.priority) : 100,
+        category_id: Number.isFinite(Number(t.category_id)) ? Number(t.category_id) : null,
+        category_path: t.category_path || (Number.isFinite(Number(t.category_id)) ? categoryPathMap[Number(t.category_id)] : null),
+        source_module: (t?.source_module || '').trim() || inferModuleIdFromSourceType(voucherFieldModules, t.source_type),
+        source_type: (() => {
+            const raw = String(t?.source_type || '').trim();
+            if (raw) return raw;
+            const mid = (String(t?.source_module || '').trim() || inferModuleIdFromSourceType(voucherFieldModules, t.source_type));
+            const mod = voucherFieldModules.find(m => String(m?.id) === mid) || voucherFieldModules[0];
+            const fallback = String(mod?.sources?.[0]?.source_type || '').trim();
+            return fallback || 'bills';
+        })(),
+        trigger_condition: t.trigger_condition || '',
+        book_number_expr: t.book_number_expr || "'BU-35256'",
+        vouchertype_number_expr: t.vouchertype_number_expr || "'0001'",
+        attachment_expr: t.attachment_expr || "0",
+        bizdate_expr: t.bizdate_expr || "{CURRENT_DATE}",
+        bookeddate_expr: t.bookeddate_expr || "{CURRENT_DATE}",
+        rules: Array.isArray(t.rules) ? t.rules : []
+    };
+};
+
 const getUniqueCopiedTemplateName = (sourceName: string, templates: VoucherTemplate[]) => {
     const existingNames = new Set(
         templates.map(t => (t.template_name || '').trim()).filter(Boolean)
@@ -780,10 +811,28 @@ const VoucherTemplates = () => {
     const [viewMode, setViewMode] = useState<'card' | 'list'>(() => getInitialViewMode());
     const [batchMenuOpen, setBatchMenuOpen] = useState(false);
     const batchMenuRef = useRef<HTMLDivElement | null>(null);
-    const templatesMainRef = useRef<HTMLDivElement | null>(null);
+    const templatesListRef = useRef<HTMLDivElement | null>(null);
     const [currentPage, setCurrentPage] = useState(1);
     const [pageSize, setPageSize] = useState(12);
     const location = useLocation();
+    const { toasts, showToast, removeToast } = useToast();
+    const [confirmState, setConfirmState] = useState<{
+        open: boolean;
+        title: string;
+        message: string;
+        confirmText: string;
+        intent: 'primary' | 'danger';
+        onConfirm: (() => void | Promise<void>) | null;
+        loading: boolean;
+    }>({
+        open: false,
+        title: '',
+        message: '',
+        confirmText: '确认',
+        intent: 'primary',
+        onConfirm: null,
+        loading: false
+    });
 
     const categoryOptions = useMemo(() => flattenTemplateCategories(templateCategories), [templateCategories]);
     const categoryPathMap = useMemo(() => {
@@ -867,10 +916,43 @@ const VoucherTemplates = () => {
     }, [currentPage, totalPages]);
 
     useEffect(() => {
-        if (templatesMainRef.current) {
-            templatesMainRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+        if (templatesListRef.current) {
+            templatesListRef.current.scrollTo({ top: 0, behavior: 'smooth' });
         }
     }, [currentPage, pageSize, viewMode]);
+
+    const openConfirm = (payload: {
+        title: string;
+        message: string;
+        confirmText?: string;
+        intent?: 'primary' | 'danger';
+        onConfirm: () => void | Promise<void>;
+    }) => {
+        setConfirmState({
+            open: true,
+            title: payload.title,
+            message: payload.message,
+            confirmText: payload.confirmText || '确认',
+            intent: payload.intent || 'primary',
+            onConfirm: payload.onConfirm,
+            loading: false
+        });
+    };
+
+    const closeConfirm = () => {
+        setConfirmState(prev => ({ ...prev, open: false, loading: false }));
+    };
+
+    const handleConfirm = async () => {
+        const action = confirmState.onConfirm;
+        if (!action || confirmState.loading) return;
+        setConfirmState(prev => ({ ...prev, loading: true }));
+        try {
+            await action();
+        } finally {
+            closeConfirm();
+        }
+    };
 
     useEffect(() => {
         if (categoryPickerOpen) {
@@ -965,82 +1047,124 @@ const VoucherTemplates = () => {
 
     const handleBatchDelete = async () => {
         if (selectedTemplateIds.size === 0) return;
-        if (!confirm(`确定要删除选中的 ${selectedTemplateIds.size} 个模板吗？`)) return;
-        try {
-            const tasks = Array.from(selectedTemplateIds).map(id => axios.delete(`${API_BASE}/vouchers/templates/${id}`));
-            const results = await Promise.allSettled(tasks);
-            const failed = results.filter(r => r.status === 'rejected');
-            if (failed.length > 0) {
-                alert(`已删除 ${selectedTemplateIds.size - failed.length} 个模板，${failed.length} 个失败`);
+        openConfirm({
+            title: '批量删除',
+            message: `确定要删除选中的 ${selectedTemplateIds.size} 个模板吗？`,
+            confirmText: '删除',
+            intent: 'danger',
+            onConfirm: async () => {
+                try {
+                    const tasks = Array.from(selectedTemplateIds).map(id => axios.delete(`${API_BASE}/vouchers/templates/${id}`));
+                    const results = await Promise.allSettled(tasks);
+                    const failed = results.filter(r => r.status === 'rejected');
+                    if (failed.length > 0) {
+                        showToast('error', '批量删除未完全成功', `成功 ${selectedTemplateIds.size - failed.length} 个，失败 ${failed.length} 个`);
+                    } else {
+                        showToast('success', '批量删除成功');
+                    }
+                    setSelectedTemplateIds(new Set());
+                    fetchTemplates();
+                } catch (err) {
+                    console.error('Failed to batch delete templates:', err);
+                    showToast('error', '批量删除失败', '请稍后重试');
+                }
             }
-            setSelectedTemplateIds(new Set());
-            fetchTemplates();
-        } catch (err) {
-            console.error('Failed to batch delete templates:', err);
-            alert('批量删除失败，请稍后重试');
-        }
+        });
     };
 
     const handleBatchSetActive = async (active: boolean) => {
         if (selectedTemplateIds.size === 0) return;
         const actionLabel = active ? '启用' : '停用';
-        if (!confirm(`确定要${actionLabel}选中的 ${selectedTemplateIds.size} 个模板吗？`)) return;
-        try {
-            const tasks = Array.from(selectedTemplateIds).map(id =>
-                axios.put(`${API_BASE}/vouchers/templates/${id}`, { active })
-            );
-            const results = await Promise.allSettled(tasks);
-            const failed = results.filter(r => r.status === 'rejected');
-            if (failed.length > 0) {
-                alert(`已${actionLabel} ${selectedTemplateIds.size - failed.length} 个模板，${failed.length} 个失败`);
+        openConfirm({
+            title: `批量${actionLabel}`,
+            message: `确定要${actionLabel}选中的 ${selectedTemplateIds.size} 个模板吗？`,
+            confirmText: actionLabel,
+            intent: 'primary',
+            onConfirm: async () => {
+                try {
+                    const tasks = Array.from(selectedTemplateIds).map(id =>
+                        axios.put(`${API_BASE}/vouchers/templates/${id}`, { active })
+                    );
+                    const results = await Promise.allSettled(tasks);
+                    const failed = results.filter(r => r.status === 'rejected');
+                    if (failed.length > 0) {
+                        showToast('error', `批量${actionLabel}未完全成功`, `成功 ${selectedTemplateIds.size - failed.length} 个，失败 ${failed.length} 个`);
+                    } else {
+                        showToast('success', `批量${actionLabel}成功`);
+                    }
+                    setSelectedTemplateIds(new Set());
+                    fetchTemplates();
+                } catch (err) {
+                    console.error('Failed to batch update templates:', err);
+                    showToast('error', `批量${actionLabel}失败`, '请稍后重试');
+                }
             }
-            setSelectedTemplateIds(new Set());
-            fetchTemplates();
-        } catch (err) {
-            console.error('Failed to batch update templates:', err);
-            alert(`批量${actionLabel}失败，请稍后重试`);
-        }
+        });
     };
 
     const handleBatchCopy = async () => {
         if (selectedTemplateIds.size === 0) return;
-        if (!confirm(`确定要复制选中的 ${selectedTemplateIds.size} 个模板吗？`)) return;
-        try {
-            const usedIds = new Set(
-                templates.map(t => (t.template_id || '').trim().toLowerCase()).filter(Boolean)
-            );
-            const usedNames = new Set(
-                templates.map(t => (t.template_name || '').trim()).filter(Boolean)
-            );
-            const toCopy = templates.filter(t => selectedTemplateIds.has(t.template_id));
-            const payloads = toCopy.map(t => {
-                const newId = getUniqueCopiedTemplateIdFromSet(t.template_id, usedIds);
-                const newName = getUniqueCopiedTemplateNameFromSet(t.template_name, usedNames);
-                const { category_path, ...restTemplate } = t;
-                return {
-                    ...restTemplate,
-                    template_id: newId,
-                    template_name: newName,
-                    rules: (t.rules || []).map((rule, index) => ({
-                        ...rule,
-                        rule_id: null,
-                        line_no: index + 1
-                    }))
-                };
-            });
-            const results = await Promise.allSettled(
-                payloads.map(payload => axios.post(`${API_BASE}/vouchers/templates`, payload))
-            );
-            const failed = results.filter(r => r.status === 'rejected');
-            if (failed.length > 0) {
-                alert(`已复制 ${payloads.length - failed.length} 个模板，${failed.length} 个失败`);
+        openConfirm({
+            title: '批量复制',
+            message: `确定要复制选中的 ${selectedTemplateIds.size} 个模板吗？`,
+            confirmText: '复制',
+            intent: 'primary',
+            onConfirm: async () => {
+                try {
+                    const usedIds = new Set(
+                        templates.map(t => (t.template_id || '').trim().toLowerCase()).filter(Boolean)
+                    );
+                    const usedNames = new Set(
+                        templates.map(t => (t.template_name || '').trim()).filter(Boolean)
+                    );
+                    const toCopyIds = Array.from(selectedTemplateIds);
+                    let resolvedTemplates: VoucherTemplate[] = [];
+                    try {
+                        const detailResponses = await Promise.all(
+                            toCopyIds.map(id => axios.get(`${API_BASE}/vouchers/templates/${id}`))
+                        );
+                        resolvedTemplates = detailResponses.map(res =>
+                            normalizeTemplateFromApi(res.data, categoryPathMap, voucherFieldModules)
+                        );
+                    } catch (err) {
+                        showToast('error', '批量复制失败', '获取模板详情失败，已终止操作');
+                        return;
+                    }
+
+                    const payloads = resolvedTemplates.map(t => {
+                        const newId = getUniqueCopiedTemplateIdFromSet(t.template_id, usedIds);
+                        const newName = getUniqueCopiedTemplateNameFromSet(t.template_name, usedNames);
+                        const { category_path, ...restTemplate } = t;
+                        return {
+                            ...restTemplate,
+                            template_id: newId,
+                            template_name: newName,
+                            rules: (t.rules || []).map((rule, index) => ({
+                                ...rule,
+                                rule_id: null,
+                                line_no: index + 1
+                            }))
+                        };
+                    });
+                    if (payloads.length === 0) {
+                        showToast('error', '批量复制失败', '未能获取模板详情');
+                        return;
+                    }
+                    try {
+                        await Promise.all(payloads.map(payload => axios.post(`${API_BASE}/vouchers/templates`, payload)));
+                        showToast('success', '批量复制成功');
+                    } catch (err) {
+                        showToast('error', '批量复制失败', '复制过程中发生错误，已终止操作');
+                        return;
+                    }
+                    setSelectedTemplateIds(new Set());
+                    fetchTemplates();
+                } catch (err) {
+                    console.error('Failed to batch copy templates:', err);
+                    showToast('error', '批量复制失败', '请稍后重试');
+                }
             }
-            setSelectedTemplateIds(new Set());
-            fetchTemplates();
-        } catch (err) {
-            console.error('Failed to batch copy templates:', err);
-            alert('批量复制失败，请稍后重试');
-        }
+        });
     };
 
     useEffect(() => {
@@ -1097,32 +1221,9 @@ const VoucherTemplates = () => {
         setLoadError(null);
         try {
             const res = await axios.get(`${API_BASE}/vouchers/templates`);
-            const normalized = (res.data || []).map((t: any) => ({
-                template_id: t.template_id || '',
-                template_name: t.template_name || '',
-                business_type: t.business_type || '',
-                description: t.description || '',
-                active: t.active !== false,
-                priority: Number.isFinite(Number(t.priority)) ? Number(t.priority) : 100,
-                category_id: Number.isFinite(Number(t.category_id)) ? Number(t.category_id) : null,
-                category_path: t.category_path || (Number.isFinite(Number(t.category_id)) ? categoryPathMap[Number(t.category_id)] : null),
-                source_module: (t?.source_module || '').trim() || inferModuleIdFromSourceType(voucherFieldModules, t.source_type),
-                source_type: (() => {
-                    const raw = String(t?.source_type || '').trim();
-                    if (raw) return raw;
-                    const mid = (String(t?.source_module || '').trim() || inferModuleIdFromSourceType(voucherFieldModules, t.source_type));
-                    const mod = voucherFieldModules.find(m => String(m?.id) === mid) || voucherFieldModules[0];
-                    const fallback = String(mod?.sources?.[0]?.source_type || '').trim();
-                    return fallback || 'bills';
-                })(),
-                trigger_condition: t.trigger_condition || '',
-                book_number_expr: t.book_number_expr || "'BU-35256'",
-                vouchertype_number_expr: t.vouchertype_number_expr || "'0001'",
-                attachment_expr: t.attachment_expr || "0",
-                bizdate_expr: t.bizdate_expr || "{CURRENT_DATE}",
-                bookeddate_expr: t.bookeddate_expr || "{CURRENT_DATE}",
-                rules: Array.isArray(t.rules) ? t.rules : []
-            })) as VoucherTemplate[];
+            const normalized = (res.data || []).map((t: any) =>
+                normalizeTemplateFromApi(t, categoryPathMap, voucherFieldModules)
+            ) as VoucherTemplate[];
             setTemplates(normalized);
         } catch (err: any) {
             console.error('Failed to fetch templates:', err);
@@ -1346,14 +1447,26 @@ const VoucherTemplates = () => {
         setActiveTab('basic');
     };
 
-    const handleCopy = (template: VoucherTemplate) => {
+    const handleCopy = async (template: VoucherTemplate, options?: { preferServer?: boolean }) => {
         setSaveErrors([]);
+        let sourceTemplate = template;
+        const preferServer = options?.preferServer ?? false;
+
+        if (preferServer) {
+            try {
+                const res = await axios.get(`${API_BASE}/vouchers/templates/${template.template_id}`);
+                sourceTemplate = normalizeTemplateFromApi(res.data, categoryPathMap, voucherFieldModules);
+            } catch (err) {
+                showToast('error', '获取模板详情失败', '将使用当前列表数据复制');
+            }
+        }
+
         setCurrentTemplate({
-            ...template,
-            template_id: getUniqueCopiedTemplateId(template.template_id, templates),
-            template_name: getUniqueCopiedTemplateName(template.template_name, templates),
-            source_module: template.source_module || inferModuleIdFromSourceType(voucherFieldModules, template.source_type),
-            rules: (template.rules || []).map((rule, index) => ({
+            ...sourceTemplate,
+            template_id: getUniqueCopiedTemplateId(sourceTemplate.template_id, templates),
+            template_name: getUniqueCopiedTemplateName(sourceTemplate.template_name, templates),
+            source_module: sourceTemplate.source_module || inferModuleIdFromSourceType(voucherFieldModules, sourceTemplate.source_type),
+            rules: (sourceTemplate.rules || []).map((rule, index) => ({
                 ...rule,
                 rule_id: null,
                 line_no: index + 1
@@ -1365,13 +1478,21 @@ const VoucherTemplates = () => {
     };
 
     const handleDelete = async (id: string) => {
-        if (!confirm('确定要删除这个模板吗？')) return;
-        try {
-            await axios.delete(`${API_BASE}/vouchers/templates/${id}`);
-            fetchTemplates();
-        } catch (err) {
-            alert('删除失败');
-        }
+        openConfirm({
+            title: '删除模板',
+            message: '确定要删除这个模板吗？',
+            confirmText: '删除',
+            intent: 'danger',
+            onConfirm: async () => {
+                try {
+                    await axios.delete(`${API_BASE}/vouchers/templates/${id}`);
+                    showToast('success', '删除成功');
+                    fetchTemplates();
+                } catch (err) {
+                    showToast('error', '删除失败', '请稍后重试');
+                }
+            }
+        });
     };
 
     const handleSave = async () => {
@@ -1638,18 +1759,20 @@ const VoucherTemplates = () => {
                                             />
                                             <button
                                                 type="button"
-                                                className="btn btn-outline"
+                                                className="category-picker-trigger"
                                                 onClick={() => setCategoryPickerOpen(true)}
+                                                title="选择分类"
                                             >
-                                                选择分类
+                                                <Search size={16} />
                                             </button>
                                             {currentTemplate.category_id && (
                                                 <button
                                                     type="button"
-                                                    className="btn btn-ghost"
+                                                    className="category-picker-clear"
                                                     onClick={() => setCurrentTemplate({ ...currentTemplate, category_id: null, category_path: null })}
+                                                    title="清除分类"
                                                 >
-                                                    清除
+                                                    <X size={14} />
                                                 </button>
                                             )}
                                         </div>
@@ -2184,7 +2307,7 @@ const VoucherTemplates = () => {
                                     </div>
                                 </div>
                             </aside>
-                            <div className="templates-main" ref={templatesMainRef}>
+                            <div className="templates-main">
                                 {loadError && (
                                     <div className="save-error-panel" style={{ marginBottom: '1.25rem' }}>
                                         <div className="save-error-title">
@@ -2356,96 +2479,98 @@ const VoucherTemplates = () => {
                                     </div>
                                 </div>
                             </div>
-                            {viewMode === 'card' ? (
-                                <div className="templates-grid">
-                                    {pagedTemplates.map(t => (
-                                        <div
-                                            key={t.template_id}
-                                            className={`template-card glass-card cursor-pointer group ${selectedTemplateIds.has(t.template_id) ? 'selected' : ''}`}
-                                            onClick={() => handleEdit(t)}
-                                        >
-                                            <div className="template-select" onClick={e => e.stopPropagation()}>
-                                                <label>
+                            <div className="templates-list-body" ref={templatesListRef}>
+                                {viewMode === 'card' ? (
+                                    <div className="templates-grid">
+                                        {pagedTemplates.map(t => (
+                                            <div
+                                                key={t.template_id}
+                                                className={`template-card glass-card cursor-pointer group ${selectedTemplateIds.has(t.template_id) ? 'selected' : ''}`}
+                                                onClick={() => handleEdit(t)}
+                                            >
+                                                <div className="template-select" onClick={e => e.stopPropagation()}>
+                                                    <label>
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={selectedTemplateIds.has(t.template_id)}
+                                                            onChange={() => toggleTemplateSelected(t.template_id)}
+                                                        />
+                                                    </label>
+                                                </div>
+                                                <div className="card-badge">{`${t.business_type} · P${t.priority}`}</div>
+                                                <div className="card-content">
+                                                    <h3>{t.template_name}</h3>
+                                                    <p>{t.description || '暂无描述'}</p>
+                                                    <div className="card-stats">
+                                                        <span><Layers size={14} /> {t.rules.length} 条分录规则</span>
+                                                        <span><FileText size={14} /> {t.template_id}</span>
+                                                        <span>分类: {t.category_path || (t.category_id ? categoryPathMap[t.category_id] : '未分类')}</span>
+                                                        <span>{t.active ? '启用' : '停用'}</span>
+                                                    </div>
+                                                </div>
+                                                <div className="card-actions">
+                                                <button onClick={(e) => { e.stopPropagation(); handleCopy(t, { preferServer: true }); }} className="copy-btn"><Copy size={14} />复制</button>
+                                                    <button onClick={(e) => { e.stopPropagation(); handleEdit(t); }} className="edit-btn">编辑</button>
+                                                    <button onClick={(e) => { e.stopPropagation(); handleDelete(t.template_id); }} className="delete-btn"><Trash2 size={16} /></button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="templates-list">
+                                        <div className="templates-list-header">
+                                            <div className="col-check" />
+                                            <div className="col-name">模板</div>
+                                            <div className="col-category">分类</div>
+                                            <div className="col-meta">优先级 / 状态</div>
+                                            <div className="col-actions">操作</div>
+                                        </div>
+                                        {pagedTemplates.map(t => (
+                                            <div
+                                                key={t.template_id}
+                                                className={`templates-list-row ${selectedTemplateIds.has(t.template_id) ? 'selected' : ''}`}
+                                            >
+                                                <div className="col-check">
                                                     <input
                                                         type="checkbox"
                                                         checked={selectedTemplateIds.has(t.template_id)}
                                                         onChange={() => toggleTemplateSelected(t.template_id)}
                                                     />
-                                                </label>
-                                            </div>
-                                            <div className="card-badge">{`${t.business_type} · P${t.priority}`}</div>
-                                            <div className="card-content">
-                                                <h3>{t.template_name}</h3>
-                                                <p>{t.description || '暂无描述'}</p>
-                                                <div className="card-stats">
-                                                    <span><Layers size={14} /> {t.rules.length} 条分录规则</span>
-                                                    <span><FileText size={14} /> {t.template_id}</span>
-                                                    <span>分类: {t.category_path || (t.category_id ? categoryPathMap[t.category_id] : '未分类')}</span>
-                                                    <span>{t.active ? '启用' : '停用'}</span>
+                                                </div>
+                                                <div className="col-name" onClick={() => handleEdit(t)}>
+                                                    <div className="row-title">{t.template_name}</div>
+                                                    <div className="row-sub">
+                                                        <span><FileText size={12} /> {t.template_id}</span>
+                                                        <span><Layers size={12} /> {t.rules.length} 条</span>
+                                                    </div>
+                                                    {t.description && <div className="row-desc">{t.description}</div>}
+                                                </div>
+                                                <div className="col-category">
+                                                    {t.category_path || (t.category_id ? categoryPathMap[t.category_id] : '未分类')}
+                                                </div>
+                                                <div className="col-meta">
+                                                    <span className="meta-pill">P{t.priority}</span>
+                                                    <span className={`status-pill ${t.active ? 'active' : 'inactive'}`}>{t.active ? '启用' : '停用'}</span>
+                                                </div>
+                                                <div className="col-actions">
+                                                <button onClick={() => handleCopy(t, { preferServer: true })} className="copy-btn">复制</button>
+                                                    <button onClick={() => handleEdit(t)} className="edit-btn">编辑</button>
+                                                    <button onClick={() => handleDelete(t.template_id)} className="delete-btn"><Trash2 size={14} /></button>
                                                 </div>
                                             </div>
-                                            <div className="card-actions">
-                                                <button onClick={(e) => { e.stopPropagation(); handleCopy(t); }} className="copy-btn"><Copy size={14} />复制</button>
-                                                <button onClick={(e) => { e.stopPropagation(); handleEdit(t); }} className="edit-btn">编辑</button>
-                                                <button onClick={(e) => { e.stopPropagation(); handleDelete(t.template_id); }} className="delete-btn"><Trash2 size={16} /></button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            ) : (
-                                <div className="templates-list">
-                                    <div className="templates-list-header">
-                                        <div className="col-check" />
-                                        <div className="col-name">模板</div>
-                                        <div className="col-category">分类</div>
-                                        <div className="col-meta">优先级 / 状态</div>
-                                        <div className="col-actions">操作</div>
+                                        ))}
                                     </div>
-                                    {pagedTemplates.map(t => (
-                                        <div
-                                            key={t.template_id}
-                                            className={`templates-list-row ${selectedTemplateIds.has(t.template_id) ? 'selected' : ''}`}
-                                        >
-                                            <div className="col-check">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={selectedTemplateIds.has(t.template_id)}
-                                                    onChange={() => toggleTemplateSelected(t.template_id)}
-                                                />
-                                            </div>
-                                            <div className="col-name" onClick={() => handleEdit(t)}>
-                                                <div className="row-title">{t.template_name}</div>
-                                                <div className="row-sub">
-                                                    <span><FileText size={12} /> {t.template_id}</span>
-                                                    <span><Layers size={12} /> {t.rules.length} 条</span>
-                                                </div>
-                                                {t.description && <div className="row-desc">{t.description}</div>}
-                                            </div>
-                                            <div className="col-category">
-                                                {t.category_path || (t.category_id ? categoryPathMap[t.category_id] : '未分类')}
-                                            </div>
-                                            <div className="col-meta">
-                                                <span className="meta-pill">P{t.priority}</span>
-                                                <span className={`status-pill ${t.active ? 'active' : 'inactive'}`}>{t.active ? '启用' : '停用'}</span>
-                                            </div>
-                                            <div className="col-actions">
-                                                <button onClick={() => handleCopy(t)} className="copy-btn">复制</button>
-                                                <button onClick={() => handleEdit(t)} className="edit-btn">编辑</button>
-                                                <button onClick={() => handleDelete(t.template_id)} className="delete-btn"><Trash2 size={14} /></button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                            {displayedTemplates.length === 0 && !loadError && (
-                                <div className="empty-state">
-                                    <Info size={40} />
-                                    <p>{searchText.trim() ? '未找到匹配的模板' : (categoryFilter === 'all' ? '尚未创建任何模板' : '暂无符合该分类的模板')}</p>
-                                    {categoryFilter === 'all' && !searchText.trim() && (
-                                        <button onClick={handleCreate}>立即创建</button>
-                                    )}
-                                </div>
-                            )}
+                                )}
+                                {displayedTemplates.length === 0 && !loadError && (
+                                    <div className="empty-state">
+                                        <Info size={40} />
+                                        <p>{searchText.trim() ? '未找到匹配的模板' : (categoryFilter === 'all' ? '尚未创建任何模板' : '暂无符合该分类的模板')}</p>
+                                        {categoryFilter === 'all' && !searchText.trim() && (
+                                            <button onClick={handleCreate}>立即创建</button>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
                             {displayedTemplates.length > 0 && (
                                 <div className="templates-pagination">
                                     <div className="page-info">
@@ -2504,6 +2629,17 @@ const VoucherTemplates = () => {
                 </div>
             )}
         </div>
+        <ToastContainer toasts={toasts} removeToast={removeToast} />
+        <ConfirmModal
+            isOpen={confirmState.open}
+            title={confirmState.title}
+            message={confirmState.message}
+            confirmText={confirmState.confirmText}
+            variant={confirmState.intent}
+            loading={confirmState.loading}
+            onConfirm={handleConfirm}
+            onCancel={closeConfirm}
+        />
     </div>
     );
 };

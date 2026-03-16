@@ -189,6 +189,9 @@ export const getBills = async (params?: {
     status?: string;
     charge_items?: string;
     customer_name?: string;
+    bill_id?: string;
+    receipt_id?: string;
+    house_name?: string;
     start_date?: string;
     end_date?: string;
     in_month_start?: string;
