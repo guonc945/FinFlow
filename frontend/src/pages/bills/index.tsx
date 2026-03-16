@@ -315,12 +315,26 @@ const Bills = () => {
 
     const loadProjects = async () => {
         try {
-            const data = await getProjects();
+            const data = await getProjects({ skip: 0, limit: 2000, current_account_book_only: true });
             setProjects(data.items || data);
         } catch (e) {
             console.error('Failed to load projects:', e);
         }
     };
+
+    useEffect(() => {
+        const validProjectIds = new Set(projects.map(project => String(project.proj_id)));
+
+        setSelectedProjectIds(prev => {
+            const next = prev.filter(id => validProjectIds.has(String(id)));
+            return next.length === prev.length ? prev : next;
+        });
+
+        setCommunityFilter(prev => {
+            const next = prev.filter(id => validProjectIds.has(String(id)));
+            return next.length === prev.length ? prev : next;
+        });
+    }, [projects]);
 
     const loadChargeItems = async () => {
         try {

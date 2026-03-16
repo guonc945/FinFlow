@@ -378,7 +378,7 @@ const ReceiptBills = () => {
     }, [closeConfirmModal, showToast]);
 
     const fetchProjects = useCallback(async () => {
-        const resp = await getProjects({ skip: 0, limit: 2000 });
+        const resp = await getProjects({ skip: 0, limit: 2000, current_account_book_only: true });
         setProjects(resp?.items || resp || []);
     }, []);
 
@@ -419,6 +419,14 @@ const ReceiptBills = () => {
     useEffect(() => {
         clearReceiptSelection();
     }, [clearReceiptSelection, searchQuery, communityFilter, payChannelStrFilter, payeeFilter, dealDateStart, dealDateEnd, page, pageSize]);
+
+    useEffect(() => {
+        const validProjectIds = new Set(projects.map(project => String(project.proj_id)));
+        setCommunityFilter(prev => {
+            const next = prev.filter(id => validProjectIds.has(String(id)));
+            return next.length === prev.length ? prev : next;
+        });
+    }, [projects]);
 
     // Close dropdown on outside click
     useEffect(() => {

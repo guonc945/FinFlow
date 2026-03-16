@@ -984,8 +984,10 @@ def sync_charge_items_endpoint(
 # Projects
 @app.get("/api/projects")
 def get_projects(
+    request: Request,
     skip: int = 0, 
     limit: int = 100, 
+    current_account_book_only: bool = Query(False),
     db: Session = Depends(get_db),
     allowed_community_ids: List[int] = Depends(get_allowed_community_ids)
 ):
@@ -994,6 +996,20 @@ def get_projects(
         query = query.filter(models.ProjectList.proj_id.in_(allowed_community_ids))
     else:
         return {"items": [], "total": 0}
+
+    if current_account_book_only:
+        from sqlalchemy import cast, String
+
+        account_book_number = _decode_header_value(request.headers.get("X-Account-Book-Number")) if request else None
+        if not account_book_number:
+            return {"items": [], "total": 0}
+
+        query = query.join(
+            models.KingdeeAccountBook,
+            cast(models.ProjectList.kingdee_account_book_id, String) == cast(models.KingdeeAccountBook.id, String)
+        ).filter(
+            models.KingdeeAccountBook.number == account_book_number
+        )
         
     total = query.count()
     projects = query.options(

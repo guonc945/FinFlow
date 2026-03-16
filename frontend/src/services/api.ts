@@ -169,7 +169,7 @@ export const syncProjects = async () => {
     return response.data;
 };
 
-export const getProjects = async (params?: { skip?: number; limit?: number }) => {
+export const getProjects = async (params?: { skip?: number; limit?: number; current_account_book_only?: boolean }) => {
     const response = await axios.get(`${API_BASE_URL}/projects`, { params });
     return response.data;
 };
