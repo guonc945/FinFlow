@@ -969,7 +969,7 @@ const ReceiptBills = () => {
         },
         { key: 'community_name', title: '园区' },
         { key: 'receipt_id', title: '收据号' },
-        { key: 'id', title: '明细ID' },
+        { key: 'id', title: '缴费ID' },
         { key: 'asset_name', title: '资产/房号' },
         { key: 'payee', title: '收款人' },
         { key: 'payer_name', title: '付款人' },
