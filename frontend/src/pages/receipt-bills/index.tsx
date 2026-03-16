@@ -11,11 +11,24 @@ import {
     ChevronsLeft,
     ChevronsRight,
     FileText,
+    Link2Off,
+    ShieldCheck,
 } from 'lucide-react';
 import DataTable from '../../components/data/DataTable';
-import type { Bill, BillVoucherPushStatus, Project, ReceiptBill } from '../../types';
+import type { Bill, BillVoucherPushStatus, Project, PushStatusSummary, ReceiptBill } from '../../types';
 import '../bills/Bills.css'; // reuse bills styling
-import { getBills, getProjects, getReceiptBills, getReceiptBillSyncStatus, previewBatchVoucherForBills, pushVoucherToKingdee, syncReceiptBills } from '../../services/api';
+import {
+    getBills,
+    getProjects,
+    getReceiptBills,
+    getReceiptBillSyncStatus,
+    previewBatchVoucherForBills,
+    pushVoucherToKingdee,
+    queryVoucherById,
+    resetBillVoucherBinding,
+    syncReceiptBills,
+} from '../../services/api';
+import ConfirmModal from '../../components/common/ConfirmModal';
 import { useToast, ToastContainer } from '../../components/Toast';
 import VoucherPreviewModal from '../../components/common/VoucherPreviewModal';
 
@@ -271,6 +284,23 @@ const ReceiptBills = () => {
     const [selectedReceiptKeys, setSelectedReceiptKeys] = useState<Set<string>>(new Set());
     const [selectedReceiptRefs, setSelectedReceiptRefs] = useState<Map<string, { receipt_bill_id: number; community_id: number }>>(new Map());
     const [selectedReceiptAmounts, setSelectedReceiptAmounts] = useState<Map<string, number>>(new Map());
+    const [confirmModalState, setConfirmModalState] = useState<{
+        isOpen: boolean;
+        title: string;
+        message: string;
+        confirmText: string;
+        cancelText: string;
+        variant: 'primary' | 'danger';
+    }>({
+        isOpen: false,
+        title: '',
+        message: '',
+        confirmText: '确认',
+        cancelText: '取消',
+        variant: 'primary',
+    });
+    const [confirmModalLoading, setConfirmModalLoading] = useState(false);
+    const confirmActionRef = useRef<(() => Promise<void>) | null>(null);
 
     const totalPages = useMemo(() => Math.max(1, Math.ceil(totalRecords / pageSize)), [totalRecords, pageSize]);
     const selectedTotalAmount = useMemo(() => {
@@ -288,7 +318,7 @@ const ReceiptBills = () => {
     }, []);
 
     const buildReceiptSelectionKey = (receiptBillId: string | number, communityId?: number) => `${communityId ?? ''}|${receiptBillId}`;
-    const summarizePushStatuses = (items: BillVoucherPushStatus[]) => items.reduce((acc, item) => {
+    const summarizePushStatuses = (items: Array<Pick<BillVoucherPushStatus, 'push_status'>>): PushStatusSummary => items.reduce((acc, item) => {
         acc.total += 1;
         const statusKey = item.push_status || 'not_pushed';
         if (statusKey in acc) {
@@ -302,6 +332,47 @@ const ReceiptBills = () => {
         success: 0,
         failed: 0,
     });
+    const openConfirmModal = useCallback((opts: {
+        title: string;
+        message: string;
+        confirmText?: string;
+        cancelText?: string;
+        variant?: 'primary' | 'danger';
+        onConfirm: () => Promise<void>;
+    }) => {
+        confirmActionRef.current = opts.onConfirm;
+        setConfirmModalState({
+            isOpen: true,
+            title: opts.title,
+            message: opts.message,
+            confirmText: opts.confirmText || '确认',
+            cancelText: opts.cancelText || '取消',
+            variant: opts.variant || 'primary',
+        });
+    }, []);
+    const closeConfirmModal = useCallback(() => {
+        if (confirmModalLoading) return;
+        confirmActionRef.current = null;
+        setConfirmModalState(prev => ({ ...prev, isOpen: false }));
+    }, [confirmModalLoading]);
+    const handleConfirmModalConfirm = useCallback(async () => {
+        const action = confirmActionRef.current;
+        if (!action) {
+            closeConfirmModal();
+            return;
+        }
+        setConfirmModalLoading(true);
+        try {
+            await action();
+        } catch (err: any) {
+            const msg = err?.response?.data?.detail || err?.response?.data?.message || err?.message || '操作失败';
+            showToast('error', '操作失败', typeof msg === 'string' ? msg : JSON.stringify(msg));
+        } finally {
+            setConfirmModalLoading(false);
+            confirmActionRef.current = null;
+            setConfirmModalState(prev => ({ ...prev, isOpen: false }));
+        }
+    }, [closeConfirmModal, showToast]);
 
     const fetchProjects = useCallback(async () => {
         const resp = await getProjects({ skip: 0, limit: 2000 });
@@ -444,14 +515,14 @@ const ReceiptBills = () => {
         await loadRelatedBills(receiptBill, 1, 25);
     }, [loadRelatedBills]);
 
-    const fetchRelatedBillRefsForReceipt = useCallback(async (receiptBillIdRaw: string | number, communityIdRaw: number) => {
+    const fetchRelatedBillsForReceipt = useCallback(async (receiptBillIdRaw: string | number, communityIdRaw: number) => {
         const dealLogId = Number(receiptBillIdRaw);
         const communityId = Number(communityIdRaw);
         if (!Number.isFinite(dealLogId) || !Number.isFinite(communityId)) return [];
 
         const limit = 200;
         const maxLoops = 50; // safety cap
-        const refs: Array<{ bill_id: number; community_id: number }> = [];
+        const relatedBills: Bill[] = [];
         const seen = new Set<string>();
 
         let skip = 0;
@@ -474,16 +545,79 @@ const ReceiptBills = () => {
                 const key = `${billCommunityId}|${billId}`;
                 if (seen.has(key)) continue;
                 seen.add(key);
-                refs.push({ bill_id: billId, community_id: billCommunityId });
+                relatedBills.push(bill);
             }
 
             skip += rows.length;
             if (rows.length === 0) break;
-            if (Number.isFinite(expectedTotal) && refs.length >= expectedTotal) break;
+            if (Number.isFinite(expectedTotal) && relatedBills.length >= expectedTotal) break;
             if (skip >= expectedTotal) break;
         }
 
+        return relatedBills;
+    }, []);
+    const buildBillRefsFromBills = useCallback((billsToConvert: Bill[]) => {
+        const refs: Array<{ bill_id: number; community_id: number }> = [];
+        const seen = new Set<string>();
+        for (const bill of billsToConvert) {
+            const billId = Number(bill.id);
+            const communityId = Number(bill.community_id);
+            if (!Number.isFinite(billId) || !Number.isFinite(communityId)) continue;
+            const key = `${communityId}|${billId}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            refs.push({ bill_id: billId, community_id: communityId });
+        }
         return refs;
+    }, []);
+    const collectRelatedBillsForReceipts = useCallback(async (receipts: Array<{ receipt_bill_id: number; community_id: number }>) => {
+        const allBills: Bill[] = [];
+        const seen = new Set<string>();
+        let missingCount = 0;
+
+        for (const receipt of receipts) {
+            const billsForReceipt = await fetchRelatedBillsForReceipt(receipt.receipt_bill_id, receipt.community_id);
+            if (!billsForReceipt.length) {
+                missingCount += 1;
+                continue;
+            }
+            for (const bill of billsForReceipt) {
+                const billId = Number(bill.id);
+                const communityId = Number(bill.community_id);
+                if (!Number.isFinite(billId) || !Number.isFinite(communityId)) continue;
+                const key = `${communityId}|${billId}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                allBills.push(bill);
+            }
+        }
+
+        return { bills: allBills, missingCount };
+    }, [fetchRelatedBillsForReceipt]);
+    const verifyBillsForReset = useCallback(async (successBills: Bill[]) => {
+        const resetTargets: Array<{ bill_id: number; community_id: number }> = [];
+        let existsCount = 0;
+        let queryFailed = 0;
+
+        for (const bill of successBills) {
+            if (!bill.voucher_id) {
+                resetTargets.push({ bill_id: Number(bill.id), community_id: Number(bill.community_id) });
+                continue;
+            }
+            try {
+                const queryResult = await queryVoucherById(String(bill.voucher_id));
+                if (queryResult?.exists) {
+                    existsCount += 1;
+                } else {
+                    resetTargets.push({ bill_id: Number(bill.id), community_id: Number(bill.community_id) });
+                }
+            } catch {
+                queryFailed += 1;
+                resetTargets.push({ bill_id: Number(bill.id), community_id: Number(bill.community_id) });
+            }
+        }
+
+        return { resetTargets, existsCount, queryFailed };
     }, []);
 
     const notifySkippedBills = useCallback((skippedBills: any[]) => {
@@ -513,7 +647,8 @@ const ReceiptBills = () => {
     const handlePreviewVoucherForReceipt = useCallback(async (receipt: { id: string | number; community_id: number }) => {
         setVoucherPreview({ isOpen: true, data: null, isLoading: true, error: null });
         try {
-            const refs = await fetchRelatedBillRefsForReceipt(receipt.id, receipt.community_id);
+            const relatedBillsForReceipt = await fetchRelatedBillsForReceipt(receipt.id, receipt.community_id);
+            const refs = buildBillRefsFromBills(relatedBillsForReceipt);
             if (!refs.length) {
                 setVoucherPreview({ isOpen: false, data: null, isLoading: false, error: null });
                 showToast('info', '提示', '当前收款单下没有关联的运营账单，无法预览凭证');
@@ -529,7 +664,7 @@ const ReceiptBills = () => {
                 error: err?.response?.data?.detail || err?.message || '预览失败'
             });
         }
-    }, [fetchRelatedBillRefsForReceipt, notifySkippedBills, showToast]);
+    }, [buildBillRefsFromBills, fetchRelatedBillsForReceipt, notifySkippedBills, showToast]);
 
     const handlePreviewBatchVoucher = useCallback(async () => {
         const receipts = Array.from(selectedReceiptRefs.values());
@@ -540,23 +675,8 @@ const ReceiptBills = () => {
 
         setVoucherPreview({ isOpen: true, data: null, isLoading: true, error: null });
         try {
-            const allRefs: Array<{ bill_id: number; community_id: number }> = [];
-            const seen = new Set<string>();
-            let missingCount = 0;
-
-            for (const receipt of receipts) {
-                const refs = await fetchRelatedBillRefsForReceipt(receipt.receipt_bill_id, receipt.community_id);
-                if (!refs.length) {
-                    missingCount += 1;
-                    continue;
-                }
-                for (const r of refs) {
-                    const key = `${r.community_id}|${r.bill_id}`;
-                    if (seen.has(key)) continue;
-                    seen.add(key);
-                    allRefs.push(r);
-                }
-            }
+            const { bills: relatedBillsForSelection, missingCount } = await collectRelatedBillsForReceipts(receipts);
+            const allRefs = buildBillRefsFromBills(relatedBillsForSelection);
 
             if (!allRefs.length) {
                 setVoucherPreview({ isOpen: false, data: null, isLoading: false, error: null });
@@ -576,7 +696,7 @@ const ReceiptBills = () => {
                 error: err?.response?.data?.detail || err?.message || '预览失败'
             });
         }
-    }, [fetchRelatedBillRefsForReceipt, notifySkippedBills, selectedReceiptRefs, showToast]);
+    }, [buildBillRefsFromBills, collectRelatedBillsForReceipts, notifySkippedBills, selectedReceiptRefs, showToast]);
 
     const handlePushVoucher = useCallback(async (kingdeeJson: any) => {
         try {
@@ -627,6 +747,149 @@ const ReceiptBills = () => {
             throw err;
         }
     }, [fetchReceiptBills, showToast, summarizePushStatuses, voucherPreview.data]);
+    const refreshReceiptViews = useCallback(async () => {
+        await fetchReceiptBills();
+        if (relatedBillsOpen && relatedReceiptBill) {
+            await loadRelatedBills(relatedReceiptBill, relatedBillsPage, relatedBillsPageSize);
+        }
+    }, [fetchReceiptBills, loadRelatedBills, relatedBillsOpen, relatedBillsPage, relatedBillsPageSize, relatedReceiptBill]);
+    const getReceiptPushSummary = useCallback((receipt: ReceiptBill): PushStatusSummary => (
+        receipt.related_bill_push_summary || summarizePushStatuses([])
+    ), [summarizePushStatuses]);
+    const handleVerifyReceipt = useCallback(async (receipt: ReceiptBill) => {
+        const summary = getReceiptPushSummary(receipt);
+        if ((summary.success || 0) === 0) {
+            showToast('info', '提示', '当前收款单下没有已推送成功的运营账单');
+            return;
+        }
+
+        openConfirmModal({
+            title: '推送校验',
+            message: `将校验该收款单关联的 ${summary.success} 条已推送运营账单，确认继续吗？`,
+            confirmText: '开始校验',
+            variant: 'primary',
+            onConfirm: async () => {
+                const relatedBillsForReceipt = await fetchRelatedBillsForReceipt(receipt.id, receipt.community_id);
+                const successBills = relatedBillsForReceipt.filter(b => (b.push_status || '') === 'success');
+                if (!successBills.length) {
+                    showToast('info', '提示', '当前收款单下没有已推送成功的运营账单');
+                    return;
+                }
+                const { resetTargets, existsCount, queryFailed } = await verifyBillsForReset(successBills);
+                showToast(
+                    'success',
+                    '校验完成',
+                    `可解除 ${resetTargets.length} 条，金蝶仍存在 ${existsCount} 条，校验失败 ${queryFailed} 条`,
+                );
+            },
+        });
+    }, [fetchRelatedBillsForReceipt, getReceiptPushSummary, openConfirmModal, showToast, verifyBillsForReset]);
+    const handleResetReceiptBinding = useCallback(async (receipt: ReceiptBill) => {
+        const summary = getReceiptPushSummary(receipt);
+        if ((summary.success || 0) === 0) {
+            showToast('info', '提示', '当前收款单下没有可解除绑定的已推送记录');
+            return;
+        }
+
+        openConfirmModal({
+            title: '确认解除',
+            message: `将先校验金蝶凭证是否仍然存在，仅解除可解除的记录（共 ${summary.success} 条已推送运营账单）。继续吗？`,
+            confirmText: '确认解除',
+            variant: 'danger',
+            onConfirm: async () => {
+                const relatedBillsForReceipt = await fetchRelatedBillsForReceipt(receipt.id, receipt.community_id);
+                const successBills = relatedBillsForReceipt.filter(b => (b.push_status || '') === 'success');
+                if (!successBills.length) {
+                    showToast('info', '提示', '当前收款单下没有可解除绑定的已推送记录');
+                    return;
+                }
+                const { resetTargets, existsCount, queryFailed } = await verifyBillsForReset(successBills);
+                if (resetTargets.length === 0) {
+                    showToast('info', '提示', '金蝶凭证仍存在，暂无可解除记录');
+                    return;
+                }
+                const result = await resetBillVoucherBinding(resetTargets, 'receipt_bill_reset');
+                if (!result?.success) {
+                    showToast('error', '解除失败', '服务端未返回成功结果');
+                    return;
+                }
+                showToast(
+                    'success',
+                    '解除完成',
+                    `已解除 ${resetTargets.length} 条，金蝶仍存在 ${existsCount} 条，校验失败 ${queryFailed} 条`,
+                );
+                await refreshReceiptViews();
+            },
+        });
+    }, [fetchRelatedBillsForReceipt, getReceiptPushSummary, openConfirmModal, refreshReceiptViews, showToast, verifyBillsForReset]);
+    const handleBatchVerify = useCallback(async () => {
+        const receipts = Array.from(selectedReceiptRefs.values());
+        if (receipts.length === 0) {
+            showToast('info', '提示', '请先选择收款账单');
+            return;
+        }
+
+        openConfirmModal({
+            title: '批量推送校验',
+            message: `将校验所选 ${receipts.length} 条收款单关联的已推送运营账单，确认继续吗？`,
+            confirmText: '开始校验',
+            variant: 'primary',
+            onConfirm: async () => {
+                const { bills: relatedBillsForSelection, missingCount } = await collectRelatedBillsForReceipts(receipts);
+                const successBills = relatedBillsForSelection.filter(b => (b.push_status || '') === 'success');
+                if (!successBills.length) {
+                    showToast('info', '提示', '所选收款单下没有已推送成功的运营账单');
+                    return;
+                }
+                const { resetTargets, existsCount, queryFailed } = await verifyBillsForReset(successBills);
+                const missingNotice = missingCount > 0 ? `，另有 ${missingCount} 条收款单未关联运营账单` : '';
+                showToast(
+                    'success',
+                    '校验完成',
+                    `可解除 ${resetTargets.length} 条，金蝶仍存在 ${existsCount} 条，校验失败 ${queryFailed} 条${missingNotice}`,
+                );
+            },
+        });
+    }, [collectRelatedBillsForReceipts, openConfirmModal, selectedReceiptRefs, showToast, verifyBillsForReset]);
+    const handleBatchReset = useCallback(async () => {
+        const receipts = Array.from(selectedReceiptRefs.values());
+        if (receipts.length === 0) {
+            showToast('info', '提示', '请先选择收款账单');
+            return;
+        }
+
+        openConfirmModal({
+            title: '批量解除绑定',
+            message: `将先校验金蝶凭证是否存在，仅解除可解除记录（共 ${receipts.length} 条收款单）。继续吗？`,
+            confirmText: '确认解除',
+            variant: 'danger',
+            onConfirm: async () => {
+                const { bills: relatedBillsForSelection, missingCount } = await collectRelatedBillsForReceipts(receipts);
+                const successBills = relatedBillsForSelection.filter(b => (b.push_status || '') === 'success');
+                if (!successBills.length) {
+                    showToast('info', '提示', '所选收款单下没有可解除绑定的已推送记录');
+                    return;
+                }
+                const { resetTargets, existsCount, queryFailed } = await verifyBillsForReset(successBills);
+                if (resetTargets.length === 0) {
+                    showToast('info', '提示', '金蝶凭证仍存在，暂无可解除记录');
+                    return;
+                }
+                const result = await resetBillVoucherBinding(resetTargets, 'receipt_bill_batch_reset');
+                if (!result?.success) {
+                    showToast('error', '批量解除失败', '服务端未返回成功结果');
+                    return;
+                }
+                const missingNotice = missingCount > 0 ? `，另有 ${missingCount} 条收款单未关联运营账单` : '';
+                showToast(
+                    'success',
+                    '批量解除完成',
+                    `已解除 ${resetTargets.length} 条，金蝶仍存在 ${existsCount} 条，校验失败 ${queryFailed} 条${missingNotice}`,
+                );
+                await refreshReceiptViews();
+            },
+        });
+    }, [collectRelatedBillsForReceipts, openConfirmModal, refreshReceiptViews, selectedReceiptRefs, showToast, verifyBillsForReset]);
 
     const columns = [
         {
@@ -714,6 +977,62 @@ const ReceiptBills = () => {
             title: '账单金额',
             render: (v: any) => `¥${Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
         },
+        {
+            key: 'push_status_label',
+            title: '凭证状态',
+            width: 180,
+            render: (_: any, record: ReceiptBill) => {
+                const summary = getReceiptPushSummary(record);
+                const status = record.push_status || (summary.total > 0 ? 'not_pushed' : 'unbound');
+                const colorMap: Record<string, { bg: string; color: string; border: string }> = {
+                    unbound: { bg: '#f8fafc', color: '#64748b', border: '#e2e8f0' },
+                    not_pushed: { bg: '#f8fafc', color: '#64748b', border: '#e2e8f0' },
+                    pushing: { bg: '#eff6ff', color: '#2563eb', border: '#bfdbfe' },
+                    success: { bg: '#ecfdf5', color: '#059669', border: '#a7f3d0' },
+                    failed: { bg: '#fef2f2', color: '#dc2626', border: '#fecaca' },
+                    partial: { bg: '#fff7ed', color: '#c2410c', border: '#fdba74' },
+                };
+                const style = colorMap[status] || colorMap.not_pushed;
+                return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                        <span style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            width: 'fit-content',
+                            padding: '0.2rem 0.5rem',
+                            borderRadius: '999px',
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            background: style.bg,
+                            color: style.color,
+                            border: `1px solid ${style.border}`,
+                        }}>
+                            {record.push_status_label || '未推送'}
+                        </span>
+                        <span className="text-secondary text-xs">
+                            关联 {record.related_bill_count || 0} 条 / 已推送 {summary.success || 0} 条
+                        </span>
+                    </div>
+                );
+            },
+        },
+        {
+            key: 'voucher_number',
+            title: '金蝶凭证',
+            width: 150,
+            render: (_: any, record: ReceiptBill) => (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.125rem' }}>
+                    <span style={{ fontWeight: 600, color: record.voucher_number ? '#0f172a' : '#94a3b8' }}>
+                        {record.voucher_number || '-'}
+                    </span>
+                    {record.pushed_at && (
+                        <span className="text-secondary text-xs">
+                            {new Date(record.pushed_at).toLocaleString()}
+                        </span>
+                    )}
+                </div>
+            ),
+        },
         { key: 'pay_channel_str', title: '收款渠道' },
         {
             key: 'deal_time',
@@ -730,8 +1049,9 @@ const ReceiptBills = () => {
             title: '操作',
             fixed: 'right' as const,
             className: 'dt-sticky-right',
+            width: 260,
             render: (_: any, record: ReceiptBill) => (
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
                     <button
                         className="btn-outline"
                         style={{ height: '30px', padding: '0 0.75rem' }}
@@ -742,6 +1062,41 @@ const ReceiptBills = () => {
                         title="预览凭证（按当前收款单关联账单生成）"
                     >
                         <FileText size={14} /> 凭证
+                    </button>
+                    <button
+                        className="btn-outline"
+                        style={{
+                            height: '30px',
+                            padding: '0 0.75rem',
+                            opacity: (getReceiptPushSummary(record).success || 0) > 0 ? 1 : 0.5,
+                            cursor: (getReceiptPushSummary(record).success || 0) > 0 ? 'pointer' : 'not-allowed',
+                        }}
+                        disabled={(getReceiptPushSummary(record).success || 0) === 0}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            void handleVerifyReceipt(record);
+                        }}
+                        title={(getReceiptPushSummary(record).success || 0) === 0 ? '当前收款单下没有已推送记录' : '校验金蝶凭证是否仍然存在'}
+                    >
+                        <ShieldCheck size={14} /> 校验
+                    </button>
+                    <button
+                        className="btn-outline"
+                        style={{
+                            height: '30px',
+                            padding: '0 0.75rem',
+                            color: '#ea580c',
+                            opacity: (getReceiptPushSummary(record).success || 0) > 0 ? 1 : 0.5,
+                            cursor: (getReceiptPushSummary(record).success || 0) > 0 ? 'pointer' : 'not-allowed',
+                        }}
+                        disabled={(getReceiptPushSummary(record).success || 0) === 0}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            void handleResetReceiptBinding(record);
+                        }}
+                        title={(getReceiptPushSummary(record).success || 0) === 0 ? '当前收款单下没有可解除记录' : '校验后解除本地绑定状态'}
+                    >
+                        <Link2Off size={14} /> 解除
                     </button>
                     <button
                         className="btn-outline"
@@ -758,6 +1113,10 @@ const ReceiptBills = () => {
             )
         },
     ];
+    const selectedReceipts = items.filter(r => selectedReceiptKeys.has(buildReceiptSelectionKey(r.id, r.community_id)));
+    const selectedSuccessCount = selectedReceipts.reduce((acc, receipt) => acc + Number(getReceiptPushSummary(receipt).success || 0), 0);
+    const canBatchVerify = selectedReceiptRefs.size > 0 && selectedSuccessCount > 0;
+    const canBatchReset = selectedReceiptRefs.size > 0 && selectedSuccessCount > 0;
 
     return (
         <div className="page-container">
@@ -860,6 +1219,36 @@ const ReceiptBills = () => {
                                 <FileText size={14} /> 批量凭证预览
                             </button>
 
+                            <button
+                                className={`btn-outline btn-batch-check ${!canBatchVerify ? 'disabled' : ''}`}
+                                onClick={handleBatchVerify}
+                                disabled={!canBatchVerify}
+                                title={
+                                    selectedReceiptRefs.size === 0
+                                        ? '请先勾选收款账单'
+                                        : selectedSuccessCount === 0
+                                            ? '所选收款单下没有已推送记录'
+                                            : '批量校验金蝶凭证是否仍然存在'
+                                }
+                            >
+                                <ShieldCheck size={14} /> 批量校验
+                            </button>
+
+                            <button
+                                className={`btn-outline btn-batch-reset ${!canBatchReset ? 'disabled' : ''}`}
+                                onClick={handleBatchReset}
+                                disabled={!canBatchReset}
+                                title={
+                                    selectedReceiptRefs.size === 0
+                                        ? '请先勾选收款账单'
+                                        : selectedSuccessCount === 0
+                                            ? '所选收款单下没有可解除记录'
+                                            : '校验后批量解除本地绑定状态'
+                                }
+                            >
+                                <Link2Off size={14} /> 批量解除
+                            </button>
+
                             <button className="btn-outline" style={{ color: '#ef4444' }} onClick={() => {
                                 setSearchQuery('');
                                 setCommunityFilter([]);
@@ -895,6 +1284,8 @@ const ReceiptBills = () => {
                                         ¥{selectedTotalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                     </strong>
                                 </span>
+                                <span className="text-secondary">|</span>
+                                <span>已推送运营账单 {selectedSuccessCount} 条</span>
                             </>
                         )}
                     </div>
@@ -962,6 +1353,18 @@ const ReceiptBills = () => {
                 isLoading={voucherPreview.isLoading}
                 error={voucherPreview.error}
                 onPushVoucher={handlePushVoucher}
+            />
+
+            <ConfirmModal
+                isOpen={confirmModalState.isOpen}
+                title={confirmModalState.title}
+                message={confirmModalState.message}
+                confirmText={confirmModalState.confirmText}
+                cancelText={confirmModalState.cancelText}
+                variant={confirmModalState.variant}
+                loading={confirmModalLoading}
+                onCancel={closeConfirmModal}
+                onConfirm={handleConfirmModalConfirm}
             />
 
             <ToastContainer toasts={toasts} removeToast={removeToast} />

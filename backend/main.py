@@ -351,6 +351,152 @@ def _summarize_bill_push_statuses(statuses: List[Dict[str, Any]]) -> Dict[str, i
     return summary
 
 
+def _get_related_bill_refs_for_receipts(
+    db: Session,
+    receipts: Optional[List[Any]],
+) -> Dict[tuple, List[Dict[str, int]]]:
+    normalized_receipts: List[Dict[str, int]] = []
+    seen = set()
+
+    for ref in receipts or []:
+        if isinstance(ref, dict):
+            receipt_bill_id = ref.get("receipt_bill_id", ref.get("id"))
+            community_id = ref.get("community_id")
+        else:
+            receipt_bill_id = getattr(ref, "receipt_bill_id", getattr(ref, "id", None))
+            community_id = getattr(ref, "community_id", None)
+
+        if receipt_bill_id is None or community_id is None:
+            continue
+
+        key = (int(receipt_bill_id), int(community_id))
+        if key in seen:
+            continue
+
+        seen.add(key)
+        normalized_receipts.append({
+            "receipt_bill_id": int(receipt_bill_id),
+            "community_id": int(community_id),
+        })
+
+    result_map: Dict[tuple, List[Dict[str, int]]] = {
+        (ref["receipt_bill_id"], ref["community_id"]): []
+        for ref in normalized_receipts
+    }
+    if not normalized_receipts:
+        return result_map
+
+    conditions = [
+        and_(
+            models.Bill.deal_log_id == ref["receipt_bill_id"],
+            models.Bill.community_id == ref["community_id"],
+        )
+        for ref in normalized_receipts
+    ]
+    rows = db.query(
+        models.Bill.id.label("bill_id"),
+        models.Bill.community_id.label("community_id"),
+        models.Bill.deal_log_id.label("receipt_bill_id"),
+    ).filter(or_(*conditions)).all()
+
+    for row in rows:
+        if row.receipt_bill_id is None:
+            continue
+        key = (int(row.receipt_bill_id), int(row.community_id))
+        result_map.setdefault(key, []).append({
+            "bill_id": int(row.bill_id),
+            "community_id": int(row.community_id),
+        })
+
+    return result_map
+
+
+def _aggregate_receipt_bill_push_status(statuses: List[Dict[str, Any]]) -> Dict[str, Any]:
+    related_bill_count = len(statuses)
+    summary = _summarize_bill_push_statuses(statuses)
+
+    if related_bill_count == 0:
+        push_status = "unbound"
+        push_status_label = "未关联运营账单"
+    elif summary["pushing"] > 0:
+        push_status = "pushing"
+        push_status_label = "推送中"
+    elif summary["success"] == related_bill_count:
+        push_status = "success"
+        push_status_label = "已推送"
+    elif summary["failed"] == related_bill_count:
+        push_status = "failed"
+        push_status_label = "推送失败"
+    elif summary["success"] > 0:
+        push_status = "partial"
+        push_status_label = "部分已推送"
+    elif summary["failed"] > 0:
+        push_status = "partial"
+        push_status_label = "部分失败"
+    else:
+        push_status = "not_pushed"
+        push_status_label = "未推送"
+
+    successful_statuses = [
+        item for item in statuses
+        if (item.get("push_status") or "").strip() == "success"
+    ]
+
+    def _unique_nonempty_values(items: List[Dict[str, Any]], key: str) -> List[str]:
+        values = {
+            str(item.get(key) or "").strip()
+            for item in items
+            if str(item.get(key) or "").strip()
+        }
+        return sorted(values)
+
+    voucher_numbers = _unique_nonempty_values(successful_statuses, "voucher_number")
+    voucher_ids = _unique_nonempty_values(successful_statuses, "voucher_id")
+    push_batch_nos = _unique_nonempty_values(successful_statuses, "push_batch_no")
+    account_book_numbers = _unique_nonempty_values(successful_statuses, "account_book_number")
+
+    pushed_times = [
+        item.get("pushed_at")
+        for item in successful_statuses
+        if isinstance(item.get("pushed_at"), datetime)
+    ]
+    pushed_at = max(pushed_times) if pushed_times else None
+
+    latest_message = next(
+        (
+            str(item.get("message") or "").strip()
+            for item in sorted(
+                statuses,
+                key=lambda current: current.get("pushed_at") or datetime.min,
+                reverse=True,
+            )
+            if str(item.get("message") or "").strip()
+        ),
+        None,
+    )
+
+    voucher_number: Optional[str]
+    if len(voucher_numbers) == 1:
+        voucher_number = voucher_numbers[0]
+    elif len(voucher_numbers) > 1:
+        voucher_number = f"多张凭证({len(voucher_numbers)})"
+    else:
+        voucher_number = None
+
+    return {
+        "related_bill_count": related_bill_count,
+        "related_bill_push_summary": summary,
+        "push_status": push_status,
+        "push_status_label": push_status_label,
+        "push_batch_no": push_batch_nos[0] if len(push_batch_nos) == 1 else None,
+        "voucher_number": voucher_number,
+        "voucher_id": voucher_ids[0] if len(voucher_ids) == 1 else None,
+        "pushed_at": pushed_at,
+        "message": latest_message,
+        "account_book_number": account_book_numbers[0] if len(account_book_numbers) == 1 else None,
+    }
+
+
 def _find_bill_push_conflicts(statuses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return [
         item for item in statuses
@@ -1608,6 +1754,7 @@ def get_receipt_bills(
     payee: Optional[str] = None,
     skip: int = 0,
     limit: int = 25,
+    x_account_book_number: Optional[str] = Header(None, alias="X-Account-Book-Number"),
     db: Session = Depends(get_db),
     allowed_community_ids: List[int] = Depends(get_allowed_community_ids),
 ):
@@ -1693,31 +1840,66 @@ def get_receipt_bills(
         .all()
     )
 
+    receipt_refs = [
+        {"receipt_bill_id": int(rb.id), "community_id": int(rb.community_id)}
+        for rb, _, _ in results
+    ]
+    related_bill_map = _get_related_bill_refs_for_receipts(db, receipt_refs)
+
+    flat_bill_refs: List[Dict[str, int]] = []
+    seen_bill_keys = set()
+    for refs in related_bill_map.values():
+        for ref in refs:
+            key = (ref["bill_id"], ref["community_id"])
+            if key in seen_bill_keys:
+                continue
+            seen_bill_keys.add(key)
+            flat_bill_refs.append(ref)
+
+    bill_status_map = _get_bill_push_status_map(
+        db,
+        flat_bill_refs,
+        account_book_number=_decode_header_value(x_account_book_number) or None,
+    )
+
+    items = []
+    for rb, proj_name, payer_name in results:
+        receipt_key = (int(rb.id), int(rb.community_id))
+        related_refs = related_bill_map.get(receipt_key, [])
+        related_statuses = [
+            bill_status_map.get(
+                (ref["bill_id"], ref["community_id"]),
+                _build_bill_push_status_entry(ref["bill_id"], ref["community_id"]),
+            )
+            for ref in related_refs
+        ]
+        receipt_push_status = _aggregate_receipt_bill_push_status(related_statuses)
+
+        items.append({
+            "id": rb.id,
+            "community_id": rb.community_id,
+            "community_name": proj_name or f"园区 {rb.community_id}",
+            "receipt_id": rb.receipt_id,
+            "asset_name": rb.asset_name,
+            "payee": rb.payee,
+            "payer_name": payer_name or "",
+            "income_amount": float(rb.income_amount) if rb.income_amount else 0,
+            "amount": float(rb.amount) if rb.amount else 0,
+            "bill_amount": float(rb.bill_amount) if rb.bill_amount else 0,
+            "discount_amount": float(rb.discount_amount) if rb.discount_amount else 0,
+            "late_money_amount": float(rb.late_money_amount) if rb.late_money_amount else 0,
+            "deposit_amount": float(rb.deposit_amount) if rb.deposit_amount else 0,
+            "pay_channel_str": rb.pay_channel_str,
+            "deal_time": rb.deal_time,
+            "deal_date": rb.deal_date,
+            "deal_type": rb.deal_type,
+            **receipt_push_status,
+        })
+
     return {
         "total": total,
         "total_income_amount": float(total_income) if total_income else 0.00,
-        "items": [
-            {
-                "id": rb.id,
-                "community_id": rb.community_id,
-                "community_name": proj_name or f"园区 {rb.community_id}",
-                "receipt_id": rb.receipt_id,
-                "asset_name": rb.asset_name,
-                "payee": rb.payee,
-                "payer_name": payer_name or "",
-                "income_amount": float(rb.income_amount) if rb.income_amount else 0,
-                "amount": float(rb.amount) if rb.amount else 0,
-                "bill_amount": float(rb.bill_amount) if rb.bill_amount else 0,
-                "discount_amount": float(rb.discount_amount) if rb.discount_amount else 0,
-                "late_money_amount": float(rb.late_money_amount) if rb.late_money_amount else 0,
-                "deposit_amount": float(rb.deposit_amount) if rb.deposit_amount else 0,
-                "pay_channel_str": rb.pay_channel_str,
-                "deal_time": rb.deal_time,
-                "deal_date": rb.deal_date,
-                "deal_type": rb.deal_type,
-            }
-            for rb, proj_name, payer_name in results
-        ],
+        "items": items,
     }
 
 

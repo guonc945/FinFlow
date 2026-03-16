@@ -10,15 +10,12 @@ import {
     ChevronRight,
     ChevronsLeft,
     ChevronsRight,
-    ChevronUp,
-    Link2Off,
-    ShieldCheck
+    ChevronUp
 } from 'lucide-react';
 import DataTable from '../../components/data/DataTable';
 import type { Bill, Project } from '../../types';
 import './Bills.css';
-import { syncBills, getProjects, getSyncStatus, getBills, getBillChargeItems, resetBillVoucherBinding, queryVoucherById } from '../../services/api';
-import ConfirmModal from '../../components/common/ConfirmModal';
+import { syncBills, getProjects, getSyncStatus, getBills, getBillChargeItems } from '../../services/api';
 import { useToast, ToastContainer } from '../../components/Toast';
 import { useLocation } from 'react-router-dom';
 
@@ -251,241 +248,7 @@ const Bills = () => {
     });
     const pollingTimer = useRef<any>(null);
 
-    // Confirm Modal (replace browser alert/confirm for critical actions)
-    const confirmActionRef = useRef<null | (() => Promise<void> | void)>(null);
-    const [confirmModalState, setConfirmModalState] = useState<{
-        isOpen: boolean;
-        title: string;
-        message: string;
-        confirmText: string;
-        cancelText: string;
-        variant: 'primary' | 'danger';
-        showAlsoResetToggle: boolean;
-    }>({
-        isOpen: false,
-        title: '',
-        message: '',
-        confirmText: '确定',
-        cancelText: '取消',
-        variant: 'primary',
-        showAlsoResetToggle: false,
-    });
-    const [confirmModalLoading, setConfirmModalLoading] = useState(false);
-
-    const [batchVerifyAlsoReset, setBatchVerifyAlsoReset] = useState(false);
-    const batchVerifyAlsoResetRef = useRef(false);
-    useEffect(() => {
-        batchVerifyAlsoResetRef.current = batchVerifyAlsoReset;
-    }, [batchVerifyAlsoReset]);
-
-    const openConfirmModal = useCallback((opts: {
-        title: string;
-        message: string;
-        confirmText?: string;
-        cancelText?: string;
-        variant?: 'primary' | 'danger';
-        showAlsoResetToggle?: boolean;
-        onConfirm: () => Promise<void> | void;
-    }) => {
-        confirmActionRef.current = opts.onConfirm;
-        setConfirmModalState({
-            isOpen: true,
-            title: opts.title,
-            message: opts.message,
-            confirmText: opts.confirmText || '确定',
-            cancelText: opts.cancelText || '取消',
-            variant: opts.variant || 'primary',
-            showAlsoResetToggle: !!opts.showAlsoResetToggle,
-        });
-    }, []);
-
-    const closeConfirmModal = useCallback(() => {
-        if (confirmModalLoading) return;
-        confirmActionRef.current = null;
-        setConfirmModalState(prev => ({ ...prev, isOpen: false, showAlsoResetToggle: false }));
-    }, [confirmModalLoading]);
-
-    const handleConfirmModalConfirm = useCallback(async () => {
-        const action = confirmActionRef.current;
-        if (!action) {
-            closeConfirmModal();
-            return;
-        }
-        setConfirmModalLoading(true);
-        try {
-            await action();
-        } catch (err: any) {
-            const msg = err?.response?.data?.detail || err?.response?.data?.message || err?.message || '操作失败';
-            showToast('error', '操作失败', typeof msg === 'string' ? msg : JSON.stringify(msg));
-        } finally {
-            setConfirmModalLoading(false);
-            confirmActionRef.current = null;
-            setConfirmModalState(prev => ({ ...prev, isOpen: false, showAlsoResetToggle: false }));
-        }
-    }, [closeConfirmModal, showToast]);
-
     const buildBillSelectionKey = (billId: string | number, communityId?: number) => `${communityId ?? ''}|${billId}`;
-
-    const handleResetVoucherBinding = async (billId: number, communityId?: number) => {
-        if (!Number.isFinite(billId) || !Number.isFinite(Number(communityId))) {
-            showToast('error', '解除失败', '缺少账单ID或园区ID');
-            return;
-        }
-        let voucherExists = false;
-        try {
-            const voucherId = bills.find(b => Number(b.id) === Number(billId) && Number(b.community_id) === Number(communityId))?.voucher_id;
-            if (voucherId) {
-                const queryResult = await queryVoucherById(String(voucherId));
-                voucherExists = !!queryResult?.exists;
-            }
-        } catch (err) {
-            showToast('info', '提示', '凭证存在性校验失败，将继续执行解除。');
-        }
-        if (voucherExists) {
-            showToast('error', '无法解除', '金蝶凭证仍存在，请先在金蝶删除后再解除。');
-            return;
-        }
-        openConfirmModal({
-            title: '确认解除',
-            message: '确定解除该账单的凭证关联状态并允许重新推送吗？\n注意：此操作不会删除金蝶系统中的凭证，仅重置本系统状态。',
-            confirmText: '确定解除',
-            cancelText: '取消',
-            variant: 'danger',
-            onConfirm: async () => {
-                const result = await resetBillVoucherBinding([{
-                    bill_id: Number(billId),
-                    community_id: Number(communityId),
-                }], 'manual_reset');
-                if (result?.success) {
-                    showToast('success', '已解除', '已重置推送状态，可重新推送凭证');
-                    await fetchBillsList();
-                } else {
-                    showToast('error', '解除失败', '服务端返回失败');
-                }
-            }
-        });
-    };
-
-    const verifyBillsForReset = async (successBills: Bill[]) => {
-        const resetTargets: Array<{ bill_id: number; community_id: number }> = [];
-        let existsCount = 0;
-        let queryFailed = 0;
-
-        for (const bill of successBills) {
-            if (!bill.voucher_id) {
-                resetTargets.push({ bill_id: Number(bill.id), community_id: Number(bill.community_id) });
-                continue;
-            }
-            try {
-                const queryResult = await queryVoucherById(String(bill.voucher_id));
-                if (queryResult?.exists) {
-                    existsCount += 1;
-                } else {
-                    resetTargets.push({ bill_id: Number(bill.id), community_id: Number(bill.community_id) });
-                }
-            } catch {
-                queryFailed += 1;
-                resetTargets.push({ bill_id: Number(bill.id), community_id: Number(bill.community_id) });
-            }
-        }
-
-        return { resetTargets, existsCount, queryFailed };
-    };
-
-    const handleBatchVerify = async () => {
-        const refs = Array.from(selectedBillRefs.values());
-        if (refs.length === 0) {
-            showToast('info', '提示', '请先选择账单');
-            return;
-        }
-        const selectedBills = bills.filter(b => selectedBillIds.has(buildBillSelectionKey(b.id, b.community_id)));
-        const successBills = selectedBills.filter(b => (b.push_status || '') === 'success');
-        if (successBills.length === 0) {
-            showToast('info', '提示', '所选账单中没有已推送成功的记录');
-            return;
-        }
-
-        setBatchVerifyAlsoReset(false);
-        batchVerifyAlsoResetRef.current = false;
-        openConfirmModal({
-            title: '批量校验',
-            message: `将校验金蝶凭证是否存在（共 ${successBills.length} 条）。`,
-            confirmText: '开始校验',
-            cancelText: '取消',
-            variant: 'primary',
-            showAlsoResetToggle: true,
-            onConfirm: async () => {
-                const { resetTargets, existsCount, queryFailed } = await verifyBillsForReset(successBills);
-
-                if (!batchVerifyAlsoResetRef.current) {
-                    showToast(
-                        'success',
-                        '校验完成',
-                        `可解除 ${resetTargets.length} 条，金蝶仍存在 ${existsCount} 条，校验失败 ${queryFailed} 条`
-                    );
-                    return;
-                }
-
-                if (resetTargets.length === 0) {
-                    showToast('info', '提示', '金蝶凭证仍存在，无法解除');
-                    return;
-                }
-
-                const result = await resetBillVoucherBinding(resetTargets, 'batch_reset');
-                if (result?.success) {
-                    showToast(
-                        'success',
-                        '校验并解除完成',
-                        `解除 ${resetTargets.length} 条，金蝶仍存在 ${existsCount} 条，校验失败 ${queryFailed} 条`
-                    );
-                    await fetchBillsList();
-                } else {
-                    showToast('error', '批量解除失败', '服务端返回失败');
-                }
-            }
-        });
-    };
-
-    const handleBatchReset = async () => {
-        const refs = Array.from(selectedBillRefs.values());
-        if (refs.length === 0) {
-            showToast('info', '提示', '请先选择账单');
-            return;
-        }
-        const selectedBills = bills.filter(b => selectedBillIds.has(buildBillSelectionKey(b.id, b.community_id)));
-        const successBills = selectedBills.filter(b => (b.push_status || '') === 'success');
-        if (successBills.length === 0) {
-            showToast('info', '提示', '所选账单中没有已推送成功的记录');
-            return;
-        }
-
-        openConfirmModal({
-            title: '批量解除',
-            message: `将先校验金蝶凭证是否存在，仅解除可解除的记录（共 ${successBills.length} 条）。继续吗？`,
-            confirmText: '确定解除',
-            cancelText: '取消',
-            variant: 'danger',
-            onConfirm: async () => {
-                const { resetTargets, existsCount, queryFailed } = await verifyBillsForReset(successBills);
-                if (resetTargets.length === 0) {
-                    showToast('info', '提示', '金蝶凭证仍存在，无法解除');
-                    return;
-                }
-
-                const result = await resetBillVoucherBinding(resetTargets, 'batch_reset');
-                if (result?.success) {
-                    showToast(
-                        'success',
-                        '批量解除完成',
-                        `解除 ${resetTargets.length} 条，金蝶仍存在 ${existsCount} 条，校验失败 ${queryFailed} 条`
-                    );
-                    await fetchBillsList();
-                } else {
-                    showToast('error', '批量解除失败', '服务端返回失败');
-                }
-            }
-        });
-    };
 
     const fetchBillsList = useCallback(async () => {
         setIsLoading(true);
@@ -716,54 +479,6 @@ const Bills = () => {
             ),
         },
         {
-            key: 'push_status_label' as keyof Bill,
-            title: '凭证状态',
-            width: 110,
-            render: (_val: any, row: Bill) => {
-                const status = row.push_status || 'not_pushed';
-                const statusLabel = row.push_status_label || '未推送';
-                const colorMap: Record<string, { bg: string; color: string; border: string }> = {
-                    not_pushed: { bg: '#f8fafc', color: '#64748b', border: '#e2e8f0' },
-                    pushing: { bg: '#eff6ff', color: '#2563eb', border: '#bfdbfe' },
-                    success: { bg: '#ecfdf5', color: '#059669', border: '#a7f3d0' },
-                    failed: { bg: '#fef2f2', color: '#dc2626', border: '#fecaca' },
-                };
-                const style = colorMap[status] || colorMap.not_pushed;
-                return (
-                    <span style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        padding: '0.2rem 0.5rem',
-                        borderRadius: '999px',
-                        fontSize: '0.75rem',
-                        fontWeight: 600,
-                        background: style.bg,
-                        color: style.color,
-                        border: `1px solid ${style.border}`,
-                    }}>
-                        {statusLabel}
-                    </span>
-                );
-            },
-        },
-        {
-            key: 'voucher_number' as keyof Bill,
-            title: '金蝶凭证号',
-            width: 140,
-            render: (val: any, row: Bill) => (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.125rem' }}>
-                    <span style={{ fontWeight: 600, color: row.voucher_number ? '#0f172a' : '#94a3b8' }}>
-                        {val || '-'}
-                    </span>
-                    {row.pushed_at && (
-                        <span className="text-secondary text-xs">
-                            {new Date(row.pushed_at).toLocaleString()}
-                        </span>
-                    )}
-                </div>
-            ),
-        },
-        {
             key: 'receive_date' as keyof Bill,
             title: '支付日期',
             render: (val: any) => <span className="text-secondary text-sm">{val || '-'}</span>,
@@ -773,33 +488,6 @@ const Bills = () => {
             title: '创建时间',
             render: (val: any) => <span className="text-secondary text-sm">{val ? new Date(val).toLocaleDateString() : '-'}</span>,
         },
-        {
-            key: 'actions' as keyof Bill,
-            title: '操作',
-            width: 130,
-            fixed: 'right' as const,
-            render: (_: any, row: Bill) => (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                {(row.push_status || '') === 'success' && (
-                    <button
-                        onClick={() => handleResetVoucherBinding(Number(row.id), row.community_id)}
-                        style={{
-                            display: 'flex', alignItems: 'center', gap: '0.25rem',
-                            padding: '0.25rem 0.625rem', borderRadius: '0.375rem',
-                            border: '1px solid #fee2e2', background: '#fff7ed',
-                            cursor: 'pointer', fontSize: '0.7rem', fontWeight: 500,
-                            color: '#ea580c', transition: 'all 0.15s',
-                        }}
-                        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#ffedd5'; }}
-                        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = '#fff7ed'; }}
-                        title="解除凭证关联状态（用于金蝶已删除后重新推送）"
-                    >
-                        <Link2Off size={12} /> 解除
-                    </button>
-                )}
-                </div>
-            )
-        }
     ];
 
     const filteredProjectsList = projects.filter(p =>
@@ -817,10 +505,6 @@ const Bills = () => {
 
     const currentPageAmount = bills.reduce((sum, bill) => sum + Number(bill.amount || 0), 0);
     const selectedTotalAmount = Array.from(selectedBillAmounts.values()).reduce((a, b) => a + b, 0);
-    const selectedBills = bills.filter(b => selectedBillIds.has(buildBillSelectionKey(b.id, b.community_id)));
-    const selectedSuccessCount = selectedBills.filter(b => (b.push_status || '') === 'success').length;
-    const canBatchVerify = selectedBillRefs.size > 0 && selectedSuccessCount > 0;
-    const canBatchReset = selectedBillRefs.size > 0 && selectedSuccessCount > 0;
 
     return (
         <div className="page-container fade-in">
@@ -890,34 +574,6 @@ const Bills = () => {
                                 </button>
                                 <button className="btn-outline btn-refresh-list" onClick={fetchBillsList}>
                                     <RefreshCw size={14} /> 刷新列表
-                                </button>
-                                <button
-                                    className={`btn-outline btn-batch-check ${!canBatchVerify ? 'disabled' : ''}`}
-                                    onClick={handleBatchVerify}
-                                    disabled={!canBatchVerify}
-                                    title={
-                                        selectedBillRefs.size === 0
-                                            ? '请先选择账单'
-                                            : selectedSuccessCount === 0
-                                                ? '仅支持已推送成功的账单进行校验'
-                                                : '批量校验金蝶凭证是否存在'
-                                    }
-                                >
-                                    <ShieldCheck size={14} /> 批量校验
-                                </button>
-                                <button
-                                    className={`btn-outline btn-batch-reset ${!canBatchReset ? 'disabled' : ''}`}
-                                    onClick={handleBatchReset}
-                                    disabled={!canBatchReset}
-                                    title={
-                                        selectedBillRefs.size === 0
-                                            ? '请先选择账单'
-                                            : selectedSuccessCount === 0
-                                                ? '仅支持已推送成功的账单进行解除'
-                                                : '校验金蝶凭证是否存在，仅解除可解除的记录'
-                                    }
-                                >
-                                    <Link2Off size={14} /> 批量解除
                                 </button>
                             </div>
                         </div>
@@ -1189,32 +845,6 @@ const Bills = () => {
                 status={syncState.status}
             />
 
-            <ConfirmModal
-                isOpen={confirmModalState.isOpen}
-                title={confirmModalState.title}
-                message={confirmModalState.message}
-                confirmText={confirmModalState.confirmText}
-                cancelText={confirmModalState.cancelText}
-                variant={confirmModalState.variant}
-                loading={confirmModalLoading}
-                onCancel={closeConfirmModal}
-                onConfirm={handleConfirmModalConfirm}
-            >
-                {confirmModalState.showAlsoResetToggle ? (
-                    <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', color: '#334155' }}>
-                        <input
-                            type="checkbox"
-                            checked={batchVerifyAlsoReset}
-                            onChange={(e) => {
-                                batchVerifyAlsoResetRef.current = e.target.checked;
-                                setBatchVerifyAlsoReset(e.target.checked);
-                            }}
-                            disabled={confirmModalLoading}
-                        />
-                        <span style={{ fontSize: '0.85rem' }}>校验后同时批量解除（仅解除可解除项）</span>
-                    </label>
-                ) : null}
-            </ConfirmModal>
             <ToastContainer toasts={toasts} removeToast={removeToast} />
         </div>
     );

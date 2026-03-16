@@ -93,6 +93,14 @@ export interface VoucherFieldModule {
     sources: VoucherFieldSource[];
 }
 
+export interface PushStatusSummary {
+    total: number;
+    not_pushed: number;
+    pushing: number;
+    success: number;
+    failed: number;
+}
+
 export interface ReceiptBill {
     id: string;
     community_id: number;
@@ -111,6 +119,16 @@ export interface ReceiptBill {
     deal_time?: number | null;
     deal_date?: string | null;
     deal_type?: number | null;
+    related_bill_count?: number;
+    related_bill_push_summary?: PushStatusSummary;
+    push_status?: 'unbound' | 'not_pushed' | 'pushing' | 'success' | 'failed' | 'partial';
+    push_status_label?: string;
+    push_batch_no?: string | null;
+    voucher_number?: string | null;
+    voucher_id?: string | null;
+    pushed_at?: string | null;
+    message?: string | null;
+    account_book_number?: string | null;
 }
 
 export interface ChargeItem {
