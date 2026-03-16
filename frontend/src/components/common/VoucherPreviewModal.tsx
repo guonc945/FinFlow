@@ -23,6 +23,10 @@ const VoucherPreviewModal = ({
   error,
   onPushVoucher,
 }: VoucherPreviewModalProps) => {
+  const uiFont =
+    "'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif";
+  const monoFont =
+    "'JetBrains Mono', 'Cascadia Code', 'Consolas', 'SFMono-Regular', monospace";
   const [isJsonOpen, setIsJsonOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [isPushing, setIsPushing] = useState(false);
@@ -81,6 +85,16 @@ const VoucherPreviewModal = ({
         ],
       )
       .sort((a, b) => a[0].localeCompare(b[0]));
+  };
+  const getAccountNameDisplay = (entry: any): string => {
+    if (entry?.account_name) return String(entry.account_name);
+    if (
+      entry?.account_display &&
+      String(entry.account_display) !== String(entry?.account_code || "")
+    ) {
+      return String(entry.account_display);
+    }
+    return "-";
   };
   const mergeEntries = (entries: any[]) => {
     const merged: any[] = [];
@@ -164,8 +178,8 @@ const VoucherPreviewModal = ({
         style={{
           background: "#fff",
           borderRadius: "1rem",
-          width: "960px",
-          maxWidth: "95vw",
+          width: "1220px",
+          maxWidth: "96vw",
           maxHeight: "90vh",
           display: "flex",
           flexDirection: "column",
@@ -173,6 +187,7 @@ const VoucherPreviewModal = ({
           border: "1px solid #e2e8f0",
           overflow: "hidden",
           animation: "slideUp 0.3s ease",
+          fontFamily: uiFont,
         }}
       >
         {/* 标题栏*/}
@@ -192,11 +207,25 @@ const VoucherPreviewModal = ({
           >
             <FileText size={20} />
             <div>
-              <h3 style={{ margin: 0, fontSize: "1rem", fontWeight: 700 }}>
+              <h3
+                style={{
+                  margin: 0,
+                  fontSize: "1.05rem",
+                  lineHeight: 1.3,
+                  fontWeight: 700,
+                  letterSpacing: "0.01em",
+                }}
+              >
                 凭证预览
               </h3>
               {data?.template_name && (
-                <span style={{ fontSize: "0.75rem", opacity: 0.8 }}>
+                <span
+                  style={{
+                    fontSize: "0.78rem",
+                    opacity: 0.82,
+                    lineHeight: 1.5,
+                  }}
+                >
                   匹配模板: {data.template_name} ({data.template_id})
                 </span>
               )}
@@ -488,6 +517,9 @@ const VoucherPreviewModal = ({
                       borderRadius: "0.75rem",
                       border: "1px solid #e2e8f0",
                       overflow: "hidden",
+                      background:
+                        "linear-gradient(180deg, #fcfdff 0%, #f8fafc 100%)",
+                      boxShadow: "inset 0 1px 0 rgba(255,255,255,0.8)",
                     }}
                   >
                     <table
@@ -495,8 +527,17 @@ const VoucherPreviewModal = ({
                         width: "100%",
                         borderCollapse: "collapse",
                         fontSize: "0.8rem",
+                        tableLayout: "fixed",
                       }}
                     >
+                      <colgroup>
+                        <col style={{ width: "72px" }} />
+                        <col style={{ width: "28%" }} />
+                        <col style={{ width: "240px" }} />
+                        <col style={{ width: "150px" }} />
+                        <col style={{ width: "150px" }} />
+                        <col />
+                      </colgroup>
                       <thead>
                         <tr style={{ background: "#f8fafc" }}>
                           <th style={thStyle}>行号</th>
@@ -513,7 +554,7 @@ const VoucherPreviewModal = ({
                             style={{
                               ...thStyle,
                               textAlign: "left",
-                              minWidth: 120,
+                              minWidth: 180,
                             }}
                           >
                             会计科目
@@ -529,7 +570,10 @@ const VoucherPreviewModal = ({
                         {displayedEntries.map((entry: any, idx: number) => (
                           <tr
                             key={idx}
-                            style={{ borderBottom: "1px solid #f1f5f9" }}
+                            style={{
+                              borderBottom: "1px solid #e2e8f0",
+                              background: idx % 2 === 0 ? "#ffffff" : "#fbfdff",
+                            }}
                           >
                             <td
                               style={{
@@ -540,19 +584,45 @@ const VoucherPreviewModal = ({
                             >
                               {entry.line_no}
                             </td>
-                            <td style={tdStyle}>{entry.summary}</td>
+                            <td
+                              style={{
+                                ...tdStyle,
+                                color: "#1e293b",
+                                lineHeight: 1.55,
+                                fontSize: "0.82rem",
+                              }}
+                            >
+                              {entry.summary}
+                            </td>
                             <td style={tdStyle}>
                               <div
                                 style={{
-                                  fontSize: "0.75rem",
-                                  background: "#f1f5f9",
-                                  padding: "0.125rem 0.375rem",
-                                  borderRadius: "0.25rem",
-                                  color: "#334155",
-                                  display: "inline-block",
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  gap: "0.2rem",
+                                  lineHeight: 1.35,
                                 }}
                               >
-                                {entry.account_display}
+                                <span
+                                  style={{
+                                    fontSize: "0.72rem",
+                                    fontFamily: monoFont,
+                                    color: "#64748b",
+                                    letterSpacing: "0.01em",
+                                  }}
+                                >
+                                  {entry.account_code || "-"}
+                                </span>
+                                <span
+                                  style={{
+                                    fontSize: "0.82rem",
+                                    color: "#0f172a",
+                                    fontWeight: 600,
+                                    wordBreak: "break-word",
+                                  }}
+                                >
+                                  {getAccountNameDisplay(entry)}
+                                </span>
                               </div>
                             </td>
                             <td
@@ -560,7 +630,8 @@ const VoucherPreviewModal = ({
                                 ...tdStyle,
                                 textAlign: "right",
                                 fontWeight: 600,
-                                fontFamily: "'JetBrains Mono', monospace",
+                                fontFamily: monoFont,
+                                fontSize: "0.82rem",
                                 color: entry.debit > 0 ? "#0f172a" : "#cbd5e1",
                               }}
                             >
@@ -573,7 +644,8 @@ const VoucherPreviewModal = ({
                                 ...tdStyle,
                                 textAlign: "right",
                                 fontWeight: 600,
-                                fontFamily: "'JetBrains Mono', monospace",
+                                fontFamily: monoFont,
+                                fontSize: "0.82rem",
                                 color: entry.credit > 0 ? "#0f172a" : "#cbd5e1",
                               }}
                             >
@@ -618,7 +690,7 @@ const VoucherPreviewModal = ({
                       <tfoot>
                         <tr
                           style={{
-                            background: "#f8fafc",
+                            background: "#f1f5f9",
                             fontWeight: 700,
                             fontSize: "0.85rem",
                           }}
@@ -633,7 +705,7 @@ const VoucherPreviewModal = ({
                             style={{
                               ...tdStyle,
                               textAlign: "right",
-                              fontFamily: "'JetBrains Mono', monospace",
+                              fontFamily: monoFont,
                               color: "#059669",
                             }}
                           >
@@ -643,7 +715,7 @@ const VoucherPreviewModal = ({
                             style={{
                               ...tdStyle,
                               textAlign: "right",
-                              fontFamily: "'JetBrains Mono', monospace",
+                              fontFamily: monoFont,
                               color: "#059669",
                             }}
                           >
@@ -813,19 +885,20 @@ const JsonSyntaxHighlight = ({ json }: { json: any }) => {
 
 // 表格样式常量
 const thStyle: React.CSSProperties = {
-  padding: "0.625rem 0.75rem",
-  fontWeight: 600,
-  fontSize: "0.75rem",
-  color: "#64748b",
+  padding: "0.75rem 0.875rem",
+  fontWeight: 700,
+  fontSize: "0.72rem",
+  color: "#475569",
   textAlign: "center",
   borderBottom: "2px solid #e2e8f0",
   textTransform: "uppercase" as const,
-  letterSpacing: "0.03em",
+  letterSpacing: "0.05em",
 };
 
 const tdStyle: React.CSSProperties = {
-  padding: "0.625rem 0.75rem",
+  padding: "0.8rem 0.875rem",
   verticalAlign: "middle",
+  color: "#334155",
 };
 
 export default VoucherPreviewModal;
