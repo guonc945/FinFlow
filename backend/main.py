@@ -4159,25 +4159,32 @@ def preview_voucher_for_bills(
             detail=("No vouchers could be generated" + (f": {details}" if details else ""))
         )
 
-    # Merge across different templates; only header incompatibility blocks a line from merge.
+    # Merge across different templates; keep business date flexible so receipts from
+    # different transaction days in the same batch can still produce a single voucher.
     first_preview = previews[0]
     first_header = ((first_preview.get("kingdee_json") or {}).get("data") or [{}])[0]
-    header_keys = ["book_number", "bizdate", "bookeddate", "period_number", "vouchertype_number"]
+    header_keys = ["book_number", "bookeddate", "period_number", "vouchertype_number"]
+    merged_bizdates = [
+        str(first_header.get("bizdate") or "").strip()
+    ]
 
     header_compatible_previews: List[Dict[str, Any]] = [first_preview]
     for p in previews[1:]:
         header = ((p.get("kingdee_json") or {}).get("data") or [{}])[0]
-        if any(first_header.get(k) != header.get(k) for k in header_keys):
+        incompatible_keys = [k for k in header_keys if first_header.get(k) != header.get(k)]
+        if incompatible_keys:
             summary = p.get("bill_summary") or {}
             skipped_bills.append({
                 "bill_id": int(summary.get("id") or 0),
                 "community_id": int(summary.get("community_id") or 0),
-                "reason": "inconsistent voucher header; skipped from merge",
+                "reason": f"inconsistent voucher header ({', '.join(incompatible_keys)}); skipped from merge",
             })
             continue
+        merged_bizdates.append(str(header.get("bizdate") or "").strip())
         header_compatible_previews.append(p)
 
     previews = header_compatible_previews
+    merged_bizdate = max([d for d in merged_bizdates if d], default=str(first_header.get("bizdate") or ""))
 
     source_bills: List[Dict[str, Any]] = []
     seen_source_keys = set()
@@ -4234,7 +4241,7 @@ def preview_voucher_for_bills(
     merged_kingdee_json = {
         "data": [{
             "book_number": first_header.get("book_number"),
-            "bizdate": first_header.get("bizdate"),
+            "bizdate": merged_bizdate,
             "bookeddate": first_header.get("bookeddate"),
             "period_number": first_header.get("period_number"),
             "vouchertype_number": first_header.get("vouchertype_number"),
