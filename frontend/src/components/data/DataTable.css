@@ -1,7 +1,7 @@
 .data-table-wrapper {
     background: white;
     border-radius: var(--radius-lg);
-    overflow: hidden;
+    overflow: visible;
     box-shadow: var(--shadow-sm);
     border: 1px solid rgba(255, 255, 255, 0.3);
 }
@@ -19,6 +19,7 @@
 
 .table-container {
     overflow-x: auto;
+    overflow-y: visible;
     position: relative;
 }
 
@@ -87,6 +88,11 @@
 .modern-table td.dt-sticky-left {
     z-index: 5;
     background: var(--bg-card, #ffffff);
+    overflow: visible;
+}
+
+.modern-table td.dt-sticky-right:has(.receipt-row-action.menu-open) {
+    z-index: 40;
 }
 
 .modern-table td.dt-sticky-right {

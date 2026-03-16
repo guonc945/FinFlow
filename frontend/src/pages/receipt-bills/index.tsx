@@ -13,6 +13,7 @@ import {
     FileText,
     Link2Off,
     ShieldCheck,
+    MoreHorizontal,
 } from 'lucide-react';
 import DataTable from '../../components/data/DataTable';
 import type { Bill, BillVoucherPushStatus, Project, PushStatusSummary, ReceiptBill } from '../../types';
@@ -249,6 +250,8 @@ const ReceiptBills = () => {
     const [isFilterCollapsed, setIsFilterCollapsed] = useState(false);
     const [isCommunityDropdownOpen, setIsCommunityDropdownOpen] = useState(false);
     const communityDropdownRef = useRef<HTMLDivElement>(null);
+    const [openActionMenuKey, setOpenActionMenuKey] = useState<string | null>(null);
+    const [isBatchActionsOpen, setIsBatchActionsOpen] = useState(false);
 
     // Pagination
     const [page, setPage] = useState(1);
@@ -420,9 +423,13 @@ const ReceiptBills = () => {
     // Close dropdown on outside click
     useEffect(() => {
         const onClick = (e: MouseEvent) => {
-            if (!communityDropdownRef.current) return;
-            if (communityDropdownRef.current.contains(e.target as Node)) return;
+            const target = e.target as HTMLElement | null;
+            if (communityDropdownRef.current?.contains(e.target as Node)) return;
+            if (target?.closest('.receipt-row-action')) return;
+            if (target?.closest('.receipt-batch-action')) return;
             setIsCommunityDropdownOpen(false);
+            setOpenActionMenuKey(null);
+            setIsBatchActionsOpen(false);
         };
         document.addEventListener('mousedown', onClick);
         return () => document.removeEventListener('mousedown', onClick);
@@ -1049,68 +1056,97 @@ const ReceiptBills = () => {
             title: '操作',
             fixed: 'right' as const,
             className: 'dt-sticky-right',
-            width: 260,
-            render: (_: any, record: ReceiptBill) => (
-                <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                    <button
-                        className="btn-outline"
-                        style={{ height: '30px', padding: '0 0.75rem' }}
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            void handlePreviewVoucherForReceipt({ id: record.id, community_id: record.community_id });
-                        }}
-                        title="预览凭证（按当前收款单关联账单生成）"
+            width: 180,
+            render: (_: any, record: ReceiptBill) => {
+                const actionMenuKey = buildReceiptSelectionKey(record.id, record.community_id);
+                const isActionMenuOpen = openActionMenuKey === actionMenuKey;
+                const successCount = Number(getReceiptPushSummary(record).success || 0);
+                const canManageVoucher = successCount > 0;
+
+                return (
+                    <div
+                        className={`receipt-row-action ${isActionMenuOpen ? 'menu-open' : ''}`}
+                        style={{ position: 'relative', display: 'flex', justifyContent: 'flex-end' }}
                     >
-                        <FileText size={14} /> 凭证
-                    </button>
-                    <button
-                        className="btn-outline"
-                        style={{
-                            height: '30px',
-                            padding: '0 0.75rem',
-                            opacity: (getReceiptPushSummary(record).success || 0) > 0 ? 1 : 0.5,
-                            cursor: (getReceiptPushSummary(record).success || 0) > 0 ? 'pointer' : 'not-allowed',
-                        }}
-                        disabled={(getReceiptPushSummary(record).success || 0) === 0}
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            void handleVerifyReceipt(record);
-                        }}
-                        title={(getReceiptPushSummary(record).success || 0) === 0 ? '当前收款单下没有已推送记录' : '校验金蝶凭证是否仍然存在'}
-                    >
-                        <ShieldCheck size={14} /> 校验
-                    </button>
-                    <button
-                        className="btn-outline"
-                        style={{
-                            height: '30px',
-                            padding: '0 0.75rem',
-                            color: '#ea580c',
-                            opacity: (getReceiptPushSummary(record).success || 0) > 0 ? 1 : 0.5,
-                            cursor: (getReceiptPushSummary(record).success || 0) > 0 ? 'pointer' : 'not-allowed',
-                        }}
-                        disabled={(getReceiptPushSummary(record).success || 0) === 0}
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            void handleResetReceiptBinding(record);
-                        }}
-                        title={(getReceiptPushSummary(record).success || 0) === 0 ? '当前收款单下没有可解除记录' : '校验后解除本地绑定状态'}
-                    >
-                        <Link2Off size={14} /> 解除
-                    </button>
-                    <button
-                        className="btn-outline"
-                        style={{ height: '30px', padding: '0 0.75rem' }}
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            void openRelatedBills(record);
-                        }}
-                        title="查看关联账单"
-                    >
-                        账单
-                    </button>
-                </div>
-            )
+                        <div className="receipt-row-action-group">
+                            <button
+                                className="receipt-row-btn receipt-row-btn-primary"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setOpenActionMenuKey(null);
+                                    void handlePreviewVoucherForReceipt({ id: record.id, community_id: record.community_id });
+                                }}
+                                title="预览凭证（按当前收款单关联账单生成）"
+                            >
+                                <FileText size={14} /> 凭证
+                            </button>
+                            <button
+                                className={`receipt-row-btn receipt-row-btn-secondary ${isActionMenuOpen ? 'open' : ''}`}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setOpenActionMenuKey(current => current === actionMenuKey ? null : actionMenuKey);
+                                }}
+                                title="更多操作"
+                            >
+                                <MoreHorizontal size={14} /> 更多
+                            </button>
+                        </div>
+
+                        {isActionMenuOpen && (
+                            <div
+                                className="custom-dropdown card-shadow slide-up receipt-row-action-menu"
+                                style={{
+                                    position: 'absolute',
+                                    top: 'calc(100% + 0.35rem)',
+                                    right: 0,
+                                    width: '164px',
+                                    zIndex: 140,
+                                    padding: '0.35rem 0',
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                            >
+                                <button
+                                    type="button"
+                                    className={`dropdown-item receipt-row-menu-item ${!canManageVoucher ? 'is-disabled' : ''}`}
+                                    disabled={!canManageVoucher}
+                                    onClick={() => {
+                                        if (!canManageVoucher) return;
+                                        setOpenActionMenuKey(null);
+                                        void handleVerifyReceipt(record);
+                                    }}
+                                    title={canManageVoucher ? '校验金蝶凭证是否仍然存在' : '当前收款单下没有已推送记录'}
+                                >
+                                    <ShieldCheck size={14} /> 校验凭证
+                                </button>
+                                <button
+                                    type="button"
+                                    className={`dropdown-item receipt-row-menu-item is-danger ${!canManageVoucher ? 'is-disabled' : ''}`}
+                                    disabled={!canManageVoucher}
+                                    onClick={() => {
+                                        if (!canManageVoucher) return;
+                                        setOpenActionMenuKey(null);
+                                        void handleResetReceiptBinding(record);
+                                    }}
+                                    title={canManageVoucher ? '校验后解除本地绑定状态' : '当前收款单下没有可解除记录'}
+                                >
+                                    <Link2Off size={14} /> 解除绑定
+                                </button>
+                                <button
+                                    type="button"
+                                    className="dropdown-item receipt-row-menu-item"
+                                    onClick={() => {
+                                        setOpenActionMenuKey(null);
+                                        void openRelatedBills(record);
+                                    }}
+                                    title="查看关联账单"
+                                >
+                                    <FileText size={14} /> 关联账单
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                );
+            },
         },
     ];
     const selectedReceipts = items.filter(r => selectedReceiptKeys.has(buildReceiptSelectionKey(r.id, r.community_id)));
@@ -1210,44 +1246,112 @@ const ReceiptBills = () => {
                                 <RefreshCw size={14} /> 同步收款账单
                             </button>
 
-                            <button
-                                className={`btn-outline btn-batch-voucher ${selectedReceiptRefs.size === 0 ? 'disabled' : ''}`}
-                                onClick={handlePreviewBatchVoucher}
-                                disabled={selectedReceiptRefs.size === 0}
-                                title={selectedReceiptRefs.size === 0 ? '请先勾选收款账单' : '批量预览凭证（按收款单关联账单生成）'}
-                            >
-                                <FileText size={14} /> 批量凭证预览
-                            </button>
+                            <div className="receipt-batch-action" style={{ position: 'relative' }}>
+                                <button
+                                    className={`btn-outline btn-batch-actions ${isBatchActionsOpen ? 'open' : ''}`}
+                                    onClick={() => {
+                                        setIsBatchActionsOpen(v => !v);
+                                    }}
+                                    title="展开批量操作"
+                                    style={{ height: '36px', padding: '0 0.85rem' }}
+                                >
+                                    <FileText size={14} />
+                                    <span>批量操作</span>
+                                    <span className="batch-actions-badge">{selectedReceiptRefs.size}</span>
+                                    <ChevronDown size={14} className={`batch-actions-arrow ${isBatchActionsOpen ? 'rotate' : ''}`} />
+                                </button>
 
-                            <button
-                                className={`btn-outline btn-batch-check ${!canBatchVerify ? 'disabled' : ''}`}
-                                onClick={handleBatchVerify}
-                                disabled={!canBatchVerify}
-                                title={
-                                    selectedReceiptRefs.size === 0
-                                        ? '请先勾选收款账单'
-                                        : selectedSuccessCount === 0
-                                            ? '所选收款单下没有已推送记录'
-                                            : '批量校验金蝶凭证是否仍然存在'
-                                }
-                            >
-                                <ShieldCheck size={14} /> 批量校验
-                            </button>
-
-                            <button
-                                className={`btn-outline btn-batch-reset ${!canBatchReset ? 'disabled' : ''}`}
-                                onClick={handleBatchReset}
-                                disabled={!canBatchReset}
-                                title={
-                                    selectedReceiptRefs.size === 0
-                                        ? '请先勾选收款账单'
-                                        : selectedSuccessCount === 0
-                                            ? '所选收款单下没有可解除记录'
-                                            : '校验后批量解除本地绑定状态'
-                                }
-                            >
-                                <Link2Off size={14} /> 批量解除
-                            </button>
+                                {isBatchActionsOpen && (
+                                    <div
+                                        className="custom-dropdown card-shadow slide-up batch-actions-menu"
+                                        style={{
+                                            position: 'absolute',
+                                            top: 'calc(100% + 0.45rem)',
+                                            right: 0,
+                                            width: '188px',
+                                            zIndex: 130,
+                                            padding: '0.35rem 0',
+                                        }}
+                                    >
+                                        <button
+                                            type="button"
+                                            className="dropdown-item"
+                                            style={{
+                                                width: '100%',
+                                                border: 'none',
+                                                background: 'transparent',
+                                                textAlign: 'left',
+                                                fontSize: '0.8rem',
+                                                color: selectedReceiptRefs.size > 0 ? '#334155' : '#94a3b8',
+                                                opacity: selectedReceiptRefs.size > 0 ? 1 : 0.5,
+                                                cursor: selectedReceiptRefs.size > 0 ? 'pointer' : 'not-allowed',
+                                            }}
+                                            onClick={() => {
+                                                if (selectedReceiptRefs.size === 0) return;
+                                                setIsBatchActionsOpen(false);
+                                                void handlePreviewBatchVoucher();
+                                            }}
+                                            title={selectedReceiptRefs.size === 0 ? '请先勾选收款账单' : '批量预览凭证（按收款单关联账单生成）'}
+                                        >
+                                            <FileText size={14} /> 批量凭证预览
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="dropdown-item"
+                                            style={{
+                                                width: '100%',
+                                                border: 'none',
+                                                background: 'transparent',
+                                                textAlign: 'left',
+                                                fontSize: '0.8rem',
+                                                color: canBatchVerify ? '#334155' : '#94a3b8',
+                                                opacity: canBatchVerify ? 1 : 0.5,
+                                                cursor: canBatchVerify ? 'pointer' : 'not-allowed',
+                                            }}
+                                            disabled={!canBatchVerify}
+                                            onClick={() => {
+                                                if (!canBatchVerify) return;
+                                                setIsBatchActionsOpen(false);
+                                                void handleBatchVerify();
+                                            }}
+                                            title={
+                                                selectedSuccessCount === 0
+                                                    ? '所选收款单下没有已推送记录'
+                                                    : '批量校验金蝶凭证是否仍然存在'
+                                            }
+                                        >
+                                            <ShieldCheck size={14} /> 批量校验
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="dropdown-item"
+                                            style={{
+                                                width: '100%',
+                                                border: 'none',
+                                                background: 'transparent',
+                                                textAlign: 'left',
+                                                fontSize: '0.8rem',
+                                                color: canBatchReset ? '#c2410c' : '#94a3b8',
+                                                opacity: canBatchReset ? 1 : 0.5,
+                                                cursor: canBatchReset ? 'pointer' : 'not-allowed',
+                                            }}
+                                            disabled={!canBatchReset}
+                                            onClick={() => {
+                                                if (!canBatchReset) return;
+                                                setIsBatchActionsOpen(false);
+                                                void handleBatchReset();
+                                            }}
+                                            title={
+                                                selectedSuccessCount === 0
+                                                    ? '所选收款单下没有可解除记录'
+                                                    : '校验后批量解除本地绑定状态'
+                                            }
+                                        >
+                                            <Link2Off size={14} /> 批量解除
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
 
                             <button className="btn-outline" style={{ color: '#ef4444' }} onClick={() => {
                                 setSearchQuery('');
