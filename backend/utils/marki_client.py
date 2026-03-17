@@ -173,14 +173,18 @@ class MarkiClient:
             logger.error(f"❌ 自动登录严重异常: {e}")
             return False
 
-    def request(self, method, url, params=None, json_data=None, timeout=30, retry_on_401=True):
+    def request(self, method, url, params=None, json_data=None, timeout=30, retry_on_401=True, extra_headers=None):
         """统一请求封装"""
         self._load_config()
         try:
+            request_headers = dict(self.headers)
+            if extra_headers:
+                request_headers.update({str(k): str(v) for k, v in extra_headers.items()})
+
             resp = self.session.request(
                 method, 
                 url, 
-                headers=self.headers, 
+                headers=request_headers, 
                 params=params, 
                 json=json_data, 
                 timeout=timeout
@@ -190,7 +194,7 @@ class MarkiClient:
             if resp.status_code in [401, 602] and retry_on_401:
                 logger.warning(f"检测到 {resp.status_code} Session 过期，尝试自动重登重试...")
                 if self.login():
-                    return self.request(method, url, params, json_data, timeout, retry_on_401=False)
+                    return self.request(method, url, params, json_data, timeout, retry_on_401=False, extra_headers=extra_headers)
             
             try:
                 return resp.json()
@@ -204,7 +208,7 @@ class MarkiClient:
                     if retry_on_401:
                         logger.warning("响应虽为 200 但内容疑似登录页，尝试自动重登...")
                         if self.login():
-                            return self.request(method, url, params, json_data, timeout, retry_on_401=False)
+                            return self.request(method, url, params, json_data, timeout, retry_on_401=False, extra_headers=extra_headers)
                 
                 resp.raise_for_status()
                 raise ValueError(f"解析 JSON 失败 (状态码 {status_code})")
@@ -214,7 +218,7 @@ class MarkiClient:
             status_code = getattr(getattr(e, 'response', None), 'status_code', None)
             if status_code in [401, 602] and retry_on_401:
                 if self.login():
-                    return self.request(method, url, params, json_data, timeout, retry_on_401=False)
+                    return self.request(method, url, params, json_data, timeout, retry_on_401=False, extra_headers=extra_headers)
             logger.error(f"网络请求错误: {e}")
             raise
 

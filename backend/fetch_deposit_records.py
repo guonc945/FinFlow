@@ -68,6 +68,18 @@ def _load_api_config():
         db.close()
 
 
+def _parse_json_object(value):
+    if not value:
+        return {}
+    if isinstance(value, dict):
+        return value
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
 def _load_house_context_map(house_ids):
     from database import SessionLocal
     from models import House, ProjectList
@@ -294,6 +306,15 @@ def _coerce_common_ints(payload):
     return payload
 
 
+def _resolve_request_headers(headers_template, db_session, preloaded_vars):
+    from utils.variable_parser import resolve_dict_variables
+
+    headers = resolve_dict_variables(headers_template, db_session, preloaded_vars=preloaded_vars)
+    if not isinstance(headers, dict):
+        return {}
+    return {str(key): str(value) for key, value in headers.items() if value is not None}
+
+
 def sync_deposit_records(community_ids=None, task_id=None):
     from database import SessionLocal
     from utils.variable_parser import build_variable_map, resolve_dict_variables
@@ -318,10 +339,10 @@ def sync_deposit_records(community_ids=None, task_id=None):
                 body_template = json.loads(api_config.request_body)
             except Exception:
                 body_template = {}
+        headers_template = _parse_json_object(api_config.request_headers)
 
-        page = 1
         total_processed = 0
-        expected_total = None
+        community_ids = [int(cid) for cid in (community_ids or [])]
 
         if task_id:
             tracker.update_status(task_id, "running")
@@ -331,66 +352,86 @@ def sync_deposit_records(community_ids=None, task_id=None):
                 "info",
             )
 
-        while True:
-            current_vars = dict(base_vars)
-            current_vars.update(
-                {
-                    "page": str(page),
-                    "pageNo": str(page),
-                    "pageSize": str(DEFAULT_PAGE_SIZE),
-                }
-            )
-
-            request_data = resolve_dict_variables(body_template, vars_db, preloaded_vars=current_vars)
-            request_data = _coerce_common_ints(request_data)
-
-            if not request_data:
-                request_data = {"page": page, "pageSize": DEFAULT_PAGE_SIZE}
-            else:
-                request_data.setdefault("page", page)
-                request_data.setdefault("pageSize", DEFAULT_PAGE_SIZE)
-
-            params = request_data if method == "GET" else None
-            json_body = None if method == "GET" else request_data
-
-            try:
-                result = marki_client.request(method, url, params=params, json_data=json_body)
-            except Exception as exc:
-                if task_id:
-                    tracker.add_log(task_id, f"Request failed on page {page}: {exc}", "error")
-                    tracker.update_status(task_id, "failed")
-                raise
-
-            data_list, total, has_more = _parse_list_response(result)
-            if expected_total is None and total:
-                expected_total = total
-
-            if not data_list:
-                break
-
-            counts = insert_deposit_records(data_list, community_ids_filter=community_ids)
-            total_processed += counts["inserted"]
-
+        for index, community_id in enumerate(community_ids, start=1):
             if task_id:
-                tracker.add_log(
-                    task_id,
-                    f"Page {page}: fetched {len(data_list)}, inserted {counts['inserted']}, skipped {counts['skipped']}",
-                    "info",
+                tracker.update_progress(task_id, index - 1, str(community_id))
+                tracker.add_log(task_id, f"Syncing community {community_id}", "info")
+
+            page = 1
+            expected_total = None
+
+            while True:
+                current_vars = dict(base_vars)
+                current_vars.update(
+                    {
+                        "page": str(page),
+                        "pageNo": str(page),
+                        "pageSize": str(DEFAULT_PAGE_SIZE),
+                        "communityId": str(community_id),
+                        "communityID": str(community_id),
+                        "community_id": str(community_id),
+                        "MARKI_COMMUNITY_IDS": str(community_id),
+                    }
                 )
 
-            page_size = int(request_data.get("pageSize") or DEFAULT_PAGE_SIZE)
-            if not has_more:
-                if expected_total is not None and page * page_size < expected_total and len(data_list) == page_size:
-                    page += 1
-                    time.sleep(0.6)
-                    continue
-                break
+                request_data = resolve_dict_variables(body_template, vars_db, preloaded_vars=current_vars)
+                request_data = _coerce_common_ints(request_data)
 
-            page += 1
-            time.sleep(0.6)
+                if not request_data:
+                    request_data = {"page": page, "pageSize": DEFAULT_PAGE_SIZE}
+                else:
+                    request_data.setdefault("page", page)
+                    request_data.setdefault("pageSize", DEFAULT_PAGE_SIZE)
+
+                request_headers = _resolve_request_headers(headers_template, vars_db, current_vars)
+
+                params = request_data if method == "GET" else None
+                json_body = None if method == "GET" else request_data
+
+                try:
+                    result = marki_client.request(
+                        method,
+                        url,
+                        params=params,
+                        json_data=json_body,
+                        extra_headers=request_headers,
+                    )
+                except Exception as exc:
+                    if task_id:
+                        tracker.add_log(task_id, f"Community {community_id} page {page} failed: {exc}", "error")
+                        tracker.update_status(task_id, "failed")
+                    raise
+
+                data_list, total, has_more = _parse_list_response(result)
+                if expected_total is None and total:
+                    expected_total = total
+
+                if not data_list:
+                    break
+
+                counts = insert_deposit_records(data_list, community_ids_filter=[community_id])
+                total_processed += counts["inserted"]
+
+                if task_id:
+                    tracker.add_log(
+                        task_id,
+                        f"Community {community_id} page {page}: fetched {len(data_list)}, inserted {counts['inserted']}, skipped {counts['skipped']}",
+                        "info",
+                    )
+
+                page_size = int(request_data.get("pageSize") or DEFAULT_PAGE_SIZE)
+                if not has_more:
+                    if expected_total is not None and page * page_size < expected_total and len(data_list) == page_size:
+                        page += 1
+                        time.sleep(0.6)
+                        continue
+                    break
+
+                page += 1
+                time.sleep(0.6)
 
         if task_id:
-            tracker.update_progress(task_id, len(community_ids or []), "deposit records")
+            tracker.update_progress(task_id, len(community_ids), "deposit records")
             tracker.update_status(task_id, "completed")
             tracker.add_log(task_id, f"Completed deposit record sync, processed {total_processed} rows", "info")
 
