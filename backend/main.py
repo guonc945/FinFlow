@@ -4235,6 +4235,7 @@ def preview_voucher_for_bill(
             "debit": amount_val if rule.dr_cr == 'D' else 0,
             "credit": amount_val if rule.dr_cr == 'C' else 0,
             "currency": currency,
+            "localrate": localrate_val,
             "assgrp": assgrp if assgrp else None,
             "maincfassgrp": maincfassgrp if maincfassgrp else None,
         })

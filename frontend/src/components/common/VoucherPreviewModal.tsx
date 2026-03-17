@@ -35,13 +35,6 @@ const VoucherPreviewModal = ({
     text: string;
   } | null>(null);
   const [mergeEnabled, setMergeEnabled] = useState(true);
-  const handleCopyJson = () => {
-    if (data?.kingdee_json) {
-      navigator.clipboard.writeText(JSON.stringify(data.kingdee_json, null, 2));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  };
   const getAssgrpDisplayValue = (conf: any): string => {
     if (conf === null || conf === undefined) return "?";
     if (typeof conf !== "object") return String(conf);
@@ -63,6 +56,42 @@ const VoucherPreviewModal = ({
   };
   const acctView = data?.accounting_view;
   const kdJson = data?.kingdee_json;
+  const buildKingdeeJsonFromEntries = (entries: any[]) => {
+    if (!kdJson?.data?.[0]) return kdJson;
+    const header = kdJson.data[0];
+    const mappedEntries = entries.map((entry: any, idx: number) => {
+      const debit = Number(entry.debit || 0);
+      const credit = Number(entry.credit || 0);
+      const kdEntry: any = {
+        seq: idx + 1,
+        edescription: entry.summary || "",
+        account_number: entry.account_code || "",
+        currency_number: entry.currency || "CNY",
+        localrate: Number(entry.localrate || 1),
+        debitori: debit,
+        creditori: credit,
+        debitlocal: debit,
+        creditlocal: credit,
+      };
+      if (entry.assgrp && Object.keys(entry.assgrp).length > 0) {
+        kdEntry.assgrp = entry.assgrp;
+      }
+      if (entry.maincfassgrp && Object.keys(entry.maincfassgrp).length > 0) {
+        kdEntry.maincfassgrp = entry.maincfassgrp;
+      }
+      return kdEntry;
+    });
+
+    return {
+      ...kdJson,
+      data: [
+        {
+          ...header,
+          entries: mappedEntries,
+        },
+      ],
+    };
+  };
   const sourceBills = Array.isArray(data?.source_bills)
     ? data.source_bills
     : [];
@@ -120,6 +149,17 @@ const VoucherPreviewModal = ({
     if (!acctView?.entries) return [];
     return mergeEnabled ? mergeEntries(acctView.entries) : acctView.entries;
   }, [acctView?.entries, mergeEnabled]);
+  const effectiveKingdeeJson = useMemo(() => {
+    if (!acctView?.entries || !kdJson) return kdJson;
+    return buildKingdeeJsonFromEntries(displayedEntries);
+  }, [acctView?.entries, kdJson, displayedEntries]);
+  const handleCopyJson = () => {
+    if (effectiveKingdeeJson) {
+      navigator.clipboard.writeText(JSON.stringify(effectiveKingdeeJson, null, 2));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
   useEffect(() => {
     if (isOpen) {
       setPushFeedback(null);
@@ -130,11 +170,11 @@ const VoucherPreviewModal = ({
     }
   }, [isOpen, data]);
   const handlePushVoucher = async () => {
-    if (!canPush || !onPushVoucher) return;
+    if (!canPush || !onPushVoucher || !effectiveKingdeeJson) return;
     setIsPushing(true);
     setPushFeedback(null);
     try {
-      const result = await onPushVoucher(kdJson);
+      const result = await onPushVoucher(effectiveKingdeeJson);
       if (result?.success) {
         setPushFeedback({
           type: "success",
@@ -232,7 +272,7 @@ const VoucherPreviewModal = ({
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-            {!!kdJson && !isLoading && !error && data?.matched && (
+            {!!effectiveKingdeeJson && !isLoading && !error && data?.matched && (
               <button
                 onClick={() => setIsJsonOpen(true)}
                 style={{
@@ -253,7 +293,7 @@ const VoucherPreviewModal = ({
               </button>
             )}
             {!!onPushVoucher &&
-              !!kdJson &&
+              !!effectiveKingdeeJson &&
               !isLoading &&
               !error &&
               data?.matched && (
@@ -732,7 +772,7 @@ const VoucherPreviewModal = ({
           ) : null}
         </div>
       </div>
-      {isJsonOpen && kdJson && (
+      {isJsonOpen && effectiveKingdeeJson && (
         <div
           onClick={() => setIsJsonOpen(false)}
           style={{
@@ -838,7 +878,7 @@ const VoucherPreviewModal = ({
                   border: "1px solid #1e293b",
                 }}
               >
-                <JsonSyntaxHighlight json={kdJson} />
+                <JsonSyntaxHighlight json={effectiveKingdeeJson} />
               </pre>
             </div>
           </div>
