@@ -630,6 +630,63 @@ class ExternalApi(Base):
     service = relationship("ExternalService", back_populates="apis")
 
 
+class ReportingDbConnection(Base):
+    __tablename__ = "reporting_db_connections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), unique=True, nullable=False, index=True)
+    description = Column(String(500))
+    db_type = Column(String(30), nullable=False, default="postgresql")
+    host = Column(String(255))
+    port = Column(Integer)
+    database_name = Column(String(255), nullable=False)
+    schema_name = Column(String(100))
+    username = Column(String(255))
+    password_enc = Column(Text)
+    connection_options = Column(Text)  # JSON string
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    datasets = relationship("ReportingDataset", back_populates="connection", cascade="all, delete-orphan")
+
+
+class ReportingDataset(Base):
+    __tablename__ = "reporting_datasets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    connection_id = Column(Integer, ForeignKey("reporting_db_connections.id"), nullable=False)
+    name = Column(String(120), nullable=False, index=True)
+    description = Column(String(500))
+    sql_text = Column(Text, nullable=False)
+    params_json = Column(Text)  # JSON string for parameter hints/defaults
+    row_limit = Column(Integer, default=500)
+    last_columns_json = Column(Text)  # JSON string cache of previewed columns
+    last_validated_at = Column(DateTime)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    connection = relationship("ReportingDbConnection", back_populates="datasets")
+    reports = relationship("ReportingReport", back_populates="dataset", cascade="all, delete-orphan")
+
+
+class ReportingReport(Base):
+    __tablename__ = "reporting_reports"
+
+    id = Column(Integer, primary_key=True, index=True)
+    dataset_id = Column(Integer, ForeignKey("reporting_datasets.id"), nullable=False)
+    name = Column(String(120), nullable=False, index=True)
+    description = Column(String(500))
+    report_type = Column(String(30), nullable=False, default="table")
+    config_json = Column(Text)  # JSON string: visible columns, default limit, etc.
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    dataset = relationship("ReportingDataset", back_populates="reports")
+
+
 class GlobalVariable(Base):
     __tablename__ = "global_variables"
 

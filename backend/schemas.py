@@ -255,6 +255,135 @@ class ExternalApiResponse(ExternalApiBase):
 class ExternalServiceWithApis(ExternalServiceResponse):
     apis: List[ExternalApiResponse] = []
 
+
+class ReportingDbConnectionBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+    db_type: str = "postgresql"
+    host: Optional[str] = None
+    port: Optional[int] = None
+    database_name: str
+    schema_name: Optional[str] = None
+    username: Optional[str] = None
+    connection_options: Optional[str] = None
+    is_active: Optional[bool] = True
+
+
+class ReportingDbConnectionCreate(ReportingDbConnectionBase):
+    password: Optional[str] = None
+
+
+class ReportingDbConnectionUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    db_type: Optional[str] = None
+    host: Optional[str] = None
+    port: Optional[int] = None
+    database_name: Optional[str] = None
+    schema_name: Optional[str] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
+    connection_options: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class ReportingDbConnectionResponse(ReportingDbConnectionBase):
+    id: int
+    has_password: bool = False
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ReportingDatasetBase(BaseModel):
+    connection_id: int
+    name: str
+    description: Optional[str] = None
+    sql_text: str
+    params_json: Optional[str] = None
+    row_limit: Optional[int] = Field(500, ge=1, le=5000)
+    is_active: Optional[bool] = True
+
+
+class ReportingDatasetCreate(ReportingDatasetBase):
+    pass
+
+
+class ReportingDatasetUpdate(BaseModel):
+    connection_id: Optional[int] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+    sql_text: Optional[str] = None
+    params_json: Optional[str] = None
+    row_limit: Optional[int] = Field(None, ge=1, le=5000)
+    is_active: Optional[bool] = None
+
+
+class ReportingDatasetResponse(ReportingDatasetBase):
+    id: int
+    connection_name: Optional[str] = None
+    last_columns_json: Optional[str] = None
+    last_validated_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ReportingReportBase(BaseModel):
+    dataset_id: int
+    name: str
+    description: Optional[str] = None
+    report_type: str = "table"
+    config_json: Optional[str] = None
+    is_active: Optional[bool] = True
+
+
+class ReportingReportCreate(ReportingReportBase):
+    pass
+
+
+class ReportingReportUpdate(BaseModel):
+    dataset_id: Optional[int] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+    report_type: Optional[str] = None
+    config_json: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class ReportingReportResponse(ReportingReportBase):
+    id: int
+    dataset_name: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ReportingDatasetPreviewRequest(BaseModel):
+    params: Dict[str, Any] = Field(default_factory=dict)
+    limit: Optional[int] = Field(None, ge=1, le=5000)
+
+
+class ReportingDatasetDraftPreviewRequest(BaseModel):
+    connection_id: int
+    sql_text: str
+    params_json: Optional[str] = None
+    row_limit: Optional[int] = Field(500, ge=1, le=5000)
+    params: Dict[str, Any] = Field(default_factory=dict)
+    limit: Optional[int] = Field(None, ge=1, le=5000)
+
+
+class ReportingReportRunRequest(BaseModel):
+    params: Dict[str, Any] = Field(default_factory=dict)
+    limit: Optional[int] = Field(None, ge=1, le=5000)
+
+
 # Global Variable Schemas
 class GlobalVariableBase(BaseModel):
     key: str

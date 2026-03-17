@@ -316,6 +316,100 @@ export const getChargeItemsRanking = async (limit: number = 10) => {
     return response.data;
 };
 
+export const getReportingConnections = async () => {
+    const response = await axios.get(`${API_BASE_URL}/reporting/db-connections`);
+    return response.data;
+};
+
+export const createReportingConnection = async (data: any) => {
+    const response = await axios.post(`${API_BASE_URL}/reporting/db-connections`, data);
+    return response.data;
+};
+
+export const updateReportingConnection = async (id: number, data: any) => {
+    const response = await axios.put(`${API_BASE_URL}/reporting/db-connections/${id}`, data);
+    return response.data;
+};
+
+export const deleteReportingConnection = async (id: number) => {
+    const response = await axios.delete(`${API_BASE_URL}/reporting/db-connections/${id}`);
+    return response.data;
+};
+
+export const testReportingConnection = async (data: any) => {
+    const response = await axios.post(`${API_BASE_URL}/reporting/db-connections/test`, data);
+    return response.data;
+};
+
+export const getReportingConnectionTables = async (id: number, schemaName?: string) => {
+    const response = await axios.get(`${API_BASE_URL}/reporting/db-connections/${id}/tables`, {
+        params: schemaName ? { schema_name: schemaName } : undefined
+    });
+    return response.data;
+};
+
+export const getReportingDatasets = async () => {
+    const response = await axios.get(`${API_BASE_URL}/reporting/datasets`);
+    return response.data;
+};
+
+export const createReportingDataset = async (data: any) => {
+    const response = await axios.post(`${API_BASE_URL}/reporting/datasets`, data);
+    return response.data;
+};
+
+export const updateReportingDataset = async (id: number, data: any) => {
+    const response = await axios.put(`${API_BASE_URL}/reporting/datasets/${id}`, data);
+    return response.data;
+};
+
+export const deleteReportingDataset = async (id: number) => {
+    const response = await axios.delete(`${API_BASE_URL}/reporting/datasets/${id}`);
+    return response.data;
+};
+
+export const previewReportingDataset = async (id: number, data: { params?: Record<string, any>; limit?: number }) => {
+    const response = await axios.post(`${API_BASE_URL}/reporting/datasets/${id}/preview`, data);
+    return response.data;
+};
+
+export const previewReportingDatasetDraft = async (data: {
+    connection_id: number;
+    sql_text: string;
+    params_json?: string | null;
+    row_limit?: number;
+    params?: Record<string, any>;
+    limit?: number;
+}) => {
+    const response = await axios.post(`${API_BASE_URL}/reporting/datasets/preview-draft`, data);
+    return response.data;
+};
+
+export const getReportingReports = async () => {
+    const response = await axios.get(`${API_BASE_URL}/reporting/reports`);
+    return response.data;
+};
+
+export const createReportingReport = async (data: any) => {
+    const response = await axios.post(`${API_BASE_URL}/reporting/reports`, data);
+    return response.data;
+};
+
+export const updateReportingReport = async (id: number, data: any) => {
+    const response = await axios.put(`${API_BASE_URL}/reporting/reports/${id}`, data);
+    return response.data;
+};
+
+export const deleteReportingReport = async (id: number) => {
+    const response = await axios.delete(`${API_BASE_URL}/reporting/reports/${id}`);
+    return response.data;
+};
+
+export const runReportingReport = async (id: number, data: { params?: Record<string, any>; limit?: number }) => {
+    const response = await axios.post(`${API_BASE_URL}/reporting/reports/${id}/run`, data);
+    return response.data;
+};
+
 export const getChargeItems = async () => {
     const response = await axios.get(`${API_BASE_URL}/charge-items`);
     return response.data;
