@@ -15,6 +15,7 @@ const lazyWithPreload = <T extends ComponentType<any>>(loader: Loader<T>): LazyW
 export const Login = lazyWithPreload(() => import('../pages/auth/Login'));
 export const Dashboard = lazyWithPreload(() => import('../pages/dashboard'));
 export const Bills = lazyWithPreload(() => import('../pages/bills'));
+export const DepositRecords = lazyWithPreload(() => import('../pages/deposit-records'));
 export const ReceiptBills = lazyWithPreload(() => import('../pages/receipt-bills'));
 export const Projects = lazyWithPreload(() => import('../pages/projects'));
 export const ChargeItems = lazyWithPreload(() => import('../pages/charge-items'));
@@ -43,6 +44,7 @@ const routePreloaders: Record<string, () => Promise<unknown>> = {
     '/login': Login.preload,
     '/': Dashboard.preload,
     '/bills': Bills.preload,
+    '/deposit-records': DepositRecords.preload,
     '/receipt-bills': ReceiptBills.preload,
     '/houses': Houses.preload,
     '/residents': Residents.preload,

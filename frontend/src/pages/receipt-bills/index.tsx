@@ -230,6 +230,21 @@ const RelatedBillsModal = ({
     );
 };
 
+const RECEIPT_BILL_DEAL_TYPE_LABELS: Record<number, string> = {
+    1: '预存款充值',
+    2: '预存款退款',
+    3: '账单实收',
+    4: '账单退款',
+    5: '收取押金',
+    6: '退还押金',
+};
+
+const getReceiptBillDealTypeLabel = (dealType?: number | null, dealTypeLabel?: string | null) => {
+    if (dealTypeLabel) return dealTypeLabel;
+    if (dealType == null) return '-';
+    return RECEIPT_BILL_DEAL_TYPE_LABELS[dealType] || `未知类型(${dealType})`;
+};
+
 const ReceiptBills = () => {
     const { toasts, showToast, removeToast } = useToast();
 
@@ -973,6 +988,12 @@ const ReceiptBills = () => {
         { key: 'asset_name', title: '资产/房号' },
         { key: 'payee', title: '收款人' },
         { key: 'payer_name', title: '付款人' },
+        {
+            key: 'deal_type_label',
+            title: '收入类型',
+            width: 120,
+            render: (_: any, record: ReceiptBill) => getReceiptBillDealTypeLabel(record.deal_type, record.deal_type_label),
+        },
         {
             key: 'income_amount',
             title: '入账金额',

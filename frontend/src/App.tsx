@@ -9,6 +9,7 @@ import {
   Login,
   Dashboard,
   Bills,
+  DepositRecords,
   ReceiptBills,
   Projects,
   ChargeItems,
@@ -90,6 +91,7 @@ function App() {
           <Route path="/" element={<MainLayout />}>
             <Route index element={<RouteElement variant="dashboard"><Dashboard /></RouteElement>} />
             <Route path="bills" element={<RouteElement variant="table"><Bills /></RouteElement>} />
+            <Route path="deposit-records" element={<RouteElement variant="table"><DepositRecords /></RouteElement>} />
             <Route path="receipt-bills" element={<RouteElement variant="table"><ReceiptBills /></RouteElement>} />
             <Route path="houses" element={<RouteElement variant="table"><Houses /></RouteElement>} />
             <Route path="residents" element={<RouteElement variant="table"><Residents /></RouteElement>} />

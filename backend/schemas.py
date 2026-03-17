@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List, Any, Literal, Dict
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 # Project Schemas
@@ -141,6 +141,36 @@ class BillSyncRequest(BaseModel):
 
 class ReceiptBillSyncRequest(BaseModel):
     community_ids: Optional[List[int]] = None
+
+
+class DepositRecordSyncRequest(BaseModel):
+    community_ids: Optional[List[int]] = None
+
+
+class DepositRecordResponse(BaseModel):
+    id: int
+    community_id: Optional[int] = None
+    community_name: Optional[str] = None
+    house_id: Optional[int] = None
+    house_name: Optional[str] = None
+    amount: Optional[Decimal] = None
+    operate_type: Optional[int] = None
+    operator: Optional[int] = None
+    operator_name: Optional[str] = None
+    operate_time: Optional[int] = None
+    operate_date: Optional[date] = None
+    cash_pledge_name: Optional[str] = None
+    remark: Optional[str] = None
+    pay_time: Optional[int] = None
+    pay_date: Optional[date] = None
+    has_refund_receipt: Optional[bool] = None
+    refund_receipt_id: Optional[int] = None
+    pay_channel_str: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
 
 
 class BillPreviewRef(BaseModel):

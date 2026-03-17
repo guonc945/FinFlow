@@ -1,27 +1,26 @@
-
 import { startTransition, useEffect, useMemo, useState } from 'react';
 import type { MouseEvent } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
-    LayoutDashboard,
-    Receipt,
-    Wallet,
-    Building2,
     BarChart3,
-    Settings,
-    Users,
-    Network,
-    FileJson,
-    FileText,
-    Layers,
     BookOpen,
-    Database,
+    Building2,
+    Car,
     ChevronDown,
     ChevronRight,
+    Database,
+    FileJson,
+    FileText,
     Home,
-    Car,
+    Landmark,
+    Layers,
+    LayoutDashboard,
+    Network,
+    Receipt,
+    Settings,
     Tags,
-    Landmark
+    Users,
+    Wallet,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import classNames from 'classnames';
@@ -48,7 +47,8 @@ const Sidebar = () => {
     };
 
     const handleRouteClick = (path: string) => (event: MouseEvent<HTMLAnchorElement>) => {
-        const isModifiedClick = event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0;
+        const isModifiedClick =
+            event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0;
         if (isModifiedClick || location.pathname === path) return;
 
         event.preventDefault();
@@ -57,9 +57,9 @@ const Sidebar = () => {
     };
 
     const toggleMenu = (key: string) => {
-        setExpandedMenus(prev => ({
+        setExpandedMenus((prev) => ({
             ...prev,
-            [key]: !prev[key]
+            [key]: !prev[key],
         }));
     };
 
@@ -67,23 +67,19 @@ const Sidebar = () => {
     const user = userStr ? JSON.parse(userStr) : null;
     const isAdmin = user?.role === 'admin';
 
-    // 递归过滤菜单项，并剔除空分组
-    const filterNavItems = (items: NavItem[]): NavItem[] => {
-        return items
-            .filter(item => !item.adminOnly || isAdmin)
-            .map(item => {
-                if (item.children) {
-                    const filteredChildren = filterNavItems(item.children);
-                    if (filteredChildren.length === 0) return null;
-                    return {
-                        ...item,
-                        children: filteredChildren
-                    };
-                }
-                return item;
+    const filterNavItems = (items: NavItem[]): NavItem[] =>
+        items
+            .filter((item) => !item.adminOnly || isAdmin)
+            .map((item) => {
+                if (!item.children) return item;
+                const filteredChildren = filterNavItems(item.children);
+                if (filteredChildren.length === 0) return null;
+                return {
+                    ...item,
+                    children: filteredChildren,
+                };
             })
             .filter(Boolean) as NavItem[];
-    };
 
     const getItemKey = (item: NavItem, level: number, index: number) => item.key || `menu-${level}-${index}`;
 
@@ -94,7 +90,7 @@ const Sidebar = () => {
             if (item.path === pathname) return [];
             if (item.children) {
                 const childAncestors = collectAncestorKeys(item.children, pathname, level + 1);
-                if (childAncestors.length > 0 || item.children.some(c => c.path === pathname)) {
+                if (childAncestors.length > 0 || item.children.some((child) => child.path === pathname)) {
                     return [itemKey, ...childAncestors];
                 }
             }
@@ -113,7 +109,7 @@ const Sidebar = () => {
                 { path: '/receipt-bills', label: '收款账单', icon: Receipt },
                 { path: '/vouchers/templates', label: '模板管理', icon: Layers, adminOnly: true },
                 { path: '/vouchers/categories', label: '模板分类', icon: Tags, adminOnly: true },
-            ]
+            ],
         },
         {
             key: 'integration-center',
@@ -122,7 +118,7 @@ const Sidebar = () => {
             children: [
                 { path: '/integrations/credentials', label: '凭证配置', icon: Settings, adminOnly: true },
                 { path: '/integrations/apis', label: '接口管理', icon: FileJson, adminOnly: true },
-            ]
+            ],
         },
         {
             key: 'base-archives',
@@ -142,7 +138,7 @@ const Sidebar = () => {
                         { path: '/suppliers', label: '供应商管理', icon: Users },
                         { path: '/kd-houses', label: '房号管理', icon: Home },
                         { path: '/bank-accounts', label: '银行账户', icon: Landmark },
-                    ]
+                    ],
                 },
                 {
                     key: 'marki-system',
@@ -151,12 +147,13 @@ const Sidebar = () => {
                     children: [
                         { path: '/projects', label: '园区管理', icon: Building2, adminOnly: true },
                         { path: '/charge-items', label: '收费项目', icon: Wallet, adminOnly: true },
+                        { path: '/deposit-records', label: '押金管理', icon: Wallet },
                         { path: '/houses', label: '房屋管理', icon: Home },
                         { path: '/residents', label: '住户管理', icon: Users },
                         { path: '/parks', label: '车位管理', icon: Car },
-                    ]
-                }
-            ]
+                    ],
+                },
+            ],
         },
         { path: '/reports', label: '统计分析', icon: BarChart3 },
         { path: '/account', label: '个人设置', icon: Users },
@@ -169,7 +166,7 @@ const Sidebar = () => {
                 { path: '/organizations', label: '组织管理', icon: Network },
                 { path: '/users', label: '用户管理', icon: Users },
                 { path: '/settings', label: '系统设置', icon: Settings },
-            ]
+            ],
         },
     ];
 
@@ -178,25 +175,27 @@ const Sidebar = () => {
     useEffect(() => {
         const ancestors = collectAncestorKeys(navItems, location.pathname);
         if (ancestors.length === 0) return;
-        setExpandedMenus(prev => {
+        setExpandedMenus((prev) => {
             const next = { ...prev };
-            ancestors.forEach(key => {
+            ancestors.forEach((key) => {
                 next[key] = true;
             });
             return next;
         });
     }, [location.pathname, navItems]);
 
-    const renderItems = (items: NavItem[], level = 0) => {
-        return items.map((item, index) => {
+    const renderItems = (items: NavItem[], level = 0) =>
+        items.map((item, index) => {
             if (item.children) {
                 const key = getItemKey(item, level, index);
                 const isExpanded = expandedMenus[key];
 
                 return (
-                    <div key={key} className={classNames("nav-group", { "nested-group": level > 0 })}>
+                    <div key={key} className={classNames('nav-group', { 'nested-group': level > 0 })}>
                         <button
-                            className={classNames("nav-item justify-between w-full", { "nested-nav-item": level > 0 })}
+                            className={classNames('nav-item justify-between w-full', {
+                                'nested-nav-item': level > 0,
+                            })}
                             onClick={() => toggleMenu(key)}
                         >
                             <div className="flex items-center gap-3">
@@ -205,11 +204,7 @@ const Sidebar = () => {
                             </div>
                             {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                         </button>
-                        {isExpanded && (
-                            <div className="nav-children">
-                                {renderItems(item.children, level + 1)}
-                            </div>
-                        )}
+                        {isExpanded && <div className="nav-children">{renderItems(item.children, level + 1)}</div>}
                     </div>
                 );
             }
@@ -224,17 +219,16 @@ const Sidebar = () => {
                     onPointerDown={() => warmRoute(item.path)}
                     className={({ isActive }) =>
                         classNames('nav-item', {
-                            'active': isActive,
-                            'nav-child': level > 0
+                            active: isActive,
+                            'nav-child': level > 0,
                         })
                     }
                 >
                     {level === 0 && <item.icon className="nav-icon" size={20} />}
-                    <span className={classNames("nav-text", { "pl-2": level > 0 })}>{item.label}</span>
+                    <span className={classNames('nav-text', { 'pl-2': level > 0 })}>{item.label}</span>
                 </NavLink>
             );
         });
-    };
 
     return (
         <aside className="sidebar glass">
@@ -245,9 +239,7 @@ const Sidebar = () => {
                 </div>
             </div>
 
-            <nav className="sidebar-nav custom-scrollbar">
-                {renderItems(navItems)}
-            </nav>
+            <nav className="sidebar-nav custom-scrollbar">{renderItems(navItems)}</nav>
         </aside>
     );
 };

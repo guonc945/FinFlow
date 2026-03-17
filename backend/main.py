@@ -17,6 +17,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional, Set
 import models, schemas, database
 from fetch_bills import sync_bills
+from fetch_deposit_records import sync_deposit_records
 from fetch_receipt_bills import sync_receipt_bills
 from fetch_charge_items import sync_charge_items
 from fetch_houses import sync_houses
@@ -2044,6 +2045,178 @@ def get_bill(
 
 # ===================== Receipt Bills (收款账单) =====================
 
+RECEIPT_BILL_DEAL_TYPE_LABELS = {
+    1: "预存款充值",
+    2: "预存款退款",
+    3: "账单实收",
+    4: "账单退款",
+    5: "收取押金",
+    6: "退还押金",
+}
+
+DEPOSIT_OPERATE_TYPE_LABELS = {
+    1: "收取",
+    2: "退还",
+}
+
+
+def _serialize_deposit_record(record: models.DepositRecord) -> Dict[str, Any]:
+    operate_type = int(record.operate_type) if record.operate_type is not None else None
+    return {
+        "id": record.id,
+        "community_id": record.community_id,
+        "community_name": record.community_name or ("未匹配园区" if record.community_id is None else f"园区 {record.community_id}"),
+        "house_id": record.house_id,
+        "house_name": record.house_name,
+        "amount": float(record.amount) if record.amount is not None else 0,
+        "operate_type": operate_type,
+        "operate_type_label": DEPOSIT_OPERATE_TYPE_LABELS.get(operate_type, "其他"),
+        "operator": record.operator,
+        "operator_name": record.operator_name,
+        "operate_time": record.operate_time,
+        "operate_date": record.operate_date,
+        "cash_pledge_name": record.cash_pledge_name,
+        "remark": record.remark,
+        "pay_time": record.pay_time,
+        "pay_date": record.pay_date,
+        "has_refund_receipt": bool(record.has_refund_receipt),
+        "refund_receipt_id": record.refund_receipt_id,
+        "pay_channel_str": record.pay_channel_str,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+    }
+
+
+@app.get("/api/deposit-records")
+def get_deposit_records(
+    search: Optional[str] = None,
+    community_ids: Optional[str] = None,
+    operate_type: Optional[int] = None,
+    operate_date_start: Optional[str] = None,
+    operate_date_end: Optional[str] = None,
+    pay_date_start: Optional[str] = None,
+    pay_date_end: Optional[str] = None,
+    has_refund_receipt: Optional[bool] = None,
+    skip: int = 0,
+    limit: int = 25,
+    db: Session = Depends(get_db),
+    allowed_community_ids: List[int] = Depends(get_allowed_community_ids),
+):
+    from sqlalchemy import func as sa_func, cast, String as SAString
+
+    if not allowed_community_ids:
+        return {"total": 0, "total_amount": 0.00, "items": []}
+
+    query = db.query(models.DepositRecord).filter(
+        models.DepositRecord.community_id.in_(allowed_community_ids)
+    )
+
+    if community_ids:
+        try:
+            ids = [int(cid.strip()) for cid in community_ids.split(",") if cid.strip()]
+            if ids:
+                query = query.filter(models.DepositRecord.community_id.in_(ids))
+        except ValueError:
+            pass
+
+    if operate_type is not None:
+        query = query.filter(models.DepositRecord.operate_type == operate_type)
+
+    if operate_date_start:
+        try:
+            start_dt = datetime.strptime(operate_date_start, "%Y-%m-%d").date()
+            query = query.filter(models.DepositRecord.operate_date >= start_dt)
+        except ValueError:
+            pass
+
+    if operate_date_end:
+        try:
+            end_dt = datetime.strptime(operate_date_end, "%Y-%m-%d").date()
+            query = query.filter(models.DepositRecord.operate_date <= end_dt)
+        except ValueError:
+            pass
+
+    if pay_date_start:
+        try:
+            start_dt = datetime.strptime(pay_date_start, "%Y-%m-%d").date()
+            query = query.filter(models.DepositRecord.pay_date >= start_dt)
+        except ValueError:
+            pass
+
+    if pay_date_end:
+        try:
+            end_dt = datetime.strptime(pay_date_end, "%Y-%m-%d").date()
+            query = query.filter(models.DepositRecord.pay_date <= end_dt)
+        except ValueError:
+            pass
+
+    if has_refund_receipt is not None:
+        query = query.filter(models.DepositRecord.has_refund_receipt == has_refund_receipt)
+
+    if search:
+        like = f"%{search}%"
+        query = query.filter(
+            or_(
+                cast(models.DepositRecord.id, SAString).ilike(like),
+                cast(models.DepositRecord.house_id, SAString).ilike(like),
+                models.DepositRecord.house_name.ilike(like),
+                models.DepositRecord.community_name.ilike(like),
+                models.DepositRecord.operator_name.ilike(like),
+                models.DepositRecord.cash_pledge_name.ilike(like),
+                models.DepositRecord.remark.ilike(like),
+                models.DepositRecord.pay_channel_str.ilike(like),
+            )
+        )
+
+    total = query.count()
+    total_amount = query.with_entities(sa_func.sum(models.DepositRecord.amount)).scalar()
+    rows = (
+        query.order_by(models.DepositRecord.operate_time.desc().nullslast(), models.DepositRecord.id.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+    return {
+        "total": total,
+        "total_amount": float(total_amount) if total_amount else 0.00,
+        "items": [_serialize_deposit_record(row) for row in rows],
+    }
+
+
+@app.post("/api/deposit-records/sync")
+def sync_deposit_records_endpoint(
+    background_tasks: BackgroundTasks,
+    request: Optional[schemas.DepositRecordSyncRequest] = None,
+    allowed_community_ids: List[int] = Depends(get_allowed_community_ids),
+):
+    if request and request.community_ids:
+        community_ids = [cid for cid in request.community_ids if cid in allowed_community_ids]
+    else:
+        community_ids = allowed_community_ids
+
+    if not community_ids:
+        raise HTTPException(status_code=403, detail="No authorized communities for this account book")
+
+    str_ids = [str(cid) for cid in community_ids]
+    task_id = tracker.create_task(str_ids)
+    background_tasks.add_task(sync_deposit_records, community_ids, task_id)
+
+    return {
+        "message": "Deposit record synchronization started",
+        "task_id": task_id,
+        "community_ids": str_ids,
+    }
+
+
+@app.get("/api/deposit-records/sync/status/{task_id}")
+def get_deposit_record_sync_status(task_id: str):
+    status = tracker.get_task_status(task_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return status
+
+
 @app.get("/api/receipt-bills")
 def get_receipt_bills(
     search: Optional[str] = None,
@@ -2193,6 +2366,7 @@ def get_receipt_bills(
             "deal_time": rb.deal_time,
             "deal_date": rb.deal_date,
             "deal_type": rb.deal_type,
+            "deal_type_label": RECEIPT_BILL_DEAL_TYPE_LABELS.get(rb.deal_type, "其他"),
             **receipt_push_status,
         })
 
@@ -2260,6 +2434,7 @@ def get_receipt_bill(
         "community_id": rb.community_id,
         "receipt_id": rb.receipt_id,
         "deal_type": rb.deal_type,
+        "deal_type_label": RECEIPT_BILL_DEAL_TYPE_LABELS.get(rb.deal_type, "其他"),
         "asset_type": rb.asset_type,
         "asset_name": rb.asset_name,
         "asset_id": rb.asset_id,
@@ -3663,7 +3838,7 @@ _RECEIPT_BILL_FIELD_LABELS: Dict[str, str] = {
     "asset_name": "资产名称",
     "asset_id": "资产ID",
     "asset_type": "资产类型",
-    "deal_type": "交易类型",
+    "deal_type": "收入类型",
     "remark": "备注",
     "fk_id": "FK_ID",
     "bind_users_raw": "关联住户备份(JSON)",

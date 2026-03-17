@@ -467,6 +467,38 @@ class ReceiptBillUser(Base):
     )
 
 
+class DepositRecord(Base):
+    __tablename__ = "deposit_records"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    community_id = Column(Integer, index=True, nullable=True)
+    community_name = Column(String(255))
+
+    house_id = Column(BigInteger, index=True)
+    house_name = Column(String(255))
+
+    amount = Column(DECIMAL(12, 2))
+    operate_type = Column(Integer, index=True)
+    operator = Column(BigInteger, index=True)
+    operator_name = Column(String(255))
+    operate_time = Column(BigInteger, index=True)
+    operate_date = Column(Date, index=True)
+
+    cash_pledge_name = Column(String(255))
+    remark = Column(Text)
+
+    pay_time = Column(BigInteger, index=True)
+    pay_date = Column(Date, index=True)
+    has_refund_receipt = Column(Boolean, default=False)
+    refund_receipt_id = Column(BigInteger, index=True)
+    pay_channel_str = Column(String(100))
+
+    raw_data = Column(Text)
+
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 class BillVoucherPushRecord(Base):
     __tablename__ = "bill_voucher_push_records"
 

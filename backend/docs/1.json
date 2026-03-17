@@ -2,133 +2,57 @@
     "code": 0,
     "msg": "",
     "data": {
+        "total": 3,
+        "hasMore": false,
         "list": [
             {
-                "id": 16496989,
-                "dealType": 3,
-                "assetType": 1,
-                "assetName": "7栋/2单元/7-2-802",
-                "assetId": 2804892,
-                "bindUsers": [
-                    {
-                        "id": 1955964,
-                        "name": "李学富",
-                        "phone": "18869714410"
-                    }
-                ],
-                "incomeAmount": 203165,
-                "amount": 203160,
-                "discountAmount": -5,
-                "lateMoneyAmount": 0,
-                "billAmount": 203165,
-                "depositAmount": 0,
-                "payChannel": 4,
-                "payChannelList": [
-                    4
-                ],
-                "payChannelStr": "线下-微信",
-                "dealTime": 1773122937,
+                "id": 231173,
+                "houseId": 2804948,
+                "houseName": "9栋/2单元/9-2-801",
+                "amount": 300000,
+                "operateType": 1,
+                "operator": 4808284013,
+                "operatorName": "未来森林A区管家-钱丽",
+                "operateTime": 1773115200,
+                "cashPledgeName": "装修保证金",
                 "remark": "",
-                "fkId": 15891648,
-                "receiptId": "1095600000547",
-                "receiptRecordId": 6108258,
-                "receiptVersion": 1,
-                "invoiceNumber": "",
-                "invoiceUrls": null,
-                "invoiceStatus": 0,
-                "openInvoice": 2,
-                "payee": "未来森林A区管家-钱丽"
+                "payTime": 1773114752,
+                "hasRefundReceipt": false,
+                "refundReceiptId": 0,
+                "payChannelStr": "线下-微信"
             },
             {
-                "id": 16495706,
-                "dealType": 3,
-                "assetType": 1,
-                "assetName": "9栋/2单元/9-2-801",
-                "assetId": 2804948,
-                "bindUsers": [
-                    {
-                        "id": 1956020,
-                        "name": "李清达",
-                        "phone": ""
-                    }
-                ],
-                "incomeAmount": 42990,
-                "amount": 42990,
-                "discountAmount": 0,
-                "lateMoneyAmount": 0,
-                "billAmount": 42990,
-                "depositAmount": 0,
-                "payChannel": 4,
-                "payChannelList": [
-                    4
-                ],
-                "payChannelStr": "线下-微信",
-                "dealTime": 1773114865,
+                "id": 229253,
+                "houseId": 2804856,
+                "houseName": "6栋/1单元/6-1-802",
+                "amount": 300000,
+                "operateType": 2,
+                "operator": 4808284013,
+                "operatorName": "未来森林A区管家-钱丽",
+                "operateTime": 1772434976,
+                "cashPledgeName": "装修保证金",
                 "remark": "",
-                "fkId": 15890406,
-                "receiptId": "1095600000546",
-                "receiptRecordId": 6107349,
-                "receiptVersion": 1,
-                "invoiceNumber": "",
-                "invoiceUrls": null,
-                "invoiceStatus": 0,
-                "openInvoice": 2,
-                "payee": "未来森林A区管家-钱丽"
+                "payTime": 1772434548,
+                "hasRefundReceipt": true,
+                "refundReceiptId": 51147,
+                "payChannelStr": "线下-其它"
             },
             {
-                "id": 16495677,
-                "dealType": 5,
-                "assetType": 1,
-                "assetName": "9栋/2单元/9-2-801",
-                "assetId": 2804948,
-                "bindUsers": [
-                    {
-                        "id": 1956020,
-                        "name": "李清达",
-                        "phone": ""
-                    }
-                ],
-                "incomeAmount": 300000,
-                "amount": 0,
-                "discountAmount": 0,
-                "lateMoneyAmount": 0,
-                "billAmount": 0,
-                "depositAmount": 0,
-                "payChannel": 4,
-                "payChannelList": [
-                    4
-                ],
-                "payChannelStr": "线下-微信",
-                "dealTime": 1773114752,
-                "remark": "",
-                "fkId": 0,
-                "receiptId": "1095600000545",
-                "receiptRecordId": 6107330,
-                "receiptVersion": 1,
-                "invoiceNumber": "",
-                "invoiceUrls": null,
-                "invoiceStatus": 0,
-                "openInvoice": 2,
-                "payee": "未来森林A区管家-钱丽"
+                "id": 229242,
+                "houseId": 2804951,
+                "houseName": "9栋/2单元/9-2-302",
+                "amount": 300000,
+                "operateType": 2,
+                "operator": 4808284013,
+                "operatorName": "未来森林A区管家-钱丽",
+                "operateTime": 1772434303,
+                "cashPledgeName": "装修保证金",
+                "remark": "押金转入预存款",
+                "payTime": 1772434303,
+                "hasRefundReceipt": true,
+                "refundReceiptId": 51139,
+                "payChannelStr": "押金转预存"
             }
-        ],
-        "depositCurrentAmount": 0,
-        "incomeTotalAmount": 546155,
-        "billTotalAmount": 246155,
-        "depositTotalAmount": 0,
-        "refundTotalAmount": 0,
-        "refundDepositAmount": 0,
-        "billDepositAmount": 0,
-        "cashPledgeAmount": 300000,
-        "refundCashPledgeAmount": 0,
-        "total": 3,
-        "nextId": -1,
-        "hasMore": false,
-        "incomeAmountSum": 546155,
-        "amountSum": 246150,
-        "discountAmountSum": -5,
-        "lateMoneyAmountSum": 0,
-        "billAmountSum": 246155,
-        "depositAmountSum": 0
+        ]
     }
 }

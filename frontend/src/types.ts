@@ -119,6 +119,7 @@ export interface ReceiptBill {
     deal_time?: number | null;
     deal_date?: string | null;
     deal_type?: number | null;
+    deal_type_label?: string | null;
     related_bill_count?: number;
     related_bill_push_summary?: PushStatusSummary;
     push_status?: 'unbound' | 'not_pushed' | 'pushing' | 'success' | 'failed' | 'partial';
@@ -129,6 +130,30 @@ export interface ReceiptBill {
     pushed_at?: string | null;
     message?: string | null;
     account_book_number?: string | null;
+}
+
+export interface DepositRecord {
+    id: string;
+    community_id?: number | null;
+    community_name?: string | null;
+    house_id?: number | null;
+    house_name?: string | null;
+    amount: number;
+    operate_type?: number | null;
+    operate_type_label?: string | null;
+    operator?: number | null;
+    operator_name?: string | null;
+    operate_time?: number | null;
+    operate_date?: string | null;
+    cash_pledge_name?: string | null;
+    remark?: string | null;
+    pay_time?: number | null;
+    pay_date?: string | null;
+    has_refund_receipt?: boolean;
+    refund_receipt_id?: number | null;
+    pay_channel_str?: string | null;
+    created_at: string;
+    updated_at?: string | null;
 }
 
 export interface ChargeItem {
