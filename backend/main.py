@@ -2,13 +2,17 @@ import json
 import hashlib
 import re
 import uuid
+import csv
+import io
 from datetime import datetime, timedelta
+from urllib.parse import quote
 from utils.crypto import encrypt_value
 from fastapi import FastAPI, Depends, HTTPException, Query, Request, status, BackgroundTasks, Header
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session, joinedload, selectinload
-from sqlalchemy import and_, desc, func, extract, or_, inspect, text
+from sqlalchemy import and_, desc, func, extract, or_, inspect, text, cast, String
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Set
 import models, schemas, database
@@ -1514,7 +1518,6 @@ def get_bills(
                     just_names.append(item)
             
             # Combine all conditions
-            from sqlalchemy import or_
             all_conditions = list(condition_list)
             if just_names:
                 all_conditions.append(models.Bill.charge_item_name.in_(just_names))
@@ -1654,6 +1657,264 @@ def get_bills(
             ),
         } for bill, proj_name, customer_name in results]
     }
+
+
+@app.get("/api/bills/export")
+def export_bills(
+    search: Optional[str] = None,
+    community_ids: Optional[str] = None,
+    status: Optional[str] = None,
+    charge_items: Optional[str] = None,
+    customer_name: Optional[str] = None,
+    bill_id: Optional[str] = None,
+    receipt_id: Optional[str] = None,
+    house_name: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    in_month_start: Optional[str] = None,
+    in_month_end: Optional[str] = None,
+    pay_date_start: Optional[str] = None,
+    pay_date_end: Optional[str] = None,
+    pay_time_start: Optional[str] = None,
+    pay_time_end: Optional[str] = None,
+    deal_log_id: Optional[int] = None,
+    x_account_book_number: Optional[str] = Header(None, alias="X-Account-Book-Number"),
+    db: Session = Depends(get_db),
+    allowed_community_ids: List[int] = Depends(get_allowed_community_ids)
+):
+    customer_subq = (
+        db.query(
+            models.BillUser.bill_id,
+            models.BillUser.community_id,
+            func.string_agg(models.BillUser.user_name, ', ').label('customer_name')
+        )
+        .group_by(models.BillUser.bill_id, models.BillUser.community_id)
+        .subquery()
+    )
+
+    query = db.query(
+        models.Bill,
+        models.ProjectList.proj_name,
+        customer_subq.c.customer_name
+    ).outerjoin(
+        models.ProjectList, models.Bill.community_id == models.ProjectList.proj_id
+    ).outerjoin(
+        customer_subq,
+        (models.Bill.id == customer_subq.c.bill_id) &
+        (models.Bill.community_id == customer_subq.c.community_id)
+    )
+
+    if allowed_community_ids:
+        query = query.filter(models.Bill.community_id.in_(allowed_community_ids))
+    else:
+        query = query.filter(text("1=0"))
+
+    if community_ids:
+        try:
+            ids = [int(cid.strip()) for cid in community_ids.split(",") if cid.strip()]
+            if ids:
+                query = query.filter(models.Bill.community_id.in_(ids))
+        except ValueError:
+            pass
+
+    if customer_name:
+        query = query.filter(customer_subq.c.customer_name.ilike(f"%{customer_name}%"))
+
+    if status and status != "全部状态":
+        query = query.filter(models.Bill.pay_status_str == status)
+
+    if charge_items:
+        c_items = [ci.strip() for ci in charge_items.split(",") if ci.strip()]
+        if c_items:
+            condition_list = []
+            just_names = []
+            for item in c_items:
+                if '|' in item:
+                    try:
+                        pid, name = item.split('|', 1)
+                        condition_list.append((models.Bill.community_id == int(pid)) & (models.Bill.charge_item_name == name))
+                    except ValueError:
+                        just_names.append(item)
+                else:
+                    just_names.append(item)
+
+            all_conditions = list(condition_list)
+            if just_names:
+                all_conditions.append(models.Bill.charge_item_name.in_(just_names))
+
+            if all_conditions:
+                query = query.filter(or_(*all_conditions))
+
+    if start_date:
+        try:
+            start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+            query = query.filter(models.Bill.created_at >= start_dt)
+        except ValueError:
+            pass
+
+    if end_date:
+        try:
+            end_dt = datetime.strptime(f"{end_date} 23:59:59", '%Y-%m-%d %H:%M:%S')
+            query = query.filter(models.Bill.created_at <= end_dt)
+        except ValueError:
+            pass
+
+    if in_month_start:
+        query = query.filter(models.Bill.in_month >= in_month_start)
+    if in_month_end:
+        query = query.filter(models.Bill.in_month <= in_month_end)
+
+    if pay_date_start:
+        try:
+            date_start = datetime.strptime(pay_date_start, '%Y-%m-%d').date()
+            query = query.filter(models.Bill.receive_date >= date_start)
+        except ValueError:
+            pass
+
+    if pay_date_end:
+        try:
+            date_end = datetime.strptime(pay_date_end, '%Y-%m-%d').date()
+            query = query.filter(models.Bill.receive_date <= date_end)
+        except ValueError:
+            pass
+
+    if pay_time_start:
+        try:
+            pt_start = int(datetime.strptime(f"{pay_time_start} 00:00:00", '%Y-%m-%d %H:%M:%S').timestamp())
+            query = query.filter(models.Bill.pay_time >= pt_start)
+        except ValueError:
+            pass
+
+    if pay_time_end:
+        try:
+            pt_end = int(datetime.strptime(f"{pay_time_end} 23:59:59", '%Y-%m-%d %H:%M:%S').timestamp())
+            query = query.filter(models.Bill.pay_time <= pt_end)
+        except ValueError:
+            pass
+
+    if deal_log_id is not None:
+        try:
+            query = query.filter(models.Bill.deal_log_id == int(deal_log_id))
+        except Exception:
+            pass
+
+    if bill_id:
+        try:
+            query = query.filter(models.Bill.id == int(bill_id))
+        except Exception:
+            pass
+
+    if receipt_id:
+        query = query.filter(models.Bill.receipt_id.ilike(f"%{receipt_id}%"))
+
+    if house_name:
+        like = f"%{house_name}%"
+        query = query.filter(or_(
+            models.Bill.full_house_name.ilike(like),
+            models.Bill.bind_house_name.ilike(like),
+            models.Bill.asset_name.ilike(like)
+        ))
+
+    if search:
+        keyword = search.strip()
+        if keyword:
+            like = f"%{keyword}%"
+            search_conditions = [
+                models.Bill.receipt_id.ilike(like),
+                models.Bill.full_house_name.ilike(like),
+                models.Bill.bind_house_name.ilike(like),
+                models.Bill.asset_name.ilike(like),
+                customer_subq.c.customer_name.ilike(like),
+            ]
+
+            if keyword.isdigit():
+                numeric_value = int(keyword)
+                search_conditions.extend([
+                    models.Bill.id == numeric_value,
+                    models.Bill.deal_log_id == numeric_value,
+                ])
+            else:
+                search_conditions.extend([
+                    cast(models.Bill.id, String).ilike(like),
+                    cast(models.Bill.deal_log_id, String).ilike(like),
+                ])
+
+            query = query.filter(or_(*search_conditions))
+
+    results = query.order_by(models.Bill.created_at.desc()).all()
+    status_map = _get_bill_push_status_map(
+        db,
+        [{"bill_id": bill.id, "community_id": bill.community_id} for bill, _, _ in results],
+        account_book_number=_decode_header_value(x_account_book_number) or None,
+    )
+
+    def _format_dt(value):
+        if not value:
+            return ""
+        if isinstance(value, datetime):
+            return value.strftime("%Y-%m-%d %H:%M:%S")
+        return str(value)
+
+    def _format_timestamp(value):
+        if value in (None, ""):
+            return ""
+        try:
+            return datetime.fromtimestamp(int(value)).strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return str(value)
+
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output)
+    writer.writerow([
+        "账单ID",
+        "缴费ID",
+        "收据ID",
+        "园区",
+        "房产名称",
+        "房号",
+        "客户名称",
+        "收费项目",
+        "所属月份",
+        "收款金额",
+        "收费状态",
+        "支付日期",
+        "支付时间",
+        "创建时间",
+        "推送状态",
+        "凭证号",
+    ])
+
+    for bill, proj_name, customer_name_value in results:
+        push_status = status_map.get(
+            (int(bill.id), int(bill.community_id)),
+            _build_bill_push_status_entry(int(bill.id), int(bill.community_id)),
+        )
+        writer.writerow([
+            bill.id,
+            bill.deal_log_id or "",
+            bill.receipt_id or "",
+            proj_name or bill.community_id,
+            bill.asset_name or "",
+            bill.full_house_name or "",
+            customer_name_value or "",
+            bill.charge_item_name or "",
+            bill.in_month or "",
+            float(bill.amount) if bill.amount else 0,
+            bill.pay_status_str or "",
+            bill.receive_date or "",
+            _format_timestamp(bill.pay_time),
+            _format_dt(bill.created_at),
+            push_status.get("push_status_label", ""),
+            push_status.get("voucher_number", "") or "",
+        ])
+
+    filename = f"bills_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    response = StreamingResponse(iter([output.getvalue()]), media_type="text/csv; charset=utf-8")
+    response.headers["Content-Disposition"] = (
+        f"attachment; filename={filename}; filename*=UTF-8''{quote(filename)}"
+    )
+    return response
 
 @app.post("/api/bills/sync")
 def sync_bills_endpoint(
@@ -3127,6 +3388,80 @@ def _try_parse_number(value: Any) -> Optional[float]:
         return None
 
 
+def _try_parse_decimal(value: Any) -> Optional[Decimal]:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, Decimal):
+        return value
+    if isinstance(value, int):
+        return Decimal(value)
+    if isinstance(value, float):
+        return Decimal(str(value))
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    normalized = text.replace(",", "")
+    if normalized.endswith("%"):
+        normalized = normalized[:-1].strip()
+        if not normalized:
+            return None
+        try:
+            return Decimal(normalized) / Decimal("100")
+        except Exception:
+            return None
+
+    try:
+        return Decimal(normalized)
+    except Exception:
+        return None
+
+
+def _json_number(value: Any) -> float:
+    if isinstance(value, Decimal):
+        return float(value)
+    parsed = _try_parse_decimal(value)
+    return float(parsed) if parsed is not None else 0.0
+
+
+def _validate_voucher_json_amounts(kingdee_json: Dict[str, Any]) -> None:
+    data_rows = kingdee_json.get("data")
+    if not isinstance(data_rows, list) or not data_rows:
+        raise HTTPException(status_code=400, detail="kingdee_json.data is required")
+
+    header = data_rows[0] or {}
+    entries = header.get("entries")
+    if not isinstance(entries, list) or not entries:
+        raise HTTPException(status_code=400, detail="kingdee_json.data[0].entries is required")
+
+    debit_ori = Decimal("0")
+    credit_ori = Decimal("0")
+    debit_local = Decimal("0")
+    credit_local = Decimal("0")
+
+    for idx, entry in enumerate(entries, start=1):
+        if not isinstance(entry, dict):
+            raise HTTPException(status_code=400, detail=f"kingdee_json entry #{idx} must be an object")
+
+        debit_ori += _try_parse_decimal(entry.get("debitori")) or Decimal("0")
+        credit_ori += _try_parse_decimal(entry.get("creditori")) or Decimal("0")
+        debit_local += _try_parse_decimal(entry.get("debitlocal")) or Decimal("0")
+        credit_local += _try_parse_decimal(entry.get("creditlocal")) or Decimal("0")
+
+    tolerance = Decimal("0.000001")
+    if abs(debit_ori - credit_ori) > tolerance:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Voucher JSON debit/credit not balanced: debitori={debit_ori} creditori={credit_ori}",
+        )
+    if abs(debit_local - credit_local) > tolerance:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Voucher JSON local debit/credit not balanced: debitlocal={debit_local} creditlocal={credit_local}",
+        )
+
+
 def _try_parse_datetime(value: Any) -> Optional[datetime]:
     if value is None:
         return None
@@ -4190,15 +4525,8 @@ def preview_voucher_for_bill(
             if fullname != account_code:
                 account_display_name = f"{account_code} {fullname}"
 
-        try:
-            amount_val = float(amount_str) if amount_str else 0
-        except (ValueError, TypeError):
-            amount_val = 0
-
-        try:
-            localrate_val = float(localrate) if localrate else 1.0
-        except (ValueError, TypeError):
-            localrate_val = 1.0
+        amount_val = _try_parse_decimal(amount_str) or Decimal("0")
+        localrate_val = _try_parse_decimal(localrate) or Decimal("1")
 
         # 瑙ｆ瀽杈呭姪鏍哥畻
         assgrp = {}
@@ -4232,10 +4560,10 @@ def preview_voucher_for_bill(
             "account_name": subject_names_cache.get(account_code, ""),
             "account_display": account_display_name,
             "dr_cr": rule.dr_cr,
-            "debit": amount_val if rule.dr_cr == 'D' else 0,
-            "credit": amount_val if rule.dr_cr == 'C' else 0,
+            "debit": _json_number(amount_val) if rule.dr_cr == 'D' else 0.0,
+            "credit": _json_number(amount_val) if rule.dr_cr == 'C' else 0.0,
             "currency": currency,
-            "localrate": localrate_val,
+            "localrate": _json_number(localrate_val),
             "assgrp": assgrp if assgrp else None,
             "maincfassgrp": maincfassgrp if maincfassgrp else None,
         })
@@ -4246,11 +4574,11 @@ def preview_voucher_for_bill(
             "edescription": summary,
             "account_number": account_code,
             "currency_number": currency,
-            "localrate": localrate_val,
-            "debitori": amount_val if rule.dr_cr == 'D' else 0,
-            "creditori": 0 if rule.dr_cr == 'D' else amount_val,
-            "debitlocal": amount_val if rule.dr_cr == 'D' else 0,
-            "creditlocal": 0 if rule.dr_cr == 'D' else amount_val,
+            "localrate": _json_number(localrate_val),
+            "debitori": _json_number(amount_val) if rule.dr_cr == 'D' else 0.0,
+            "creditori": 0.0 if rule.dr_cr == 'D' else _json_number(amount_val),
+            "debitlocal": _json_number(amount_val) if rule.dr_cr == 'D' else 0.0,
+            "creditlocal": 0.0 if rule.dr_cr == 'D' else _json_number(amount_val),
         }
         if assgrp:
             kd_entry["assgrp"] = assgrp
@@ -4258,8 +4586,8 @@ def preview_voucher_for_bill(
             kd_entry["maincfassgrp"] = maincfassgrp
         kingdee_entries.append(kd_entry)
 
-    total_debit = sum(e["debit"] for e in accounting_entries)
-    total_credit = sum(e["credit"] for e in accounting_entries)
+    total_debit = sum((_try_parse_decimal(e.get("debit")) or Decimal("0")) for e in accounting_entries)
+    total_credit = sum((_try_parse_decimal(e.get("credit")) or Decimal("0")) for e in accounting_entries)
 
     # 6. 缂佸嫯鐎瑰本鏆ｉ惃鍕櫨閾﹁埖甯归柅?JSON 缂佹挻鐎?
     kingdee_json = {
@@ -4284,15 +4612,15 @@ def preview_voucher_for_bill(
             "community_id": bill.community_id,
             "charge_item_name": bill.charge_item_name,
             "full_house_name": bill.full_house_name,
-            "amount": float(bill.amount) if bill.amount else 0,
+            "amount": _json_number(bill.amount),
             "asset_name": bill.asset_name,
         },
         "enriched_fields": {k: v for k, v in enriched.items() if k.startswith('kd_')},
         "accounting_view": {
             "entries": accounting_entries,
-            "total_debit": total_debit,
-            "total_credit": total_credit,
-            "is_balanced": abs(total_debit - total_credit) < 0.01,
+            "total_debit": _json_number(total_debit),
+            "total_credit": _json_number(total_credit),
+            "is_balanced": abs(total_debit - total_credit) < Decimal("0.01"),
         },
         "kingdee_json": kingdee_json,
         "selected_bills": source_bills,
@@ -4450,8 +4778,8 @@ def preview_voucher_for_bills(
             entry["line_no"] = len(merged_accounting_entries) + 1
             merged_accounting_entries.append(entry)
 
-    total_debit = sum(float(e.get("debit", 0) or 0) for e in merged_accounting_entries)
-    total_credit = sum(float(e.get("credit", 0) or 0) for e in merged_accounting_entries)
+    total_debit = sum((_try_parse_decimal(e.get("debit")) or Decimal("0")) for e in merged_accounting_entries)
+    total_credit = sum((_try_parse_decimal(e.get("credit")) or Decimal("0")) for e in merged_accounting_entries)
 
     merged_template_ids = sorted({str(p.get("template_id") or "") for p in previews if p.get("template_id")})
     template_name = first_preview.get("template_name") or first_preview.get("template_id") or "BatchMerged"
@@ -4484,9 +4812,9 @@ def preview_voucher_for_bills(
         "push_block_reason": push_block_reason,
         "accounting_view": {
             "entries": merged_accounting_entries,
-            "total_debit": total_debit,
-            "total_credit": total_credit,
-            "is_balanced": abs(total_debit - total_credit) < 0.01,
+            "total_debit": _json_number(total_debit),
+            "total_credit": _json_number(total_credit),
+            "is_balanced": abs(total_debit - total_credit) < Decimal("0.01"),
         },
         "kingdee_json": merged_kingdee_json,
     }
@@ -4513,6 +4841,7 @@ def push_voucher_to_kingdee(
 
     if not isinstance(payload.kingdee_json, dict) or not payload.kingdee_json:
         raise HTTPException(status_code=400, detail="kingdee_json is required")
+    _validate_voucher_json_amounts(payload.kingdee_json)
 
     api_record: Optional[models.ExternalApi] = None
     if payload.api_id is not None:

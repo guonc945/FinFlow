@@ -6,6 +6,7 @@ import {
     X,
     Filter,
     Info,
+    Download,
     ChevronLeft,
     ChevronRight,
     ChevronsLeft,
@@ -15,7 +16,7 @@ import {
 import DataTable from '../../components/data/DataTable';
 import type { Bill, Project } from '../../types';
 import './Bills.css';
-import { syncBills, getProjects, getSyncStatus, getBills, getBillChargeItems } from '../../services/api';
+import { syncBills, getProjects, getSyncStatus, getBills, getBillChargeItems, exportBills } from '../../services/api';
 import { useToast, ToastContainer } from '../../components/Toast';
 import { useLocation } from 'react-router-dom';
 
@@ -131,6 +132,7 @@ const Bills = () => {
     const [selectedBillRefs, setSelectedBillRefs] = useState<Map<string, { bill_id: number; community_id: number }>>(new Map());
 
     const [isLoading, setIsLoading] = useState(true);
+    const [isExporting, setIsExporting] = useState(false);
     const [statusFilter, setStatusFilter] = useState('全部状态');
     const [communityFilter, setCommunityFilter] = useState<string[]>([]);
     const [chargeItemFilter, setChargeItemFilter] = useState<string[]>([]);
@@ -245,10 +247,29 @@ const Bills = () => {
 
     const buildBillSelectionKey = (billId: string | number, communityId?: number) => `${communityId ?? ''}|${billId}`;
 
+    const getBillQueryParams = useCallback(() => {
+        const params: any = {
+            /*
+        status: statusFilter !== '鍏ㄩ儴鐘舵€? ? statusFilter : undefined,
+        status: statusFilter !== '全部状态' ? statusFilter : undefined,
+            */
+            status: statusFilter !== '全部状态' ? statusFilter : undefined,
+        community_ids: communityFilter.length > 0 ? communityFilter.join(',') : undefined,
+        charge_items: chargeItemFilter.length > 0 ? chargeItemFilter.join(',') : undefined,
+        search: keywordFilter || undefined,
+        in_month_start: inMonthStart || undefined,
+        in_month_end: inMonthEnd || undefined,
+        pay_date_start: payTimeStart || undefined,
+        pay_date_end: payTimeEnd || undefined,
+        };
+        return params;
+    }, [statusFilter, communityFilter, chargeItemFilter, keywordFilter, inMonthStart, inMonthEnd, payTimeStart, payTimeEnd]);
+
     const fetchBillsList = useCallback(async () => {
         setIsLoading(true);
         try {
             const params: any = {
+                ...getBillQueryParams(),
                 skip: (page - 1) * pageSize,
                 limit: pageSize,
                 status: statusFilter !== '全部状态' ? statusFilter : undefined,
@@ -276,7 +297,7 @@ const Bills = () => {
         } finally {
             setIsLoading(false);
         }
-    }, [page, pageSize, keywordFilter, statusFilter, communityFilter, chargeItemFilter, inMonthStart, inMonthEnd, payTimeStart, payTimeEnd]);
+    }, [page, pageSize, keywordFilter, statusFilter, communityFilter, chargeItemFilter, inMonthStart, inMonthEnd, payTimeStart, payTimeEnd, getBillQueryParams]);
 
     useEffect(() => {
         fetchBillsList();
@@ -380,6 +401,27 @@ const Bills = () => {
             console.error('Sync trigger failed:', e);
             setIsSyncing(false);
             showToast('error', '同步失败', '启动同步任务失败');
+        }
+    };
+
+    const handleExport = async () => {
+        setIsExporting(true);
+        try {
+            const { blob, filename } = await exportBills(getBillQueryParams());
+            const downloadUrl = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = downloadUrl;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            window.URL.revokeObjectURL(downloadUrl);
+            showToast('success', '导出成功', '运营账单已开始下载');
+        } catch (error) {
+            console.error('Failed to export bills:', error);
+            showToast('error', '导出失败', '运营账单导出失败，请稍后重试');
+        } finally {
+            setIsExporting(false);
         }
     };
 
@@ -574,6 +616,9 @@ const Bills = () => {
                                 <button className={`btn-primary ${selectedProjectIds.length === 0 ? 'disabled' : ''}`} onClick={handleSync} disabled={selectedProjectIds.length === 0}>
                                     <RefreshCw size={14} className={isSyncing && !["completed", "failed"].includes(syncState.status) ? 'animate-spin' : ''} />
                                     {isSyncing && !["completed", "failed"].includes(syncState.status) ? '同步中...' : '开始增量同步'}
+                                </button>
+                                <button className={`btn-outline ${isExporting ? 'disabled' : ''}`} onClick={handleExport} disabled={isExporting}>
+                                    <Download size={14} /> {isExporting ? '导出中...' : '导出账单'}
                                 </button>
                                 <button className="btn-outline btn-refresh-list" onClick={fetchBillsList}>
                                     <RefreshCw size={14} /> 刷新列表

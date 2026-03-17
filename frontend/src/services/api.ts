@@ -208,6 +208,42 @@ export const getBills = async (params?: {
     return response.data;
 };
 
+export const exportBills = async (params?: {
+    search?: string;
+    community_ids?: string;
+    status?: string;
+    charge_items?: string;
+    customer_name?: string;
+    bill_id?: string;
+    receipt_id?: string;
+    house_name?: string;
+    start_date?: string;
+    end_date?: string;
+    in_month_start?: string;
+    in_month_end?: string;
+    pay_date_start?: string;
+    pay_date_end?: string;
+    pay_time_start?: string;
+    pay_time_end?: string;
+    deal_log_id?: number;
+}) => {
+    const response = await axios.get(`${API_BASE_URL}/bills/export`, {
+        params,
+        responseType: 'blob',
+    });
+
+    const disposition = response.headers['content-disposition'] as string | undefined;
+    const filenameStarMatch = disposition?.match(/filename\*=UTF-8''([^;]+)/i);
+    const filenameMatch = disposition?.match(/filename=([^;]+)/i);
+    const rawFilename = filenameStarMatch?.[1] || filenameMatch?.[1]?.replace(/"/g, '');
+    const filename = rawFilename ? decodeURIComponent(rawFilename) : `bills_export_${Date.now()}.csv`;
+
+    return {
+        blob: response.data as Blob,
+        filename,
+    };
+};
+
 export const getBillChargeItems = async () => {
     const response = await axios.get(`${API_BASE_URL}/bills/charge-items`);
     return response.data as { value: string, label: string }[];

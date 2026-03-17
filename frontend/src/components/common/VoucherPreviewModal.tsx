@@ -56,12 +56,25 @@ const VoucherPreviewModal = ({
   };
   const acctView = data?.accounting_view;
   const kdJson = data?.kingdee_json;
+  const moneyToCents = (value: any): number => {
+    const raw = String(value ?? "").replace(/,/g, "").trim();
+    if (!raw) return 0;
+
+    const sign = raw.startsWith("-") ? -1 : 1;
+    const normalized = raw.replace(/^[+-]/, "");
+    const [intPartRaw = "0", fracPartRaw = ""] = normalized.split(".");
+    const intPart = intPartRaw.replace(/\D/g, "") || "0";
+    const fracPart = (fracPartRaw.replace(/\D/g, "") + "00").slice(0, 2);
+
+    return sign * (Number(intPart) * 100 + Number(fracPart));
+  };
+  const centsToMoney = (cents: number): number => cents / 100;
   const buildKingdeeJsonFromEntries = (entries: any[]) => {
     if (!kdJson?.data?.[0]) return kdJson;
     const header = kdJson.data[0];
     const mappedEntries = entries.map((entry: any, idx: number) => {
-      const debit = Number(entry.debit || 0);
-      const credit = Number(entry.credit || 0);
+      const debit = centsToMoney(moneyToCents(entry.debit));
+      const credit = centsToMoney(moneyToCents(entry.credit));
       const kdEntry: any = {
         seq: idx + 1,
         edescription: entry.summary || "",
@@ -97,13 +110,6 @@ const VoucherPreviewModal = ({
     : [];
   const sourceBillSummary = data?.source_bill_push_summary || {};
   const pushBlocked = Boolean(data?.push_blocked);
-  const canPush =
-    !!onPushVoucher &&
-    !!kdJson &&
-    !isLoading &&
-    !error &&
-    data?.matched &&
-    !pushBlocked;
   const normalizeAssgrp = (assgrp: any): Array<[string, string]> => {
     if (!assgrp || typeof assgrp !== "object") return [];
     return Object.entries(assgrp)
@@ -129,21 +135,33 @@ const VoucherPreviewModal = ({
     const merged: any[] = [];
     const indexMap = new Map<string, number>();
     entries.forEach((entry) => {
-      const direction = entry.debit > 0 ? "debit" : "credit";
+      const debitCents = moneyToCents(entry.debit);
+      const creditCents = moneyToCents(entry.credit);
+      const direction = debitCents > 0 ? "debit" : "credit";
       const accountKey = `${entry.account_display || ""}|${entry.account_code || ""}`;
       const assgrpKey = JSON.stringify(normalizeAssgrp(entry.assgrp));
       const key = `${direction}|${accountKey}|${assgrpKey}`;
       if (indexMap.has(key)) {
         const idx = indexMap.get(key) as number;
         const target = merged[idx];
-        target.debit = Number(target.debit || 0) + Number(entry.debit || 0);
-        target.credit = Number(target.credit || 0) + Number(entry.credit || 0);
+        target.debit_cents = Number(target.debit_cents || 0) + debitCents;
+        target.credit_cents = Number(target.credit_cents || 0) + creditCents;
         return;
       }
       indexMap.set(key, merged.length);
-      merged.push({ ...entry });
+      merged.push({
+        ...entry,
+        debit_cents: debitCents,
+        credit_cents: creditCents,
+        localrate: Number(entry.localrate || 1),
+      });
     });
-    return merged.map((entry, idx) => ({ ...entry, line_no: idx + 1 }));
+    return merged.map((entry, idx) => ({
+      ...entry,
+      debit: centsToMoney(Number(entry.debit_cents || 0)),
+      credit: centsToMoney(Number(entry.credit_cents || 0)),
+      line_no: idx + 1,
+    }));
   };
   const displayedEntries = useMemo(() => {
     if (!acctView?.entries) return [];
@@ -153,6 +171,60 @@ const VoucherPreviewModal = ({
     if (!acctView?.entries || !kdJson) return kdJson;
     return buildKingdeeJsonFromEntries(displayedEntries);
   }, [acctView?.entries, kdJson, displayedEntries]);
+  const voucherAmountValidation = useMemo(() => {
+    if (!effectiveKingdeeJson?.data?.[0]?.entries) {
+      return { ok: true, message: "" };
+    }
+
+    const jsonEntries = effectiveKingdeeJson.data[0].entries as any[];
+    const displayedDebitCents = displayedEntries.reduce(
+      (sum: number, entry: any) => sum + moneyToCents(entry.debit),
+      0,
+    );
+    const displayedCreditCents = displayedEntries.reduce(
+      (sum: number, entry: any) => sum + moneyToCents(entry.credit),
+      0,
+    );
+    const jsonDebitCents = jsonEntries.reduce(
+      (sum: number, entry: any) => sum + moneyToCents(entry.debitori),
+      0,
+    );
+    const jsonCreditCents = jsonEntries.reduce(
+      (sum: number, entry: any) => sum + moneyToCents(entry.creditori),
+      0,
+    );
+    const jsonLocalDebitCents = jsonEntries.reduce(
+      (sum: number, entry: any) => sum + moneyToCents(entry.debitlocal),
+      0,
+    );
+    const jsonLocalCreditCents = jsonEntries.reduce(
+      (sum: number, entry: any) => sum + moneyToCents(entry.creditlocal),
+      0,
+    );
+
+    if (jsonDebitCents !== jsonCreditCents) {
+      return { ok: false, message: "JSON 借贷金额不平衡，已阻止推送。" };
+    }
+    if (jsonLocalDebitCents !== jsonLocalCreditCents) {
+      return { ok: false, message: "JSON 本位币借贷金额不平衡，已阻止推送。" };
+    }
+    if (
+      jsonDebitCents !== displayedDebitCents ||
+      jsonCreditCents !== displayedCreditCents
+    ) {
+      return { ok: false, message: "JSON 金额与当前凭证视图不一致，已阻止推送。" };
+    }
+
+    return { ok: true, message: "" };
+  }, [displayedEntries, effectiveKingdeeJson]);
+  const canPush =
+    !!onPushVoucher &&
+    !!effectiveKingdeeJson &&
+    !isLoading &&
+    !error &&
+    data?.matched &&
+    !pushBlocked &&
+    voucherAmountValidation.ok;
   const handleCopyJson = () => {
     if (effectiveKingdeeJson) {
       navigator.clipboard.writeText(JSON.stringify(effectiveKingdeeJson, null, 2));
@@ -299,23 +371,23 @@ const VoucherPreviewModal = ({
               data?.matched && (
                 <button
                   onClick={handlePushVoucher}
-                  disabled={isPushing || pushBlocked}
+                  disabled={isPushing || pushBlocked || !voucherAmountValidation.ok}
                   style={{
                     background:
-                      isPushing || pushBlocked
+                      isPushing || pushBlocked || !voucherAmountValidation.ok
                         ? "rgba(255,255,255,0.2)"
                         : "#16a34a",
                     border: "none",
                     borderRadius: "0.5rem",
                     color: "#fff",
                     cursor:
-                      isPushing || pushBlocked ? "not-allowed" : "pointer",
+                      isPushing || pushBlocked || !voucherAmountValidation.ok ? "not-allowed" : "pointer",
                     padding: "0.38rem 0.75rem",
                     display: "flex",
                     alignItems: "center",
                     fontSize: "0.75rem",
                     fontWeight: 600,
-                    opacity: isPushing || pushBlocked ? 0.8 : 1,
+                    opacity: isPushing || pushBlocked || !voucherAmountValidation.ok ? 0.8 : 1,
                   }}
                   title={
                     pushBlocked
@@ -347,7 +419,16 @@ const VoucherPreviewModal = ({
           </div>
         </div>
         {/* 内容区*/}
-        <div style={{ flex: 1, overflow: "auto", padding: "1.25rem 1.5rem" }}>
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            padding: "1.25rem 1.5rem",
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+          }}
+        >
           {isLoading ? (
             <div
               style={{
@@ -433,6 +514,22 @@ const VoucherPreviewModal = ({
                   {pushFeedback.text}
                 </div>
               )}
+              {!voucherAmountValidation.ok && (
+                <div
+                  style={{
+                    marginBottom: "0.75rem",
+                    padding: "0.5rem 0.75rem",
+                    borderRadius: "0.5rem",
+                    fontSize: "0.75rem",
+                    fontWeight: 600,
+                    background: "#fef2f2",
+                    color: "#991b1b",
+                    border: "1px solid #fecaca",
+                  }}
+                >
+                  {voucherAmountValidation.message}
+                </div>
+              )}
               {sourceBills.length > 0 && (
                 <div
                   style={{
@@ -492,7 +589,14 @@ const VoucherPreviewModal = ({
                 </div>
               )}
               {acctView && (
-                <div>
+                <div
+                  style={{
+                    flex: 1,
+                    minHeight: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                  }}
+                >
                   {/* 平衡状态*/}
                   <div
                     style={{
@@ -507,6 +611,7 @@ const VoucherPreviewModal = ({
                       background: acctView.is_balanced ? "#f0fdf4" : "#fef2f2",
                       color: acctView.is_balanced ? "#166534" : "#991b1b",
                       border: `1px solid ${acctView.is_balanced ? "#bbf7d0" : "#fecaca"}`,
+                      flexShrink: 0,
                     }}
                   >
                     {acctView.is_balanced ? (
@@ -527,6 +632,7 @@ const VoucherPreviewModal = ({
                       display: "flex",
                       justifyContent: "flex-end",
                       marginBottom: "0.75rem",
+                      flexShrink: 0,
                     }}
                   >
                     <label
@@ -554,9 +660,11 @@ const VoucherPreviewModal = ({
                   {/* 凭证表格 */}
                   <div
                     style={{
+                      flex: 1,
+                      minHeight: 0,
                       borderRadius: "0.75rem",
                       border: "1px solid #e2e8f0",
-                      overflow: "hidden",
+                      overflow: "auto",
                       background:
                         "linear-gradient(180deg, #fcfdff 0%, #f8fafc 100%)",
                       boxShadow: "inset 0 1px 0 rgba(255,255,255,0.8)",
@@ -570,14 +678,7 @@ const VoucherPreviewModal = ({
                         tableLayout: "fixed",
                       }}
                     >
-                      <colgroup>
-                        <col style={{ width: "72px" }} />
-                        <col style={{ width: "28%" }} />
-                        <col style={{ width: "240px" }} />
-                        <col style={{ width: "150px" }} />
-                        <col style={{ width: "150px" }} />
-                        <col />
-                      </colgroup>
+                      <VoucherTableColGroup />
                       <thead>
                         <tr style={{ background: "#f8fafc" }}>
                           <th style={thStyle}>行号</th>
@@ -736,7 +837,14 @@ const VoucherPreviewModal = ({
                           }}
                         >
                           <td
-                            style={{ ...tdStyle, textAlign: "center" }}
+                            style={{
+                              ...tdStyle,
+                              textAlign: "center",
+                              position: "sticky",
+                              bottom: 0,
+                              background: "#f1f5f9",
+                              boxShadow: "0 -1px 0 #e2e8f0",
+                            }}
                             colSpan={3}
                           >
                             合计
@@ -747,6 +855,10 @@ const VoucherPreviewModal = ({
                               textAlign: "right",
                               fontFamily: monoFont,
                               color: "#059669",
+                              position: "sticky",
+                              bottom: 0,
+                              background: "#f1f5f9",
+                              boxShadow: "0 -1px 0 #e2e8f0",
                             }}
                           >
                             ¥{acctView.total_debit.toFixed(2)}
@@ -757,11 +869,23 @@ const VoucherPreviewModal = ({
                               textAlign: "right",
                               fontFamily: monoFont,
                               color: "#059669",
+                              position: "sticky",
+                              bottom: 0,
+                              background: "#f1f5f9",
+                              boxShadow: "0 -1px 0 #e2e8f0",
                             }}
                           >
                             ¥{acctView.total_credit.toFixed(2)}
                           </td>
-                          <td style={tdStyle}></td>
+                          <td
+                            style={{
+                              ...tdStyle,
+                              position: "sticky",
+                              bottom: 0,
+                              background: "#f1f5f9",
+                              boxShadow: "0 -1px 0 #e2e8f0",
+                            }}
+                          ></td>
                         </tr>
                       </tfoot>
                     </table>
@@ -924,6 +1048,17 @@ const JsonSyntaxHighlight = ({ json }: { json: any }) => {
 };
 
 // 表格样式常量
+const VoucherTableColGroup = () => (
+  <colgroup>
+    <col style={{ width: "72px" }} />
+    <col style={{ width: "28%" }} />
+    <col style={{ width: "240px" }} />
+    <col style={{ width: "150px" }} />
+    <col style={{ width: "150px" }} />
+    <col />
+  </colgroup>
+);
+
 const thStyle: React.CSSProperties = {
   padding: "0.75rem 0.875rem",
   fontWeight: 700,
@@ -931,6 +1066,10 @@ const thStyle: React.CSSProperties = {
   color: "#475569",
   textAlign: "center",
   borderBottom: "2px solid #e2e8f0",
+  position: "sticky",
+  top: 0,
+  zIndex: 1,
+  background: "#f8fafc",
   textTransform: "uppercase" as const,
   letterSpacing: "0.05em",
 };
