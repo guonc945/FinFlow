@@ -344,6 +344,15 @@
     font-family: Consolas, monospace;
 }
 
+.reporting-editor-field {
+    gap: 0.55rem;
+}
+
+.reporting-editor-field .json-editor-container,
+.reporting-editor-field .sql-editor-container {
+    width: 100%;
+}
+
 .chart-config-grid,
 .runtime-filters {
     display: grid;
@@ -383,15 +392,30 @@
     background: rgba(248, 250, 252, 0.82);
 }
 
-.sql-textarea {
-    min-height: 180px !important;
-}
-
 .editor-actions {
     display: flex;
     justify-content: flex-end;
     gap: 0.75rem;
     margin-top: auto;
+}
+
+.preview-status {
+    border-radius: 16px;
+    padding: 1rem 1.1rem;
+    font-size: 0.92rem;
+    border: 1px solid transparent;
+}
+
+.preview-status.loading {
+    background: rgba(14, 165, 233, 0.08);
+    border-color: rgba(14, 165, 233, 0.18);
+    color: #0f172a;
+}
+
+.preview-status.error {
+    background: rgba(239, 68, 68, 0.08);
+    border-color: rgba(239, 68, 68, 0.18);
+    color: #991b1b;
 }
 
 .journey-list,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useEffectEvent, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
     BarChart3,
@@ -43,13 +43,14 @@ import {
     getReportingDatasets,
     getReportingReports,
     previewReportingDatasetDraft,
-    previewReportingDataset,
     runReportingReport,
     testReportingConnection,
     updateReportingConnection,
     updateReportingDataset,
     updateReportingReport,
 } from '../../services/api';
+import JsonEditor from '../../components/data/JsonEditor';
+import SqlEditor from '../../components/data/SqlEditor';
 import './Reports.css';
 
 type TabKey = 'connections' | 'datasets' | 'reports';
@@ -361,6 +362,8 @@ export default function Reports() {
 
     const [tables, setTables] = useState<Array<{ table_name: string; columns: Array<{ name: string; type: string }> }>>([]);
     const [datasetResult, setDatasetResult] = useState<QueryResult | null>(null);
+    const [datasetPreviewLoading, setDatasetPreviewLoading] = useState(false);
+    const [datasetPreviewError, setDatasetPreviewError] = useState<string | null>(null);
     const [reportResult, setReportResult] = useState<QueryResult | null>(null);
     const [activeReport, setActiveReport] = useState<Report | null>(null);
     const [runtimeFilters, setRuntimeFilters] = useState<Record<string, string>>({});
@@ -452,6 +455,10 @@ export default function Reports() {
         () => datasets.find((item) => String(item.id) === reportForm.dataset_id),
         [datasets, reportForm.dataset_id]
     );
+    const selectedConnectionForDataset = useMemo(
+        () => connections.find((item) => String(item.id) === datasetForm.connection_id),
+        [connections, datasetForm.connection_id]
+    );
 
     const activeReportConfig = useMemo(
         () => parseJson<ReportConfig>(activeReport?.config_json, {}),
@@ -513,6 +520,8 @@ export default function Reports() {
     const resetDataset = () => {
         setEditingDatasetId(null);
         setDatasetResult(null);
+        setDatasetPreviewError(null);
+        setDatasetPreviewLoading(false);
         setDatasetForm({
             connection_id: connections[0] ? String(connections[0].id) : '',
             name: '',
@@ -541,7 +550,6 @@ export default function Reports() {
             is_active: dataset.is_active,
         });
         setDatasetModalOpen(true);
-        void runDatasetPreview(dataset.id, dataset.params_json, String(dataset.row_limit));
     };
 
     const resetReport = () => {
@@ -590,6 +598,9 @@ export default function Reports() {
 
     const saveDataset = async () => {
         try {
+            if (datasetForm.params_json?.trim()) {
+                JSON.parse(datasetForm.params_json);
+            }
             const payload = {
                 ...datasetForm,
                 connection_id: Number(datasetForm.connection_id),
@@ -647,33 +658,58 @@ export default function Reports() {
         }
     };
 
-    const runDatasetPreview = async (datasetId: number, paramsJson?: string | null, limit?: string) => {
-        try {
-            const result = await previewReportingDataset(datasetId, {
-                params: parseJson(paramsJson, {}),
-                limit: Number(limit || 200),
-            });
-            setDatasetResult(result);
-        } catch (error: any) {
-            alert(error?.response?.data?.detail || error?.message || '预览失败');
+    const runDatasetDraftPreview = useEffectEvent(async (silent = false) => {
+        if (!datasetForm.connection_id || !datasetForm.sql_text.trim()) {
+            setDatasetResult(null);
+            setDatasetPreviewError(null);
+            return;
         }
-    };
 
-    const runDatasetDraftPreview = async () => {
+        setDatasetPreviewLoading(true);
+        setDatasetPreviewError(null);
+
         try {
+            const params = datasetForm.params_json?.trim() ? JSON.parse(datasetForm.params_json) : {};
             const result = await previewReportingDatasetDraft({
                 connection_id: Number(datasetForm.connection_id),
                 sql_text: datasetForm.sql_text,
                 params_json: datasetForm.params_json,
                 row_limit: Number(datasetForm.row_limit || 200),
-                params: parseJson(datasetForm.params_json, {}),
+                params,
                 limit: Number(datasetForm.row_limit || 200),
             });
             setDatasetResult(result);
+            setDatasetPreviewError(null);
         } catch (error: any) {
-            alert(error?.response?.data?.detail || error?.message || '预览失败');
+            const message = error?.response?.data?.detail || error?.message || '预览失败';
+            setDatasetResult(null);
+            setDatasetPreviewError(message);
+            if (!silent) {
+                alert(message);
+            }
+        } finally {
+            setDatasetPreviewLoading(false);
         }
-    };
+    });
+
+    useEffect(() => {
+        if (!datasetModalOpen) {
+            return;
+        }
+
+        const timer = window.setTimeout(() => {
+            void runDatasetDraftPreview(true);
+        }, 450);
+
+        return () => window.clearTimeout(timer);
+    }, [
+        datasetModalOpen,
+        datasetForm.connection_id,
+        datasetForm.sql_text,
+        datasetForm.params_json,
+        datasetForm.row_limit,
+        runDatasetDraftPreview,
+    ]);
 
     const openReport = (report: Report) => {
         const config = parseJson<ReportConfig>(report.config_json, {});
@@ -1160,10 +1196,26 @@ export default function Reports() {
                         </div>
                         <label className="form-block"><span>名称</span><input value={datasetForm.name} onChange={(e) => setDatasetForm((prev) => ({ ...prev, name: e.target.value }))} /></label>
                         <label className="form-block"><span>描述</span><input value={datasetForm.description} onChange={(e) => setDatasetForm((prev) => ({ ...prev, description: e.target.value }))} /></label>
-                        <label className="form-block"><span>SQL</span><textarea className="sql-textarea" value={datasetForm.sql_text} onChange={(e) => setDatasetForm((prev) => ({ ...prev, sql_text: e.target.value }))} /></label>
-                        <label className="form-block"><span>参数 JSON</span><textarea value={datasetForm.params_json} onChange={(e) => setDatasetForm((prev) => ({ ...prev, params_json: e.target.value }))} /></label>
+                        <div className="form-block reporting-editor-field">
+                            <span>SQL</span>
+                            <SqlEditor
+                                value={datasetForm.sql_text}
+                                onChange={(value) => setDatasetForm((prev) => ({ ...prev, sql_text: value }))}
+                                dialect={selectedConnectionForDataset?.db_type}
+                                onPreview={() => void runDatasetDraftPreview(false)}
+                                previewLoading={datasetPreviewLoading}
+                                height="320px"
+                            />
+                        </div>
+                        <div className="form-block reporting-editor-field">
+                            <span>参数 JSON</span>
+                            <JsonEditor
+                                value={datasetForm.params_json}
+                                onChange={(value) => setDatasetForm((prev) => ({ ...prev, params_json: value }))}
+                                height="220px"
+                            />
+                        </div>
                         <div className="editor-actions">
-                            <button className="btn-outline" onClick={() => void runDatasetDraftPreview()}><Play size={14} />预览查询</button>
                             <button className="btn-outline" onClick={resetDataset}>重置</button>
                             <button className="btn-primary" onClick={() => void saveDataset()}><Save size={14} />保存数据集</button>
                         </div>
@@ -1172,10 +1224,22 @@ export default function Reports() {
                         <div className="section-head">
                             <h3>预览结果</h3>
                             <div className="resource-meta">
-                                {datasetResult ? `返回 ${datasetResult.row_count} 行 / 上限 ${datasetResult.limit}` : '填写 SQL 后在这里直接预览'}
+                                {datasetPreviewLoading
+                                    ? '正在自动预览当前 SQL'
+                                    : datasetResult
+                                        ? `返回 ${datasetResult.row_count} 行 / 上限 ${datasetResult.limit}`
+                                        : '填写 SQL 后会在这里自动预览'}
                             </div>
                         </div>
-                        {datasetResult ? <DataTable columns={dynamicColumns} data={datasetResult.rows} /> : <div className="empty-box">点击“预览查询”后，这里会展示结果。</div>}
+                        {datasetPreviewError ? (
+                            <div className="preview-status error">{datasetPreviewError}</div>
+                        ) : datasetPreviewLoading ? (
+                            <div className="preview-status loading">正在执行只读预览查询，请稍候...</div>
+                        ) : datasetResult ? (
+                            <DataTable columns={dynamicColumns} data={datasetResult.rows} />
+                        ) : (
+                            <div className="empty-box">选择连接并编写 SQL 后，这里会自动显示预览结果。</div>
+                        )}
                     </div>
                 </div>
             </FormModal>

@@ -5,9 +5,11 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import quote_plus
 
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.orm import Session
 
 import models
 from utils.crypto import decrypt_value
+from utils.variable_parser import build_variable_map, resolve_dict_variables, resolve_variables
 
 
 class ReportingDatabaseError(Exception):
@@ -154,6 +156,8 @@ class ReportingDatabaseService:
         dataset: models.ReportingDataset,
         params: Optional[Dict[str, Any]] = None,
         limit: Optional[int] = None,
+        db_session: Optional[Session] = None,
+        user_context: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         return ReportingDatabaseService.execute_query(
             connection=connection,
@@ -162,6 +166,8 @@ class ReportingDatabaseService:
             params=params,
             limit=limit,
             default_limit=dataset.row_limit,
+            db_session=db_session,
+            user_context=user_context,
         )
 
     @staticmethod
@@ -172,13 +178,32 @@ class ReportingDatabaseService:
         params: Optional[Dict[str, Any]] = None,
         limit: Optional[int] = None,
         default_limit: Optional[int] = None,
+        db_session: Optional[Session] = None,
+        user_context: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
+        preloaded_vars: Optional[Dict[str, str]] = None
+        if db_session is not None:
+            preloaded_vars = build_variable_map(db_session, user_context=user_context)
+            sql_text = resolve_variables(
+                sql_text,
+                db_session,
+                preloaded_vars=preloaded_vars,
+                user_context=user_context,
+            )
+
         sql_text = _ensure_readonly_sql(sql_text)
         engine = ReportingDatabaseService.create_engine_for(connection)
         effective_limit = max(1, min(limit or default_limit or 500, 5000))
         merged_params = {}
         merged_params.update(_loads_json(params_json, {}))
         merged_params.update(params or {})
+        if db_session is not None and merged_params:
+            merged_params = resolve_dict_variables(
+                merged_params,
+                db_session,
+                preloaded_vars=preloaded_vars,
+                user_context=user_context,
+            )
 
         try:
             with engine.connect() as conn:

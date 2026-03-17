@@ -7899,6 +7899,7 @@ def preview_reporting_dataset(
     payload: schemas.ReportingDatasetPreviewRequest,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
+    user_ctx: Dict[str, str] = Depends(get_user_context),
 ):
     _require_admin(current_user)
     dataset = (
@@ -7918,11 +7919,15 @@ def preview_reporting_dataset(
             dataset,
             params=payload.params,
             limit=payload.limit,
+            db_session=db,
+            user_context=user_ctx,
         )
     except (ReportingDatabaseError, UnsafeQueryError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+    return result
 
 
 @app.post("/api/reporting/datasets/preview-draft")
@@ -7930,6 +7935,7 @@ def preview_reporting_dataset_draft(
     payload: schemas.ReportingDatasetDraftPreviewRequest,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
+    user_ctx: Dict[str, str] = Depends(get_user_context),
 ):
     _require_admin(current_user)
     connection = (
@@ -7950,17 +7956,14 @@ def preview_reporting_dataset_draft(
             params=payload.params,
             limit=payload.limit,
             default_limit=payload.row_limit,
+            db_session=db,
+            user_context=user_ctx,
         )
     except (ReportingDatabaseError, UnsafeQueryError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
-    return result
-
-    dataset.last_columns_json = json.dumps(result["columns"], ensure_ascii=False)
-    dataset.last_validated_at = datetime.now()
-    db.commit()
     return result
 
 
@@ -8057,6 +8060,7 @@ def run_reporting_report(
     payload: schemas.ReportingReportRunRequest,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
+    user_ctx: Dict[str, str] = Depends(get_user_context),
 ):
     report = (
         db.query(models.ReportingReport)
@@ -8095,6 +8099,8 @@ def run_reporting_report(
             dataset,
             params=payload.params,
             limit=effective_limit,
+            db_session=db,
+            user_context=user_ctx,
         )
     except (ReportingDatabaseError, UnsafeQueryError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
