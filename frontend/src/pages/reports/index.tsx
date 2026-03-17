@@ -136,6 +136,17 @@ type ReportConfig = {
 };
 
 const COLORS = ['#0f766e', '#0ea5e9', '#f59e0b', '#ef4444', '#8b5cf6', '#14b8a6', '#ec4899'];
+const DATASET_PARAM_EXAMPLE = `{
+  "tenant_id": 1001,
+  "start_date": "2026-01-01",
+  "status": "paid"
+}`;
+const DATASET_PARAM_SQL_EXAMPLE = `SELECT *
+FROM orders
+WHERE tenant_id = :tenant_id
+  AND created_at >= :start_date
+  AND status = :status
+  AND org_name = '{CURRENT_ORG_NAME}'`;
 
 const parseJson = <T,>(raw: string | null | undefined, fallback: T): T => {
     if (!raw) return fallback;
@@ -1206,14 +1217,46 @@ export default function Reports() {
                                 previewLoading={datasetPreviewLoading}
                                 height="320px"
                             />
+                            <div className="editor-help-text">
+                                在 SQL 里用 `:参数名` 定义可绑定参数，例如 `:tenant_id`、`:start_date`。系统全局变量继续使用 {'{变量名}'}，两者可以混用。
+                            </div>
                         </div>
                         <div className="form-block reporting-editor-field">
-                            <span>参数 JSON</span>
+                            <div className="field-head">
+                                <span>参数 JSON</span>
+                                <button
+                                    className="inline-link-btn"
+                                    type="button"
+                                    onClick={() => setDatasetForm((prev) => ({ ...prev, params_json: DATASET_PARAM_EXAMPLE }))}
+                                >
+                                    填充示例
+                                </button>
+                            </div>
                             <JsonEditor
                                 value={datasetForm.params_json}
                                 onChange={(value) => setDatasetForm((prev) => ({ ...prev, params_json: value }))}
                                 height="220px"
+                                placeholder={DATASET_PARAM_EXAMPLE}
                             />
+                            <div className="param-guide-card">
+                                <div className="param-guide-title">参数 JSON 怎么用</div>
+                                <div className="param-guide-list">
+                                    <div>1. SQL 中先写命名参数，例如 `WHERE tenant_id = :tenant_id`。</div>
+                                    <div>2. 参数 JSON 里的键名必须和 SQL 里的参数名一致。</div>
+                                    <div>3. 预览时会直接使用这份 JSON 作为查询参数默认值。</div>
+                                    <div>4. {'{CURRENT_ORG_NAME}'} 这类系统全局变量会先解析，再和参数 JSON 一起执行。</div>
+                                </div>
+                                <div className="param-guide-examples">
+                                    <div className="param-guide-example">
+                                        <div className="param-guide-label">示例 SQL</div>
+                                        <pre>{DATASET_PARAM_SQL_EXAMPLE}</pre>
+                                    </div>
+                                    <div className="param-guide-example">
+                                        <div className="param-guide-label">示例参数</div>
+                                        <pre>{DATASET_PARAM_EXAMPLE}</pre>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                         <div className="editor-actions">
                             <button className="btn-outline" onClick={resetDataset}>重置</button>
