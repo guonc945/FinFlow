@@ -131,21 +131,127 @@ const VoucherPreviewModal = ({
     }
     return "-";
   };
+  const normalizeEntryText = (...parts: any[]): string =>
+    parts
+      .map((part) => String(part || ""))
+      .join("")
+      .replace(/\s+/g, "")
+      .trim()
+      .toLowerCase();
+  const isProfitLossEntry = (entry: any): boolean => {
+    const accountCode = String(entry?.account_code || "").trim();
+    const accountTypeNumber = String(entry?.account_type_number || "")
+      .trim()
+      .toLowerCase();
+    const accountText = `${String(entry?.account_name || "")}${String(
+      entry?.account_display || "",
+    )}`
+      .replace(/\s+/g, "")
+      .toLowerCase();
+
+    if (
+      accountCode.startsWith("4103") ||
+      accountText.includes("\u672c\u5e74\u5229\u6da6")
+    ) {
+      return false;
+    }
+
+    if (
+      accountTypeNumber.includes("\u635f\u76ca") ||
+      accountTypeNumber.includes("profit") ||
+      accountTypeNumber.includes("loss")
+    ) {
+      return true;
+    }
+
+    if (/^(6|7)\d*$/.test(accountTypeNumber)) {
+      return true;
+    }
+
+    if (/^(6|7)/.test(accountCode)) {
+      return true;
+    }
+
+    return [
+      "\u6536\u5165",
+      "\u6210\u672c",
+      "\u8d39\u7528",
+      "\u635f\u76ca",
+      "\u6536\u76ca",
+      "\u7a0e\u91d1\u53ca\u9644\u52a0",
+      "\u8425\u4e1a\u5916",
+      "\u6240\u5f97\u7a0e",
+    ].some((keyword) => accountText.includes(keyword));
+  };
+  const isCarryForwardEntry = (entry: any): boolean => {
+    const summary = normalizeEntryText(entry?.summary, entry?.edescription);
+    const accountCode = String(entry?.account_code || "").trim();
+    const accountText = normalizeEntryText(
+      entry?.account_name,
+      entry?.account_display,
+    );
+
+    if (!summary && !accountCode && !accountText) return false;
+
+    if (
+      [
+        "结转",
+        "转结",
+        "结平",
+        "结清",
+        "损益结转",
+        "期末结转",
+        "月末结转",
+        "年末结转",
+      ].some((keyword) => summary.includes(keyword))
+    ) {
+      return true;
+    }
+
+    if (accountCode.startsWith("4103") || accountText.includes("本年利润")) {
+      return true;
+    }
+
+    const periodHint = ["期末", "月末", "年末", "月底", "关账"].some((keyword) =>
+      summary.includes(keyword),
+    );
+    if (periodHint && isProfitLossEntry(entry)) {
+      return true;
+    }
+
+    return false;
+  };
+  const getEntryBusinessSortBucket = (entry: any): number =>
+    isCarryForwardEntry(entry) ? 1 : 0;
   const mergeEntries = (entries: any[]) => {
     const merged: any[] = [];
     const indexMap = new Map<string, number>();
-    entries.forEach((entry) => {
+    entries.forEach((entry, sourceIndex) => {
       const debitCents = moneyToCents(entry.debit);
       const creditCents = moneyToCents(entry.credit);
       const direction = debitCents > 0 ? "debit" : "credit";
       const accountKey = `${entry.account_display || ""}|${entry.account_code || ""}`;
       const assgrpKey = JSON.stringify(normalizeAssgrp(entry.assgrp));
+      const businessSortBucket = getEntryBusinessSortBucket(entry);
+      const sourceLineNo = Number(entry.line_no || sourceIndex + 1);
       const key = `${direction}|${accountKey}|${assgrpKey}`;
       if (indexMap.has(key)) {
         const idx = indexMap.get(key) as number;
         const target = merged[idx];
         target.debit_cents = Number(target.debit_cents || 0) + debitCents;
         target.credit_cents = Number(target.credit_cents || 0) + creditCents;
+        target.source_line_no_min = Math.min(
+          Number(target.source_line_no_min || sourceLineNo),
+          sourceLineNo,
+        );
+        target.source_index_min = Math.min(
+          Number(target.source_index_min || sourceIndex),
+          sourceIndex,
+        );
+        target.business_sort_bucket = Math.min(
+          Number(target.business_sort_bucket || businessSortBucket),
+          businessSortBucket,
+        );
         return;
       }
       indexMap.set(key, merged.length);
@@ -154,9 +260,52 @@ const VoucherPreviewModal = ({
         debit_cents: debitCents,
         credit_cents: creditCents,
         localrate: Number(entry.localrate || 1),
+        source_line_no_min: sourceLineNo,
+        source_index_min: sourceIndex,
+        business_sort_bucket: businessSortBucket,
       });
     });
-    return merged.map((entry, idx) => ({
+    const sortedMerged = [...merged].sort((a, b) => {
+      const bucketDiff =
+        Number(a.business_sort_bucket || 0) - Number(b.business_sort_bucket || 0);
+      if (bucketDiff !== 0) return bucketDiff;
+
+      if (Number(a.business_sort_bucket || 0) === 1) {
+        const profitLossDiff =
+          Number(isProfitLossEntry(a)) - Number(isProfitLossEntry(b));
+        if (profitLossDiff !== 0) return profitLossDiff;
+      }
+
+      const sourceLineDiff =
+        Number(a.source_line_no_min || 0) - Number(b.source_line_no_min || 0);
+      if (sourceLineDiff !== 0) return sourceLineDiff;
+
+      const sourceIndexDiff =
+        Number(a.source_index_min || 0) - Number(b.source_index_min || 0);
+      if (sourceIndexDiff !== 0) return sourceIndexDiff;
+
+      const summaryDiff = String(a.summary || "").localeCompare(
+        String(b.summary || ""),
+        "zh-CN",
+        { numeric: true },
+      );
+      if (summaryDiff !== 0) return summaryDiff;
+
+      const accountDiff = String(a.account_code || "").localeCompare(
+        String(b.account_code || ""),
+        "zh-CN",
+        { numeric: true },
+      );
+      if (accountDiff !== 0) return accountDiff;
+
+      return JSON.stringify(normalizeAssgrp(a.assgrp)).localeCompare(
+        JSON.stringify(normalizeAssgrp(b.assgrp)),
+        "zh-CN",
+        { numeric: true },
+      );
+    });
+
+    return sortedMerged.map((entry, idx) => ({
       ...entry,
       debit: centsToMoney(Number(entry.debit_cents || 0)),
       credit: centsToMoney(Number(entry.credit_cents || 0)),

@@ -4502,6 +4502,7 @@ def preview_voucher_for_bill(
 
     # Prepare subject naming cache
     subject_names_cache = {}
+    subject_type_cache = {}
 
     for rule in sorted(matched_template.rules, key=lambda r: r.line_no):
         summary = resolve_expr(rule.summary_expr)
@@ -4518,8 +4519,10 @@ def preview_voucher_for_bill(
                 if subj:
                     # Use fullname if available, else name
                     subject_names_cache[account_code] = subj.fullname or subj.name
+                    subject_type_cache[account_code] = subj.account_type_number or ""
                 else:
                     subject_names_cache[account_code] = account_code
+                    subject_type_cache[account_code] = ""
             
             fullname = subject_names_cache[account_code]
             if fullname != account_code:
@@ -4558,6 +4561,7 @@ def preview_voucher_for_bill(
             "summary": summary,
             "account_code": account_code,
             "account_name": subject_names_cache.get(account_code, ""),
+            "account_type_number": subject_type_cache.get(account_code, ""),
             "account_display": account_display_name,
             "dr_cr": rule.dr_cr,
             "debit": _json_number(amount_val) if rule.dr_cr == 'D' else 0.0,
