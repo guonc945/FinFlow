@@ -101,12 +101,27 @@ const Sidebar = () => {
     const rawNavItems: NavItem[] = [
         { path: '/', label: '仪表盘', icon: LayoutDashboard },
         {
-            key: 'voucher-center',
-            label: '凭证中心',
+            key: 'business-center',
+            label: '业务中心',
             icon: FileText,
             children: [
-                { path: '/bills', label: '运营账单', icon: Receipt },
-                { path: '/receipt-bills', label: '收款账单', icon: Receipt },
+                {
+                    key: 'marki-business',
+                    label: '马克系统',
+                    icon: Building2,
+                    children: [
+                        { path: '/bills', label: '运营账单', icon: Receipt },
+                        { path: '/receipt-bills', label: '收款账单', icon: Receipt },
+                        { path: '/deposit-records', label: '押金管理', icon: Wallet },
+                    ],
+                },
+            ],
+        },
+        {
+            key: 'voucher-center',
+            label: '凭证中心',
+            icon: Layers,
+            children: [
                 { path: '/vouchers/templates', label: '模板管理', icon: Layers, adminOnly: true },
                 { path: '/vouchers/categories', label: '模板分类', icon: Tags, adminOnly: true },
             ],
