@@ -260,6 +260,7 @@ const ReceiptBills = () => {
     const [communityFilter, setCommunityFilter] = useState<string[]>([]);
     const [dealDateStart, setDealDateStart] = useState('');
     const [dealDateEnd, setDealDateEnd] = useState('');
+    const [dealTypeFilter, setDealTypeFilter] = useState('');
 
     const [isFilterCollapsed, setIsFilterCollapsed] = useState(false);
     const [isCommunityDropdownOpen, setIsCommunityDropdownOpen] = useState(false);
@@ -405,6 +406,7 @@ const ReceiptBills = () => {
                 community_ids: communityFilter.length ? communityFilter.join(',') : undefined,
                 deal_date_start: dealDateStart || undefined,
                 deal_date_end: dealDateEnd || undefined,
+                deal_type: dealTypeFilter ? Number(dealTypeFilter) : undefined,
                 skip,
                 limit: pageSize,
             };
@@ -418,7 +420,7 @@ const ReceiptBills = () => {
         } finally {
             setIsLoading(false);
         }
-    }, [communityFilter, dealDateEnd, dealDateStart, page, pageSize, searchQuery, showToast]);
+    }, [communityFilter, dealDateEnd, dealDateStart, dealTypeFilter, page, pageSize, searchQuery, showToast]);
 
     useEffect(() => {
         void fetchProjects();
@@ -430,7 +432,7 @@ const ReceiptBills = () => {
 
     useEffect(() => {
         clearReceiptSelection();
-    }, [clearReceiptSelection, searchQuery, communityFilter, dealDateStart, dealDateEnd, page, pageSize]);
+    }, [clearReceiptSelection, searchQuery, communityFilter, dealDateStart, dealDateEnd, dealTypeFilter, page, pageSize]);
 
     useEffect(() => {
         const validProjectIds = new Set(projects.map(project => String(project.proj_id)));
@@ -1209,6 +1211,20 @@ const ReceiptBills = () => {
                                 </div>
 
                                 <div className="flex items-center gap-1">
+                                    <select
+                                        className="enhanced-select text-xs"
+                                        style={{ width: '150px' }}
+                                        value={dealTypeFilter}
+                                        onChange={(e) => { setDealTypeFilter(e.target.value); setPage(1); }}
+                                    >
+                                        <option value="">收入类型</option>
+                                        {Object.entries(RECEIPT_BILL_DEAL_TYPE_LABELS).map(([value, label]) => (
+                                            <option key={value} value={value}>{label}</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                <div className="flex items-center gap-1">
                                     <span className="text-secondary text-xs" style={{ whiteSpace: 'nowrap' }}>收款日期:</span>
                                     <input type="date" className="enhanced-select text-xs" style={{ width: '140px' }} value={dealDateStart} onChange={(e) => { setDealDateStart(e.target.value); setPage(1); }} />
                                     <span className="text-secondary">-</span>
@@ -1332,6 +1348,7 @@ const ReceiptBills = () => {
                                 setCommunityFilter([]);
                                 setDealDateStart('');
                                 setDealDateEnd('');
+                                setDealTypeFilter('');
                                 setPage(1);
                             }}>
                                 <X size={14} /> 重置筛选
