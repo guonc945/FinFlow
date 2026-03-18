@@ -489,6 +489,7 @@ class DepositRecord(Base):
 
     pay_time = Column(BigInteger, index=True)
     pay_date = Column(Date, index=True)
+    payment_id = Column(BigInteger, index=True)
     has_refund_receipt = Column(Boolean, default=False)
     refund_receipt_id = Column(BigInteger, index=True)
     pay_channel_str = Column(String(100))

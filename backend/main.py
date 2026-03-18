@@ -202,6 +202,22 @@ def _ensure_bill_columns():
 
 _ensure_bill_columns()
 
+
+def _ensure_deposit_record_columns():
+    inspector = inspect(database.engine)
+    tables = inspector.get_table_names()
+    if "deposit_records" not in tables:
+        return
+
+    existing_cols = {c["name"] for c in inspector.get_columns("deposit_records")}
+    with database.engine.begin() as conn:
+        if "payment_id" not in existing_cols:
+            conn.execute(text("ALTER TABLE deposit_records ADD COLUMN payment_id BIGINT"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_deposit_records_payment_id ON deposit_records (payment_id)"))
+
+
+_ensure_deposit_record_columns()
+
 BILL_VOUCHER_PUSH_STATUS_LABELS = {
     "not_pushed": "未推送",
     "pushing": "推送中",
@@ -2079,6 +2095,7 @@ def _serialize_deposit_record(record: models.DepositRecord) -> Dict[str, Any]:
         "remark": record.remark,
         "pay_time": record.pay_time,
         "pay_date": record.pay_date,
+        "payment_id": record.payment_id,
         "has_refund_receipt": bool(record.has_refund_receipt),
         "refund_receipt_id": record.refund_receipt_id,
         "pay_channel_str": record.pay_channel_str,
@@ -2158,6 +2175,7 @@ def get_deposit_records(
         query = query.filter(
             or_(
                 cast(models.DepositRecord.id, SAString).ilike(like),
+                cast(models.DepositRecord.payment_id, SAString).ilike(like),
                 cast(models.DepositRecord.house_id, SAString).ilike(like),
                 models.DepositRecord.house_name.ilike(like),
                 models.DepositRecord.community_name.ilike(like),

@@ -315,6 +315,89 @@ def _resolve_request_headers(headers_template, db_session, preloaded_vars):
     return {str(key): str(value) for key, value in headers.items() if value is not None}
 
 
+def _sync_deposit_payment_ids(community_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            """
+            UPDATE deposit_records
+            SET payment_id = NULL,
+                updated_at = NOW()
+            WHERE community_id = %s
+              AND (operate_type <> 1 OR payment_id IS NOT NULL)
+            """,
+            (community_id,),
+        )
+
+        # If multiple receipt bills share the same matching key, keep the highest ID.
+        cursor.execute(
+            """
+            WITH matched_receipts AS (
+                SELECT DISTINCT ON (community_id, deal_time, asset_id)
+                    id,
+                    community_id,
+                    deal_time,
+                    asset_id
+                FROM receipt_bills
+                WHERE community_id = %s
+                  AND deal_time IS NOT NULL
+                  AND deal_type = 5
+                  AND asset_id IS NOT NULL
+                ORDER BY community_id, deal_time, asset_id, id DESC
+            )
+            UPDATE deposit_records AS d
+            SET payment_id = matched_receipts.id,
+                updated_at = NOW()
+            FROM matched_receipts
+            WHERE d.community_id = matched_receipts.community_id
+              AND d.pay_time = matched_receipts.deal_time
+              AND d.house_id = matched_receipts.asset_id
+              AND d.operate_type = 1
+              AND d.pay_time IS NOT NULL
+              AND d.house_id IS NOT NULL
+              AND d.community_id = %s
+            """,
+            (community_id, community_id),
+        )
+
+        cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM deposit_records
+            WHERE community_id = %s
+              AND operate_type = 1
+            """,
+            (community_id,),
+        )
+        collected_total = int(cursor.fetchone()[0] or 0)
+
+        cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM deposit_records
+            WHERE community_id = %s
+              AND operate_type = 1
+              AND payment_id IS NOT NULL
+            """,
+            (community_id,),
+        )
+        matched_total = int(cursor.fetchone()[0] or 0)
+
+        conn.commit()
+        return {
+            "collected_total": collected_total,
+            "matched_total": matched_total,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cursor.close()
+        conn.close()
+
+
 def sync_deposit_records(community_ids=None, task_id=None):
     from database import SessionLocal
     from utils.variable_parser import build_variable_map, resolve_dict_variables
@@ -429,6 +512,18 @@ def sync_deposit_records(community_ids=None, task_id=None):
 
                 page += 1
                 time.sleep(0.6)
+
+            payment_sync_counts = _sync_deposit_payment_ids(community_id)
+            if task_id:
+                tracker.add_log(
+                    task_id,
+                    (
+                        f"Community {community_id}: linked payment IDs for "
+                        f"{payment_sync_counts['matched_total']}/{payment_sync_counts['collected_total']} "
+                        "collected deposits"
+                    ),
+                    "info",
+                )
 
         if task_id:
             tracker.update_progress(task_id, len(community_ids), "deposit records")

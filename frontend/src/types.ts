@@ -149,6 +149,7 @@ export interface DepositRecord {
     remark?: string | null;
     pay_time?: number | null;
     pay_date?: string | null;
+    payment_id?: number | null;
     has_refund_receipt?: boolean;
     refund_receipt_id?: number | null;
     pay_channel_str?: string | null;

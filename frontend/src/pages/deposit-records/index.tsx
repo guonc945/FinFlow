@@ -304,6 +304,11 @@ const DepositRecords = () => {
             title: '支付时间',
             render: (value: number) => formatTimestamp(value),
         },
+        {
+            key: 'payment_id',
+            title: '缴费ID',
+            render: (value: number) => value || '-',
+        },
         { key: 'pay_channel_str', title: '支付渠道' },
         {
             key: 'has_refund_receipt',
@@ -343,7 +348,7 @@ const DepositRecords = () => {
                                     <Search size={14} className="search-icon" />
                                     <input
                                         type="text"
-                                        placeholder="搜索记录ID/房号/操作人/押金类型..."
+                                        placeholder="搜索记录ID/缴费ID/房号/操作人/押金类型..."
                                         value={searchQuery}
                                         onChange={(event) => {
                                             setSearchQuery(event.target.value);

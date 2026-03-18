@@ -163,6 +163,7 @@ class DepositRecordResponse(BaseModel):
     remark: Optional[str] = None
     pay_time: Optional[int] = None
     pay_date: Optional[date] = None
+    payment_id: Optional[int] = None
     has_refund_receipt: Optional[bool] = None
     refund_receipt_id: Optional[int] = None
     pay_channel_str: Optional[str] = None
