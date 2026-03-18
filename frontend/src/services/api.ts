@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { CashJournal, DepositRecord, PushResult, VoucherPreview, ChargeItem, House, Project, Resident, BillVoucherPushStatus, ReceiptBill, VoucherSourceMetadataResponse } from '../types';
+import type { CashJournal, DepositRecord, PrepaymentRecord, PushResult, VoucherPreview, ChargeItem, House, Project, Resident, BillVoucherPushStatus, ReceiptBill, VoucherSourceMetadataResponse } from '../types';
 
 import { API_BASE_URL } from './apiBase';
 
@@ -174,6 +174,17 @@ export const getDepositRecordSyncStatus = async (taskId: string) => {
     return response.data;
 };
 
+// Prepayment Records Sync
+export const syncPrepaymentRecords = async (communityIds?: number[]) => {
+    const response = await axios.post(`${API_BASE_URL}/prepayment-records/sync`, { community_ids: communityIds });
+    return response.data;
+};
+
+export const getPrepaymentRecordSyncStatus = async (taskId: string) => {
+    const response = await axios.get(`${API_BASE_URL}/prepayment-records/sync/status/${taskId}`);
+    return response.data;
+};
+
 // Projects Sync
 export const syncProjects = async () => {
     const response = await axios.post(`${API_BASE_URL}/projects/sync`);
@@ -331,6 +342,22 @@ export const getDepositRecords = async (params?: {
 }) => {
     const response = await axios.get(`${API_BASE_URL}/deposit-records`, { params });
     return response.data as { total: number; total_amount: number; items: DepositRecord[] };
+};
+
+export const getPrepaymentRecords = async (params?: {
+    search?: string;
+    community_ids?: string;
+    operate_type?: number;
+    operate_date_start?: string;
+    operate_date_end?: string;
+    pay_date_start?: string;
+    pay_date_end?: string;
+    has_refund_receipt?: boolean;
+    skip?: number;
+    limit?: number;
+}) => {
+    const response = await axios.get(`${API_BASE_URL}/prepayment-records`, { params });
+    return response.data as { total: number; total_amount: number; items: PrepaymentRecord[] };
 };
 
 // Reports

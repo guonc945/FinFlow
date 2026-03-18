@@ -174,6 +174,43 @@ DEPOSIT_RECORD_FIELD_LABELS: Dict[str, str] = {
 }
 
 
+PREPAYMENT_RECORD_RUNTIME_EXTRA_FIELDS: Set[str] = {"operate_type_label"}
+PREPAYMENT_RECORD_FIELD_LABELS: Dict[str, str] = {
+    "id": "预存款记录ID",
+    "community_id": "园区ID",
+    "community_name": "园区名称",
+    "account_id": "账户ID",
+    "building_id": "楼栋ID",
+    "unit_id": "单元ID",
+    "house_id": "房屋ID",
+    "house_name": "房屋名称",
+    "amount": "变动金额",
+    "balance_after_change": "变动后余额",
+    "operate_type": "操作类型编码",
+    "operate_type_label": "操作类型",
+    "pay_channel_id": "支付渠道编码",
+    "pay_channel_str": "支付渠道",
+    "operator": "操作人ID",
+    "operator_name": "操作人",
+    "operate_time": "操作时间",
+    "operate_date": "业务日期",
+    "source_updated_time": "源数据更新时间",
+    "remark": "备注",
+    "deposit_order_id": "押金单ID",
+    "pay_time": "支付时间",
+    "pay_date": "支付日期",
+    "category_id": "分类ID",
+    "category_name": "分类名称",
+    "status": "状态",
+    "payment_id": "缴费ID",
+    "has_refund_receipt": "是否关联退款收据",
+    "refund_receipt_id": "关联退款收款单ID",
+    "raw_data": "原始数据(JSON)",
+    "created_at": "创建时间(系统)",
+    "updated_at": "更新时间(系统)",
+}
+
+
 def prefix_source_fields(data: Dict[str, Any], source_type: str, module_prefix: str = "marki") -> Dict[str, Any]:
     enriched = dict(data)
     for key, val in list(data.items()):
@@ -331,6 +368,10 @@ def _enrich_deposit_record_data(record_data: Dict[str, Any]) -> Dict[str, Any]:
     return prefix_source_fields(record_data, "deposit_records")
 
 
+def _enrich_prepayment_record_data(record_data: Dict[str, Any]) -> Dict[str, Any]:
+    return prefix_source_fields(record_data, "prepayment_records")
+
+
 def _group_bills_field(field_name: str) -> str:
     if field_name.startswith("kd_"):
         return "银行账户" if "_bank_" in field_name else "金蝶关联"
@@ -379,6 +420,20 @@ def _group_deposit_records_field(field_name: str) -> str:
     return "押金字段"
 
 
+def _group_prepayment_records_field(field_name: str) -> str:
+    if field_name in PREPAYMENT_RECORD_RUNTIME_EXTRA_FIELDS:
+        return "运行时字段"
+    if field_name == "amount" or field_name.endswith("_amount") or field_name == "balance_after_change":
+        return "金额信息"
+    if field_name.startswith("operate_") or field_name in {"operator", "operator_name", "status"}:
+        return "操作信息"
+    if field_name.startswith("pay_"):
+        return "支付信息"
+    if field_name in {"id", "community_id", "account_id", "building_id", "unit_id", "house_id", "payment_id", "refund_receipt_id", "deposit_order_id", "category_id"}:
+        return "关联ID"
+    return "预存款字段"
+
+
 def build_source_fields(source_type: str) -> Set[str]:
     normalized_source = (source_type or "").strip().lower() or "bills"
 
@@ -404,6 +459,11 @@ def build_source_fields(source_type: str) -> Set[str]:
         fields.update(DEPOSIT_RECORD_RUNTIME_EXTRA_FIELDS)
         return fields
 
+    if normalized_source == "prepayment_records":
+        fields = {col.name for col in models.PrepaymentRecord.__table__.columns}
+        fields.update(PREPAYMENT_RECORD_RUNTIME_EXTRA_FIELDS)
+        return fields
+
     return set()
 
 
@@ -420,6 +480,9 @@ def build_source_field_options(source_type: str) -> List[Dict[str, str]]:
     elif normalized_source == "deposit_records":
         labels = DEPOSIT_RECORD_FIELD_LABELS
         grouper = _group_deposit_records_field
+    elif normalized_source == "prepayment_records":
+        labels = PREPAYMENT_RECORD_FIELD_LABELS
+        grouper = _group_prepayment_records_field
     else:
         labels = {}
         grouper = lambda _field_name: "账单字段"
@@ -456,5 +519,8 @@ def enrich_source_data(
 
     if normalized_source == "deposit_records":
         return _enrich_deposit_record_data(data)
+
+    if normalized_source == "prepayment_records":
+        return _enrich_prepayment_record_data(data)
 
     return prefix_source_fields(data, normalized_source)

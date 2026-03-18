@@ -500,6 +500,55 @@ class DepositRecord(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
+class PrepaymentRecord(Base):
+    __tablename__ = "prepayment_records"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    community_id = Column(Integer, index=True, nullable=True)
+    community_name = Column(String(255))
+
+    account_id = Column(BigInteger, index=True)
+    building_id = Column(BigInteger, index=True)
+    unit_id = Column(BigInteger, index=True)
+    house_id = Column(BigInteger, index=True)
+    house_name = Column(String(255))
+
+    amount = Column(DECIMAL(12, 2))
+    balance_after_change = Column(DECIMAL(12, 2))
+
+    operate_type = Column(Integer, index=True)
+    operate_type_label = Column(String(100))
+
+    pay_channel_id = Column(Integer)
+    pay_channel_str = Column(String(100))
+
+    operator = Column(BigInteger, index=True)
+    operator_name = Column(String(255))
+
+    operate_time = Column(BigInteger, index=True)
+    operate_date = Column(Date, index=True)
+    source_updated_time = Column(DateTime)
+
+    remark = Column(Text)
+    deposit_order_id = Column(BigInteger, index=True)
+
+    pay_time = Column(BigInteger, index=True)
+    pay_date = Column(Date, index=True)
+
+    category_id = Column(Integer, index=True)
+    category_name = Column(String(255))
+    status = Column(Integer)
+
+    payment_id = Column(BigInteger, index=True)
+    has_refund_receipt = Column(Boolean, default=False)
+    refund_receipt_id = Column(BigInteger, index=True)
+
+    raw_data = Column(Text)
+
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 class BillVoucherPushRecord(Base):
     __tablename__ = "bill_voucher_push_records"
 

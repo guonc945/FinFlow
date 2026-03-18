@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Set
 import models, schemas, database
 from fetch_bills import sync_bills
 from fetch_deposit_records import sync_deposit_records
+from fetch_prepayment_records import sync_prepayment_records
 from fetch_receipt_bills import sync_receipt_bills
 from fetch_charge_items import sync_charge_items
 from fetch_houses import sync_houses
@@ -230,6 +231,22 @@ def _ensure_deposit_record_columns():
 
 
 _ensure_deposit_record_columns()
+
+
+def _ensure_prepayment_record_columns():
+    inspector = inspect(database.engine)
+    tables = inspector.get_table_names()
+    if "prepayment_records" not in tables:
+        return
+
+    existing_cols = {c["name"] for c in inspector.get_columns("prepayment_records")}
+    with database.engine.begin() as conn:
+        if "payment_id" not in existing_cols:
+            conn.execute(text("ALTER TABLE prepayment_records ADD COLUMN payment_id BIGINT"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_prepayment_records_payment_id ON prepayment_records (payment_id)"))
+
+
+_ensure_prepayment_record_columns()
 
 BILL_VOUCHER_PUSH_STATUS_LABELS = {
     "not_pushed": "未推送",
@@ -583,6 +600,48 @@ def _enrich_deposit_record_data(record_data: Dict[str, Any]) -> Dict[str, Any]:
     return mapping_enrich_source_data("deposit_records", record_data)
 
 
+def _serialize_prepayment_record_model(record: models.PrepaymentRecord) -> Dict[str, Any]:
+    data = {
+        "id": record.id,
+        "community_id": record.community_id,
+        "community_name": record.community_name,
+        "account_id": record.account_id,
+        "building_id": record.building_id,
+        "unit_id": record.unit_id,
+        "house_id": record.house_id,
+        "house_name": record.house_name,
+        "amount": record.amount,
+        "balance_after_change": record.balance_after_change,
+        "operate_type": record.operate_type,
+        "operate_type_label": record.operate_type_label or PREPAYMENT_OPERATE_TYPE_LABELS.get(record.operate_type, "其他"),
+        "pay_channel_id": record.pay_channel_id,
+        "pay_channel_str": record.pay_channel_str,
+        "operator": record.operator,
+        "operator_name": record.operator_name,
+        "operate_time": record.operate_time,
+        "operate_date": record.operate_date,
+        "source_updated_time": record.source_updated_time,
+        "remark": record.remark,
+        "deposit_order_id": record.deposit_order_id,
+        "pay_time": record.pay_time,
+        "pay_date": record.pay_date,
+        "category_id": record.category_id,
+        "category_name": record.category_name,
+        "status": record.status,
+        "payment_id": record.payment_id,
+        "has_refund_receipt": record.has_refund_receipt,
+        "refund_receipt_id": record.refund_receipt_id,
+        "raw_data": record.raw_data,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+    }
+    return {key: _jsonify_scalar(value) for key, value in data.items()}
+
+
+def _enrich_prepayment_record_data(record_data: Dict[str, Any]) -> Dict[str, Any]:
+    return mapping_enrich_source_data("prepayment_records", record_data)
+
+
 def _load_receipt_to_bills_relation(
     db: Session,
     receipt_bill: models.ReceiptBill,
@@ -638,6 +697,40 @@ def _load_receipt_to_deposit_refund_relation(
         .all()
     )
     return [_enrich_deposit_record_data(_serialize_deposit_record_model(record)) for record in records]
+
+
+def _load_receipt_to_prepayment_recharge_relation(
+    db: Session,
+    receipt_bill: models.ReceiptBill,
+) -> List[Dict[str, Any]]:
+    records = (
+        db.query(models.PrepaymentRecord)
+        .filter(
+            models.PrepaymentRecord.community_id == int(receipt_bill.community_id),
+            models.PrepaymentRecord.payment_id == int(receipt_bill.id),
+            models.PrepaymentRecord.operate_type == 1,
+        )
+        .order_by(models.PrepaymentRecord.id.asc())
+        .all()
+    )
+    return [_enrich_prepayment_record_data(_serialize_prepayment_record_model(record)) for record in records]
+
+
+def _load_receipt_to_prepayment_refund_relation(
+    db: Session,
+    receipt_bill: models.ReceiptBill,
+) -> List[Dict[str, Any]]:
+    records = (
+        db.query(models.PrepaymentRecord)
+        .filter(
+            models.PrepaymentRecord.community_id == int(receipt_bill.community_id),
+            models.PrepaymentRecord.refund_receipt_id == int(receipt_bill.id),
+            models.PrepaymentRecord.operate_type == 2,
+        )
+        .order_by(models.PrepaymentRecord.id.asc())
+        .all()
+    )
+    return [_enrich_prepayment_record_data(_serialize_prepayment_record_model(record)) for record in records]
 
 
 def _aggregate_receipt_bill_push_status(statuses: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -2273,10 +2366,52 @@ RECEIPT_BILL_DEAL_TYPE_LABELS = {
     6: "退还押金",
 }
 
+PREPAYMENT_OPERATE_TYPE_LABELS = {
+    1: "充值",
+    2: "退款",
+}
+
 DEPOSIT_OPERATE_TYPE_LABELS = {
     1: "收取",
     2: "退还",
 }
+
+
+def _serialize_prepayment_record(record: models.PrepaymentRecord) -> Dict[str, Any]:
+    operate_type = int(record.operate_type) if record.operate_type is not None else None
+    return {
+        "id": record.id,
+        "community_id": record.community_id,
+        "community_name": record.community_name or ("未匹配园区" if record.community_id is None else f"园区 {record.community_id}"),
+        "account_id": record.account_id,
+        "building_id": record.building_id,
+        "unit_id": record.unit_id,
+        "house_id": record.house_id,
+        "house_name": record.house_name,
+        "amount": float(record.amount) if record.amount is not None else 0,
+        "balance_after_change": float(record.balance_after_change) if record.balance_after_change is not None else 0,
+        "operate_type": operate_type,
+        "operate_type_label": record.operate_type_label or PREPAYMENT_OPERATE_TYPE_LABELS.get(operate_type, "其他"),
+        "pay_channel_id": record.pay_channel_id,
+        "pay_channel_str": record.pay_channel_str,
+        "operator": record.operator,
+        "operator_name": record.operator_name,
+        "operate_time": record.operate_time,
+        "operate_date": record.operate_date,
+        "source_updated_time": record.source_updated_time,
+        "remark": record.remark,
+        "deposit_order_id": record.deposit_order_id,
+        "pay_time": record.pay_time,
+        "pay_date": record.pay_date,
+        "category_id": record.category_id,
+        "category_name": record.category_name,
+        "status": record.status,
+        "payment_id": record.payment_id,
+        "has_refund_receipt": bool(record.has_refund_receipt),
+        "refund_receipt_id": record.refund_receipt_id,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+    }
 
 
 def _serialize_deposit_record(record: models.DepositRecord) -> Dict[str, Any]:
@@ -2305,6 +2440,137 @@ def _serialize_deposit_record(record: models.DepositRecord) -> Dict[str, Any]:
         "created_at": record.created_at,
         "updated_at": record.updated_at,
     }
+
+
+@app.get("/api/prepayment-records")
+def get_prepayment_records(
+    search: Optional[str] = None,
+    community_ids: Optional[str] = None,
+    operate_type: Optional[int] = None,
+    operate_date_start: Optional[str] = None,
+    operate_date_end: Optional[str] = None,
+    pay_date_start: Optional[str] = None,
+    pay_date_end: Optional[str] = None,
+    has_refund_receipt: Optional[bool] = None,
+    skip: int = 0,
+    limit: int = 25,
+    db: Session = Depends(get_db),
+    allowed_community_ids: List[int] = Depends(get_allowed_community_ids),
+):
+    from sqlalchemy import func as sa_func, cast, String as SAString
+
+    if not allowed_community_ids:
+        return {"total": 0, "total_amount": 0.00, "items": []}
+
+    query = db.query(models.PrepaymentRecord).filter(
+        models.PrepaymentRecord.community_id.in_(allowed_community_ids)
+    )
+
+    if community_ids:
+        try:
+            ids = [int(cid.strip()) for cid in community_ids.split(",") if cid.strip()]
+            if ids:
+                query = query.filter(models.PrepaymentRecord.community_id.in_(ids))
+        except ValueError:
+            pass
+
+    if operate_type is not None:
+        query = query.filter(models.PrepaymentRecord.operate_type == operate_type)
+
+    if operate_date_start:
+        try:
+            start_dt = datetime.strptime(operate_date_start, "%Y-%m-%d").date()
+            query = query.filter(models.PrepaymentRecord.operate_date >= start_dt)
+        except ValueError:
+            pass
+
+    if operate_date_end:
+        try:
+            end_dt = datetime.strptime(operate_date_end, "%Y-%m-%d").date()
+            query = query.filter(models.PrepaymentRecord.operate_date <= end_dt)
+        except ValueError:
+            pass
+
+    if pay_date_start:
+        try:
+            start_dt = datetime.strptime(pay_date_start, "%Y-%m-%d").date()
+            query = query.filter(models.PrepaymentRecord.pay_date >= start_dt)
+        except ValueError:
+            pass
+
+    if pay_date_end:
+        try:
+            end_dt = datetime.strptime(pay_date_end, "%Y-%m-%d").date()
+            query = query.filter(models.PrepaymentRecord.pay_date <= end_dt)
+        except ValueError:
+            pass
+
+    if has_refund_receipt is not None:
+        query = query.filter(models.PrepaymentRecord.has_refund_receipt == has_refund_receipt)
+
+    if search:
+        like = f"%{search}%"
+        query = query.filter(
+            or_(
+                cast(models.PrepaymentRecord.id, SAString).ilike(like),
+                cast(models.PrepaymentRecord.payment_id, SAString).ilike(like),
+                cast(models.PrepaymentRecord.house_id, SAString).ilike(like),
+                models.PrepaymentRecord.house_name.ilike(like),
+                models.PrepaymentRecord.community_name.ilike(like),
+                models.PrepaymentRecord.operator_name.ilike(like),
+                models.PrepaymentRecord.category_name.ilike(like),
+                models.PrepaymentRecord.remark.ilike(like),
+                models.PrepaymentRecord.pay_channel_str.ilike(like),
+            )
+        )
+
+    total = query.count()
+    total_amount = query.with_entities(sa_func.sum(models.PrepaymentRecord.amount)).scalar()
+    rows = (
+        query.order_by(models.PrepaymentRecord.operate_time.desc().nullslast(), models.PrepaymentRecord.id.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+    return {
+        "total": total,
+        "total_amount": float(total_amount) if total_amount else 0.00,
+        "items": [_serialize_prepayment_record(row) for row in rows],
+    }
+
+
+@app.post("/api/prepayment-records/sync")
+def sync_prepayment_records_endpoint(
+    background_tasks: BackgroundTasks,
+    request: Optional[schemas.PrepaymentRecordSyncRequest] = None,
+    allowed_community_ids: List[int] = Depends(get_allowed_community_ids),
+):
+    if request and request.community_ids:
+        community_ids = [cid for cid in request.community_ids if cid in allowed_community_ids]
+    else:
+        community_ids = allowed_community_ids
+
+    if not community_ids:
+        raise HTTPException(status_code=403, detail="No authorized communities for this account book")
+
+    str_ids = [str(cid) for cid in community_ids]
+    task_id = tracker.create_task(str_ids)
+    background_tasks.add_task(sync_prepayment_records, community_ids, task_id)
+
+    return {
+        "message": "Prepayment record synchronization started",
+        "task_id": task_id,
+        "community_ids": str_ids,
+    }
+
+
+@app.get("/api/prepayment-records/sync/status/{task_id}")
+def get_prepayment_record_sync_status(task_id: str):
+    status = tracker.get_task_status(task_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return status
 
 
 @app.get("/api/deposit-records")
@@ -2654,6 +2920,11 @@ def get_receipt_bill(
     if not rb:
         raise HTTPException(status_code=404, detail="Receipt bill not found")
 
+    related_deposit_collect = _load_receipt_to_deposit_collect_relation(db, rb)
+    related_deposit_refund = _load_receipt_to_deposit_refund_relation(db, rb)
+    related_prepayment_recharge = _load_receipt_to_prepayment_recharge_relation(db, rb)
+    related_prepayment_refund = _load_receipt_to_prepayment_refund_relation(db, rb)
+
     return {
         "id": rb.id,
         "community_id": rb.community_id,
@@ -2692,6 +2963,10 @@ def get_receipt_bill(
             }
             for u in (rb.users or [])
         ],
+        "related_deposit_collect": related_deposit_collect,
+        "related_deposit_refund": related_deposit_refund,
+        "related_prepayment_recharge": related_prepayment_recharge,
+        "related_prepayment_refund": related_prepayment_refund,
     }
 
 # New endpoint: POST /api/projects/sync
@@ -4142,6 +4417,10 @@ def _build_deposit_records_fields() -> Set[str]:
     return mapping_build_source_fields("deposit_records")
 
 
+def _build_prepayment_records_fields() -> Set[str]:
+    return mapping_build_source_fields("prepayment_records")
+
+
 def _build_oa_fields() -> Set[str]:
     return set()
 
@@ -4184,6 +4463,15 @@ SOURCE_REGISTRY: Dict[str, VoucherSourceMeta] = {
         field_names_builder=_build_deposit_records_fields,
         field_options_builder=lambda: _build_deposit_records_field_options(),
     ),
+    "prepayment_records": VoucherSourceMeta(
+        id="prepayment_records",
+        module_id="marki",
+        label="预存款记录",
+        source_type="prepayment_records",
+        root_enabled=False,
+        field_names_builder=_build_prepayment_records_fields,
+        field_options_builder=lambda: _build_prepayment_records_field_options(),
+    ),
     "oa_forms": VoucherSourceMeta(
         id="oa_forms",
         module_id="oa",
@@ -4218,6 +4506,20 @@ RELATION_REGISTRY: Dict[str, VoucherRelationMeta] = {
         root_source="receipt_bills",
         target_source="deposit_records",
         loader=_load_receipt_to_deposit_refund_relation,
+    ),
+    "receipt_to_prepayment_recharge": VoucherRelationMeta(
+        resolver="receipt_to_prepayment_recharge",
+        label="关联预存款收取",
+        root_source="receipt_bills",
+        target_source="prepayment_records",
+        loader=_load_receipt_to_prepayment_recharge_relation,
+    ),
+    "receipt_to_prepayment_refund": VoucherRelationMeta(
+        resolver="receipt_to_prepayment_refund",
+        label="关联预存款退款",
+        root_source="receipt_bills",
+        target_source="prepayment_records",
+        loader=_load_receipt_to_prepayment_refund_relation,
     ),
 }
 
@@ -4264,12 +4566,18 @@ def _build_deposit_records_field_options() -> List[Dict[str, str]]:
     return mapping_build_source_field_options("deposit_records")
 
 
+def _build_prepayment_records_field_options() -> List[Dict[str, str]]:
+    return mapping_build_source_field_options("prepayment_records")
+
+
 def _build_legacy_source_field_options(source_type: str) -> List[Dict[str, str]]:
     normalized_source = (source_type or "").strip().lower()
     if normalized_source == "receipt_bills":
         return _build_receipt_bills_field_options()
     if normalized_source == "deposit_records":
         return _build_deposit_records_field_options()
+    if normalized_source == "prepayment_records":
+        return _build_prepayment_records_field_options()
     return _build_bills_field_options()
 
 

@@ -147,6 +147,10 @@ class DepositRecordSyncRequest(BaseModel):
     community_ids: Optional[List[int]] = None
 
 
+class PrepaymentRecordSyncRequest(BaseModel):
+    community_ids: Optional[List[int]] = None
+
+
 class DepositRecordResponse(BaseModel):
     id: int
     community_id: Optional[int] = None
@@ -167,6 +171,43 @@ class DepositRecordResponse(BaseModel):
     has_refund_receipt: Optional[bool] = None
     refund_receipt_id: Optional[int] = None
     pay_channel_str: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class PrepaymentRecordResponse(BaseModel):
+    id: int
+    community_id: Optional[int] = None
+    community_name: Optional[str] = None
+    account_id: Optional[int] = None
+    building_id: Optional[int] = None
+    unit_id: Optional[int] = None
+    house_id: Optional[int] = None
+    house_name: Optional[str] = None
+    amount: Optional[Decimal] = None
+    balance_after_change: Optional[Decimal] = None
+    operate_type: Optional[int] = None
+    operate_type_label: Optional[str] = None
+    pay_channel_id: Optional[int] = None
+    pay_channel_str: Optional[str] = None
+    operator: Optional[int] = None
+    operator_name: Optional[str] = None
+    operate_time: Optional[int] = None
+    operate_date: Optional[date] = None
+    source_updated_time: Optional[datetime] = None
+    remark: Optional[str] = None
+    deposit_order_id: Optional[int] = None
+    pay_time: Optional[int] = None
+    pay_date: Optional[date] = None
+    category_id: Optional[int] = None
+    category_name: Optional[str] = None
+    status: Optional[int] = None
+    payment_id: Optional[int] = None
+    has_refund_receipt: Optional[bool] = None
+    refund_receipt_id: Optional[int] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
 

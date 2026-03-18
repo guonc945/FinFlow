@@ -7,7 +7,8 @@ const MainLayout = () => {
         const titles: Record<string, { title: string; subtitle?: string }> = {
             '/': { title: '首页仪表盘', subtitle: '系统运行状态与核心业务概览' },
             '/bills': { title: '运营账单', subtitle: '查看全部应收、已收与账单明细信息' },
-            '/deposit-records': { title: '押金管理', subtitle: '集中查看押金收取、退还与关联情况' },
+            '/deposit-records': { title: '押金管理', subtitle: '集中查看押金收取、退还与缴费关联情况' },
+            '/prepayment-records': { title: '预存款管理', subtitle: '集中查看预存款充值、退款与缴费关联情况' },
             '/receipt-bills': { title: '收款账单', subtitle: '统一查看来自业务系统的收款明细' },
             '/charge-items': { title: '收费项目', subtitle: '维护收费项目与相关规则配置' },
             '/houses': { title: '房屋管理', subtitle: '查看业务系统中的房屋基础资料' },
@@ -18,7 +19,7 @@ const MainLayout = () => {
             '/integrations/credentials': { title: '凭证配置', subtitle: '管理外部系统认证凭据与授权信息' },
             '/integrations/apis': { title: '接口管理', subtitle: '维护外部系统 API 定义与调试配置' },
             '/vouchers/templates': { title: '凭证模板中心', subtitle: '可视化设计与维护凭证生成模板' },
-            '/vouchers/categories': { title: '模板分类', subtitle: '管理凭证模板的分类树结构与所属关系' },
+            '/vouchers/categories': { title: '模板分类', subtitle: '管理凭证模板分类树结构与所属关系' },
             '/accounting-subjects': { title: '会计科目管理', subtitle: '同步与管理会计科目基础资料' },
             '/account-books': { title: '账簿管理', subtitle: '管理与同步金蝶账簿档案' },
             '/auxiliary-data': { title: '辅助资料', subtitle: '管理财务辅助核算资料' },

@@ -16,6 +16,7 @@ export const Login = lazyWithPreload(() => import('../pages/auth/Login'));
 export const Dashboard = lazyWithPreload(() => import('../pages/dashboard'));
 export const Bills = lazyWithPreload(() => import('../pages/bills'));
 export const DepositRecords = lazyWithPreload(() => import('../pages/deposit-records'));
+export const PrepaymentRecords = lazyWithPreload(() => import('../pages/prepayment-records'));
 export const ReceiptBills = lazyWithPreload(() => import('../pages/receipt-bills'));
 export const Projects = lazyWithPreload(() => import('../pages/projects'));
 export const ChargeItems = lazyWithPreload(() => import('../pages/charge-items'));
@@ -45,6 +46,7 @@ const routePreloaders: Record<string, () => Promise<unknown>> = {
     '/': Dashboard.preload,
     '/bills': Bills.preload,
     '/deposit-records': DepositRecords.preload,
+    '/prepayment-records': PrepaymentRecords.preload,
     '/receipt-bills': ReceiptBills.preload,
     '/houses': Houses.preload,
     '/residents': Residents.preload,

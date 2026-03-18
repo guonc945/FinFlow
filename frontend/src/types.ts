@@ -171,6 +171,40 @@ export interface DepositRecord {
     updated_at?: string | null;
 }
 
+export interface PrepaymentRecord {
+    id: string;
+    community_id?: number | null;
+    community_name?: string | null;
+    account_id?: number | null;
+    building_id?: number | null;
+    unit_id?: number | null;
+    house_id?: number | null;
+    house_name?: string | null;
+    amount: number;
+    balance_after_change?: number | null;
+    operate_type?: number | null;
+    operate_type_label?: string | null;
+    pay_channel_id?: number | null;
+    pay_channel_str?: string | null;
+    operator?: number | null;
+    operator_name?: string | null;
+    operate_time?: number | null;
+    operate_date?: string | null;
+    source_updated_time?: string | null;
+    remark?: string | null;
+    deposit_order_id?: number | null;
+    pay_time?: number | null;
+    pay_date?: string | null;
+    category_id?: number | null;
+    category_name?: string | null;
+    status?: number | null;
+    payment_id?: number | null;
+    has_refund_receipt?: boolean;
+    refund_receipt_id?: number | null;
+    created_at: string;
+    updated_at?: string | null;
+}
+
 export interface ChargeItem {
     item_id: number;
     communityid: string;
