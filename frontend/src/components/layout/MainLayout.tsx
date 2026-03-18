@@ -3,13 +3,13 @@ import Header from './Header';
 import RouteTabs from './RouteTabs';
 
 const MainLayout = () => {
-
     const getPageTitle = (pathname: string) => {
-        const titles: Record<string, { title: string, subtitle?: string }> = {
+        const titles: Record<string, { title: string; subtitle?: string }> = {
             '/': { title: '首页仪表盘', subtitle: '系统运行正常，您可以在下方查看近期的收入趋势及账单动态' },
-            '/bills': { title: '账单管理', subtitle: '所有应收/已收账单信息的全景视图' },
+            '/bills': { title: '运营账单', subtitle: '所有应收、已收账单信息的全景视图' },
+            '/deposit-records': { title: '押金管理', subtitle: '集中查看和同步各园区押金收取、退还及缴费关联情况' },
             '/receipt-bills': { title: '收款账单', subtitle: '来自马克系统的收款明细，用于统一查看与同步收款信息' },
-            '/charge-items': { title: '收费项目与规则管理', subtitle: '集中配置和管理各类收费项目及其计费规则' },
+            '/charge-items': { title: '收费项目与规则', subtitle: '集中配置和管理各类收费项目及其计费规则' },
             '/houses': { title: '房屋管理 (马克)', subtitle: '马克系统内的房屋基础资产数据' },
             '/projects': { title: '项目与园区管理', subtitle: '定义并管理所有物业服务项目及关联区域' },
             '/residents': { title: '住户管理', subtitle: '维护业主、租户及家庭成员等核心人员信息' },
@@ -29,8 +29,9 @@ const MainLayout = () => {
             '/settings': { title: '系统设置', subtitle: '全局系统参数与偏好配置' },
             '/account': { title: '个人设置', subtitle: '编辑个人信息、修改密码与偏好配置' },
             '/users': { title: '用户与权限管理', subtitle: '内部员工账号、角色与系统访问控制' },
-            '/organizations': { title: '组织架构管理', subtitle: '维护公司的多层级组织与部门结构' }
+            '/organizations': { title: '组织架构管理', subtitle: '维护公司的多层级组织与部门结构' },
         };
+
         return titles[pathname] || { title: '控制台' };
     };
 
