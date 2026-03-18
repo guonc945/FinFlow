@@ -49,6 +49,12 @@ from voucher_source_registry import (
     build_relation_payload,
     build_source_modules_payload,
 )
+from voucher_field_mapping import (
+    build_source_field_options as mapping_build_source_field_options,
+    build_source_fields as mapping_build_source_fields,
+    enrich_source_data as mapping_enrich_source_data,
+    prefix_source_fields as mapping_prefix_source_fields,
+)
 
 # Configure logger for project sync
 logger = logging.getLogger('project_sync')
@@ -481,13 +487,7 @@ def _jsonify_scalar(value: Any) -> Any:
 
 
 def _prefix_source_fields(data: Dict[str, Any], source_type: str, module_prefix: str = "marki") -> Dict[str, Any]:
-    enriched = dict(data)
-    for key, val in list(data.items()):
-        if not isinstance(key, str) or "." in key:
-            continue
-        enriched[f"{source_type}.{key}"] = val
-        enriched[f"{module_prefix}.{source_type}.{key}"] = val
-    return enriched
+    return mapping_prefix_source_fields(data, source_type, module_prefix=module_prefix)
 
 
 def _serialize_receipt_bill_model(
@@ -542,8 +542,12 @@ def _serialize_receipt_bill_model(
     return {key: _jsonify_scalar(value) for key, value in data.items()}
 
 
-def _enrich_receipt_bill_data(receipt_data: Dict[str, Any]) -> Dict[str, Any]:
-    return _prefix_source_fields(receipt_data, "receipt_bills")
+def _enrich_receipt_bill_data(
+    receipt_data: Dict[str, Any],
+    receipt_bill: Optional[models.ReceiptBill] = None,
+    db: Optional[Session] = None,
+) -> Dict[str, Any]:
+    return mapping_enrich_source_data("receipt_bills", receipt_data, db=db, record=receipt_bill)
 
 
 def _serialize_deposit_record_model(record: models.DepositRecord) -> Dict[str, Any]:
@@ -576,7 +580,7 @@ def _serialize_deposit_record_model(record: models.DepositRecord) -> Dict[str, A
 
 
 def _enrich_deposit_record_data(record_data: Dict[str, Any]) -> Dict[str, Any]:
-    return _prefix_source_fields(record_data, "deposit_records")
+    return mapping_enrich_source_data("deposit_records", record_data)
 
 
 def _load_receipt_to_bills_relation(
@@ -592,10 +596,9 @@ def _load_receipt_to_bills_relation(
         .order_by(models.Bill.id.asc())
         .all()
     )
-    from services.voucher_engine import enrich_bill_data
-
     return [
-        enrich_bill_data(
+        mapping_enrich_source_data(
+            "bills",
             {col.name: _jsonify_scalar(getattr(bill, col.name, None)) for col in models.Bill.__table__.columns},
             db,
         )
@@ -4066,6 +4069,18 @@ _RECEIPT_BILL_FIELD_LABELS: Dict[str, str] = {
     "bind_users_raw": "关联住户备份(JSON)",
     "created_at": "创建时间(系统)",
     "updated_at": "更新时间(系统)",
+    "kd_house_number": "金蝶房号编码",
+    "kd_house_name": "金蝶房号名称",
+    "kd_park_house_number": "车位映射房号编码",
+    "kd_park_house_name": "车位映射房号名称",
+    "kd_customer_number": "金蝶客户编码",
+    "kd_customer_name": "金蝶客户名称",
+    "kd_project_number": "金蝶项目编码",
+    "kd_project_name": "金蝶项目名称",
+    "kd_receive_bank_number": "收款银行账户编码",
+    "kd_receive_bank_name": "收款银行账户名称",
+    "kd_pay_bank_number": "付款银行账户编码",
+    "kd_pay_bank_name": "付款银行账户名称",
 }
 
 
@@ -4098,73 +4113,33 @@ _DEPOSIT_RECORD_FIELD_LABELS: Dict[str, str] = {
 
 
 def _group_bills_field(field_name: str) -> str:
-    if field_name.startswith("kd_"):
-        return "银行账户" if "_bank_" in field_name else "金蝶关联"
-    if field_name in _BILL_RUNTIME_EXTRA_FIELDS:
-        return "运行时字段"
-    if field_name == "amount" or field_name.endswith("_amount"):
-        return "金额信息"
-    if field_name.startswith("pay_") or field_name.startswith("bill_") or field_name in {"receipt_id", "in_month", "receive_date"}:
-        return "支付与状态"
-    if field_name in {"id", "community_id", "charge_item_id", "asset_id", "house_id", "park_id", "bind_house_id", "deal_log_id"}:
-        return "关联ID"
-    return "账单字段"
+    field_options = mapping_build_source_field_options("bills")
+    matched = next((item for item in field_options if item.get("value") == field_name), None)
+    return str(matched.get("group")) if matched and matched.get("group") else "账单字段"
 
 
 def _group_receipt_bills_field(field_name: str) -> str:
-    if field_name in _RECEIPT_BILL_RUNTIME_EXTRA_FIELDS:
-        return "运行时字段"
-    if field_name == "income_amount" or field_name == "amount" or field_name.endswith("_amount"):
-        return "金额信息"
-    if field_name.startswith("pay_") or field_name in {"receipt_id"}:
-        return "支付信息"
-    if field_name.startswith("invoice_") or field_name in {"open_invoice"}:
-        return "发票信息"
-    if field_name.startswith("deal_"):
-        return "交易时间"
-    if field_name in {"id", "community_id", "asset_id", "receipt_record_id", "receipt_version"}:
-        return "关联ID"
-    if field_name.startswith("asset_"):
-        return "资产信息"
-    return "收款字段"
+    field_options = mapping_build_source_field_options("receipt_bills")
+    matched = next((item for item in field_options if item.get("value") == field_name), None)
+    return str(matched.get("group")) if matched and matched.get("group") else "收款字段"
 
 
 def _group_deposit_records_field(field_name: str) -> str:
-    if field_name in _DEPOSIT_RECORD_RUNTIME_EXTRA_FIELDS:
-        return "运行时字段"
-    if field_name == "amount" or field_name.endswith("_amount"):
-        return "金额信息"
-    if field_name.startswith("operate_"):
-        return "操作信息"
-    if field_name.startswith("pay_"):
-        return "支付信息"
-    if field_name in {"id", "community_id", "house_id", "payment_id", "refund_receipt_id"}:
-        return "关联ID"
-    return "押金字段"
+    field_options = mapping_build_source_field_options("deposit_records")
+    matched = next((item for item in field_options if item.get("value") == field_name), None)
+    return str(matched.get("group")) if matched and matched.get("group") else "押金字段"
 
 
 def _build_bills_fields() -> Set[str]:
-    fields = {col.name for col in models.Bill.__table__.columns}
-    try:
-        from services.voucher_engine import KD_DERIVED_FIELDS
-        fields.update(KD_DERIVED_FIELDS.keys())
-    except Exception:
-        # Keep validation resilient even if engine import fails.
-        pass
-    fields.update(_BILL_RUNTIME_EXTRA_FIELDS)
-    return fields
+    return mapping_build_source_fields("bills")
 
 
 def _build_receipt_bills_fields() -> Set[str]:
-    fields = {col.name for col in models.ReceiptBill.__table__.columns}
-    fields.update(_RECEIPT_BILL_RUNTIME_EXTRA_FIELDS)
-    return fields
+    return mapping_build_source_fields("receipt_bills")
 
 
 def _build_deposit_records_fields() -> Set[str]:
-    fields = {col.name for col in models.DepositRecord.__table__.columns}
-    fields.update(_DEPOSIT_RECORD_RUNTIME_EXTRA_FIELDS)
-    return fields
+    return mapping_build_source_fields("deposit_records")
 
 
 def _build_oa_fields() -> Set[str]:
@@ -4278,54 +4253,15 @@ def _build_source_field_options(source_type: str) -> List[Dict[str, str]]:
 
 
 def _build_bills_field_options() -> List[Dict[str, str]]:
-    fields = _build_bills_fields()
-    labels = _BILL_FIELD_LABELS
-    grouper = _group_bills_field
-
-    options = []
-    for field_name in sorted(fields):
-        display_name = labels.get(field_name)
-        label = f"{display_name} ({field_name})" if display_name else field_name
-        options.append({
-            "label": label,
-            "value": field_name,
-            "group": grouper(field_name),
-        })
-    return options
+    return mapping_build_source_field_options("bills")
 
 
 def _build_receipt_bills_field_options() -> List[Dict[str, str]]:
-    fields = _build_receipt_bills_fields()
-    labels = _RECEIPT_BILL_FIELD_LABELS
-    grouper = _group_receipt_bills_field
-
-    options = []
-    for field_name in sorted(fields):
-        display_name = labels.get(field_name)
-        label = f"{display_name} ({field_name})" if display_name else field_name
-        options.append({
-            "label": label,
-            "value": field_name,
-            "group": grouper(field_name),
-        })
-    return options
+    return mapping_build_source_field_options("receipt_bills")
 
 
 def _build_deposit_records_field_options() -> List[Dict[str, str]]:
-    fields = _build_deposit_records_fields()
-    labels = _DEPOSIT_RECORD_FIELD_LABELS
-    grouper = _group_deposit_records_field
-
-    options = []
-    for field_name in sorted(fields):
-        display_name = labels.get(field_name)
-        label = f"{display_name} ({field_name})" if display_name else field_name
-        options.append({
-            "label": label,
-            "value": field_name,
-            "group": grouper(field_name),
-        })
-    return options
+    return mapping_build_source_field_options("deposit_records")
 
 
 def _build_legacy_source_field_options(source_type: str) -> List[Dict[str, str]]:
@@ -4910,10 +4846,8 @@ def resolve_voucher_fields(
     返回示例:
     { "enriched_data": { "kd_house_number": "H001" } }
     """
-    from services.voucher_engine import enrich_bill_data
-    
     bill_data = payload.get("bill_data", {})
-    enriched = enrich_bill_data(bill_data, db)
+    enriched = mapping_enrich_source_data("bills", bill_data, db=db)
     
     return {"enriched_data": enriched}
 
@@ -5094,7 +5028,7 @@ def _preview_voucher_for_bill_via_receipt_templates(
         push_block_reason = f"Current bill already has voucher push records: {conflict_preview}"
 
     receipt_data = _serialize_receipt_bill_model(receipt_bill, db)
-    enriched_receipt = _enrich_receipt_bill_data(receipt_data)
+    enriched_receipt = _enrich_receipt_bill_data(receipt_data, receipt_bill=receipt_bill, db=db)
     user_context = _build_preview_user_context(
         current_user,
         x_account_book_id=x_account_book_id,
@@ -5327,8 +5261,6 @@ def preview_voucher_for_receipt(
         push_block_reason = f"Related bills already have voucher push records: {conflict_preview}"
 
     if source_bills:
-        from services.voucher_engine import enrich_bill_data
-
         related_bills = (
             db.query(models.Bill)
             .filter(
@@ -5356,7 +5288,7 @@ def preview_voucher_for_receipt(
                 if isinstance(val, PyDecimal):
                     bill_data[key] = float(val)
 
-            enriched_bill = enrich_bill_data(bill_data, db)
+            enriched_bill = mapping_enrich_source_data("bills", bill_data, db=db)
             result = _preview_voucher_for_bill_via_receipt_templates(
                 bill=related_bill,
                 enriched_bill=enriched_bill,
@@ -5490,7 +5422,7 @@ def preview_voucher_for_receipt(
             }
 
     receipt_data = _serialize_receipt_bill_model(receipt_bill, db)
-    enriched = _enrich_receipt_bill_data(receipt_data)
+    enriched = _enrich_receipt_bill_data(receipt_data, receipt_bill=receipt_bill, db=db)
 
     user_context = _build_preview_user_context(
         current_user,
@@ -5882,7 +5814,7 @@ def preview_voucher_for_bill(
     1. `accounting_view`: 面向业务查看的会计凭证视图
     2. `kingdee_json`: 可直接用于 `voucherAdd` 的金蝶请求 JSON
     """
-    from services.voucher_engine import enrich_bill_data, evaluate_expression
+    from services.voucher_engine import evaluate_expression
     from utils.variable_parser import build_variable_map, resolve_variables
     import json as json_mod
     from datetime import datetime
@@ -5955,7 +5887,7 @@ def preview_voucher_for_bill(
             bill_data[k] = float(v)
 
     # 2. 閹碘晛鐫嶉弫鐗堝祦閿涘牐鎷烽崝鐘诲櫨閾︽儼閻㈢喎鐡у▓纰夌礆
-    enriched = enrich_bill_data(bill_data, db)
+    enriched = mapping_enrich_source_data("bills", bill_data, db=db)
 
     # 3. Match candidate templates
     templates = db.query(models.VoucherTemplate).filter(

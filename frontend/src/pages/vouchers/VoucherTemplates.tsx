@@ -27,9 +27,9 @@ type SourceFieldOption = {
 };
 
 const buildDefaultVoucherFieldModules = (
-    billsFields: SourceFieldOption[],
-    receiptBillFields: SourceFieldOption[],
-    depositRecordFields: SourceFieldOption[],
+    billsFields: SourceFieldOption[] = [],
+    receiptBillFields: SourceFieldOption[] = [],
+    depositRecordFields: SourceFieldOption[] = [],
 ): VoucherFieldModule[] => {
     return [
         {
@@ -78,93 +78,7 @@ const buildDefaultVoucherFieldModules = (
     ];
 };
 
-
-
-const FALLBACK_BILL_SOURCE_FIELDS: SourceFieldOption[] = [
-    // 金额信息
-    { label: '账单金额 (amount)', value: 'amount', group: '金额信息' },
-    { label: '应付金额 (bill_amount)', value: 'bill_amount', group: '金额信息' },
-    { label: '折扣金额 (discount_amount)', value: 'discount_amount', group: '金额信息' },
-    { label: '滞纳金 (late_money_amount)', value: 'late_money_amount', group: '金额信息' },
-    { label: '押金 (deposit_amount)', value: 'deposit_amount', group: '金额信息' },
-
-    // 基础信息
-    { label: '收费项目名称 (charge_item_name)', value: 'charge_item_name', group: '基础信息' },
-    { label: '收费项目分类 (category_name)', value: 'category_name', group: '基础信息' },
-    { label: '资产名称 (asset_name)', value: 'asset_name', group: '基础信息' },
-    { label: '资产类型 (asset_type_str)', value: 'asset_type_str', group: '基础信息' },
-    { label: '房屋全名 (full_house_name)', value: 'full_house_name', group: '基础信息' },
-    { label: '车位名称 (park_name)', value: 'park_name', group: '基础信息' },
-
-    // 支付与状态
-    { label: '所属月份 (in_month)', value: 'in_month', group: '支付与状态' },
-    { label: '支付状态 (pay_status_str)', value: 'pay_status_str', group: '支付与状态' },
-    { label: '支付方式 (pay_type_str)', value: 'pay_type_str', group: '支付与状态' },
-    { label: '账单类型 (bill_type_str)', value: 'bill_type_str', group: '支付与状态' },
-    { label: '收据号 (receipt_id)', value: 'receipt_id', group: '支付与状态' },
-
-    // 其他
-    { label: '备注 (remark)', value: 'remark', group: '其他' },
-    { label: '子商户名称 (sub_mch_name)', value: 'sub_mch_name', group: '其他' },
-    { label: '账单ID (id)', value: 'id', group: '其他' },
-
-    // 金蝶关联字段（通过已建立的档案映射自动取值）
-    { label: '金蝶房号编码 (kd_house_number)', value: 'kd_house_number', group: '金蝶关联' },
-    { label: '金蝶房号名称 (kd_house_name)', value: 'kd_house_name', group: '金蝶关联' },
-    { label: '车位映射房号编码 (kd_park_house_number)', value: 'kd_park_house_number', group: '金蝶关联' },
-    { label: '车位映射房号名称 (kd_park_house_name)', value: 'kd_park_house_name', group: '金蝶关联' },
-    { label: '金蝶客户编码 (kd_customer_number)', value: 'kd_customer_number', group: '金蝶关联' },
-    { label: '金蝶客户名称 (kd_customer_name)', value: 'kd_customer_name', group: '金蝶关联' },
-    { label: '金蝶项目编码 (kd_project_number)', value: 'kd_project_number', group: '金蝶关联' },
-    { label: '金蝶项目名称 (kd_project_name)', value: 'kd_project_name', group: '金蝶关联' },
-
-    // 自动解析的银行账户
-    { label: '收款银行账户编码 (kd_receive_bank_number)', value: 'kd_receive_bank_number', group: '银行账户' },
-    { label: '收款银行账户名称 (kd_receive_bank_name)', value: 'kd_receive_bank_name', group: '银行账户' },
-    { label: '付款银行账户编码 (kd_pay_bank_number)', value: 'kd_pay_bank_number', group: '银行账户' },
-    { label: '付款银行账户名称 (kd_pay_bank_name)', value: 'kd_pay_bank_name', group: '银行账户' },
-];
-
-const FALLBACK_RECEIPT_BILL_SOURCE_FIELDS: SourceFieldOption[] = [
-    { label: '收款明细ID (id)', value: 'id', group: '关联ID' },
-    { label: '园区ID (community_id)', value: 'community_id', group: '关联ID' },
-    { label: '园区名称 (community_name)', value: 'community_name', group: '运行时字段' },
-    { label: '付款人 (payer_name)', value: 'payer_name', group: '运行时字段' },
-    { label: '收款人 (payee)', value: 'payee', group: '基础信息' },
-    { label: '资产名称 (asset_name)', value: 'asset_name', group: '资产信息' },
-    { label: '实收金额 (income_amount)', value: 'income_amount', group: '金额信息' },
-    { label: '收款金额 (amount)', value: 'amount', group: '金额信息' },
-    { label: '账单金额 (bill_amount)', value: 'bill_amount', group: '金额信息' },
-    { label: '折扣金额 (discount_amount)', value: 'discount_amount', group: '金额信息' },
-    { label: '滞纳金 (late_money_amount)', value: 'late_money_amount', group: '金额信息' },
-    { label: '押金 (deposit_amount)', value: 'deposit_amount', group: '金额信息' },
-    { label: '支付方式 (pay_channel_str)', value: 'pay_channel_str', group: '支付信息' },
-    { label: '收据号 (receipt_id)', value: 'receipt_id', group: '支付信息' },
-    { label: '交易时间 (deal_time)', value: 'deal_time', group: '交易时间' },
-    { label: '交易日期 (deal_date)', value: 'deal_date', group: '交易时间' },
-];
-
-const FALLBACK_DEPOSIT_RECORD_SOURCE_FIELDS: SourceFieldOption[] = [
-    { label: '押金记录ID (id)', value: 'id', group: '基础信息' },
-    { label: '园区ID (community_id)', value: 'community_id', group: '基础信息' },
-    { label: '押金操作类型 (operate_type)', value: 'operate_type', group: '业务信息' },
-    { label: '押金操作类型名称 (operate_type_label)', value: 'operate_type_label', group: '业务信息' },
-    { label: '收款项目名称 (charge_item_name)', value: 'charge_item_name', group: '业务信息' },
-    { label: '客户名称 (customer_name)', value: 'customer_name', group: '业务信息' },
-    { label: '资产名称 (asset_name)', value: 'asset_name', group: '业务信息' },
-    { label: '房号 (full_house_name)', value: 'full_house_name', group: '业务信息' },
-    { label: '金额 (amount)', value: 'amount', group: '金额信息' },
-    { label: '收款单ID (payment_id)', value: 'payment_id', group: '关联ID' },
-    { label: '退款收据ID (refund_receipt_id)', value: 'refund_receipt_id', group: '关联ID' },
-    { label: '业务日期 (operate_date)', value: 'operate_date', group: '时间信息' },
-    { label: '支付日期 (pay_date)', value: 'pay_date', group: '时间信息' },
-];
-
-const FALLBACK_RELATION_OPTIONS: VoucherRelationOption[] = [
-    { resolver: 'receipt_to_bills', label: '关联运营账单', root_source: 'receipt_bills', target_source: 'bills' },
-    { resolver: 'receipt_to_deposit_collect', label: '关联押金收取', root_source: 'receipt_bills', target_source: 'deposit_records' },
-    { resolver: 'receipt_to_deposit_refund', label: '关联押金退款', root_source: 'receipt_bills', target_source: 'deposit_records' },
-];
+const EMPTY_VOUCHER_FIELD_MODULES = buildDefaultVoucherFieldModules();
 
 
 
@@ -247,16 +161,6 @@ const normalizeSourceFields = (raw: any): SourceFieldOption[] => {
         normalized.push({ label, value, group });
     });
     return normalized;
-};
-
-const mergeSourceFields = (fallback: SourceFieldOption[], dynamic: SourceFieldOption[]): SourceFieldOption[] => {
-    const map = new Map<string, SourceFieldOption>();
-    fallback.forEach(item => map.set(item.value, item));
-    dynamic.forEach(item => {
-        if (map.has(item.value)) return;
-        map.set(item.value, item);
-    });
-    return Array.from(map.values());
 };
 
 
@@ -475,11 +379,7 @@ const DimensionFormEditor = ({
                                     onChange={val => handleRowChange(idx, 'value', val)}
                                     onGlobalFocus={onFocusField}
                                     onOpenPicker={onOpenPicker}
-                                    fieldModules={fieldModules || buildDefaultVoucherFieldModules(
-                                        FALLBACK_BILL_SOURCE_FIELDS,
-                                        FALLBACK_RECEIPT_BILL_SOURCE_FIELDS,
-                                        FALLBACK_DEPOSIT_RECORD_SOURCE_FIELDS,
-                                    )}
+                                    fieldModules={fieldModules || EMPTY_VOUCHER_FIELD_MODULES}
                                 />
                             </td>
                             <td>
@@ -826,17 +726,11 @@ const VoucherTemplates = () => {
     const [subjects, setSubjects] = useState<AccountingSubject[]>([]);
     const [saveErrors, setSaveErrors] = useState<string[]>([]);
     const [loadError, setLoadError] = useState<string | null>(null);
-    const [billSourceFields, setBillSourceFields] = useState<SourceFieldOption[]>(FALLBACK_BILL_SOURCE_FIELDS);
-    const [receiptBillSourceFields, setReceiptBillSourceFields] = useState<SourceFieldOption[]>(FALLBACK_RECEIPT_BILL_SOURCE_FIELDS);
-    const [depositSourceFields, setDepositSourceFields] = useState<SourceFieldOption[]>(FALLBACK_DEPOSIT_RECORD_SOURCE_FIELDS);
-    const [voucherFieldModules, setVoucherFieldModules] = useState<VoucherFieldModule[]>(
-        buildDefaultVoucherFieldModules(
-            FALLBACK_BILL_SOURCE_FIELDS,
-            FALLBACK_RECEIPT_BILL_SOURCE_FIELDS,
-            FALLBACK_DEPOSIT_RECORD_SOURCE_FIELDS
-        )
-    );
-    const [relationOptions, setRelationOptions] = useState<VoucherRelationOption[]>(FALLBACK_RELATION_OPTIONS);
+    const [billSourceFields, setBillSourceFields] = useState<SourceFieldOption[]>([]);
+    const [receiptBillSourceFields, setReceiptBillSourceFields] = useState<SourceFieldOption[]>([]);
+    const [depositSourceFields, setDepositSourceFields] = useState<SourceFieldOption[]>([]);
+    const [voucherFieldModules, setVoucherFieldModules] = useState<VoucherFieldModule[]>(EMPTY_VOUCHER_FIELD_MODULES);
+    const [relationOptions, setRelationOptions] = useState<VoucherRelationOption[]>([]);
     const [templateCategories, setTemplateCategories] = useState<TemplateCategory[]>([]);
     const [categoryFilter, setCategoryFilter] = useState<string>('all');
     const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
@@ -1274,53 +1168,60 @@ const VoucherTemplates = () => {
         }
     };
 
+    const extractSourceFields = (modules: VoucherFieldModule[], sourceType: string): SourceFieldOption[] => {
+        const normalizedSourceType = String(sourceType || '').trim().toLowerCase();
+        const matchedSource = modules
+            .flatMap(module => module.sources || [])
+            .find(source => String(source?.source_type || '').trim().toLowerCase() === normalizedSourceType);
+        return normalizeSourceFields(matchedSource?.fields || []);
+    };
+
+    const applySourceMetadata = (
+        modules: VoucherFieldModule[],
+        relations: VoucherRelationOption[] = [],
+    ) => {
+        setVoucherFieldModules(modules);
+        setRelationOptions(relations);
+        setBillSourceFields(extractSourceFields(modules, 'bills'));
+        setReceiptBillSourceFields(extractSourceFields(modules, 'receipt_bills'));
+        setDepositSourceFields(extractSourceFields(modules, 'deposit_records'));
+    };
+
+    const fetchSourceFieldsByType = async (sourceType: 'bills' | 'receipt_bills' | 'deposit_records') => {
+        const res = await axios.get(`${API_BASE}/vouchers/source-fields`, {
+            params: { source_type: sourceType }
+        });
+        return normalizeSourceFields(res?.data?.fields ?? res?.data ?? []);
+    };
+
+    const fetchSourceFieldsFallback = async () => {
+        const [bills, receiptBills, depositRecords] = await Promise.all([
+            fetchSourceFieldsByType('bills'),
+            fetchSourceFieldsByType('receipt_bills'),
+            fetchSourceFieldsByType('deposit_records'),
+        ]);
+
+        applySourceMetadata(buildDefaultVoucherFieldModules(bills, receiptBills, depositRecords), []);
+    };
+
     const fetchVoucherFieldModules = async () => {
         try {
             const res = await getVoucherFieldModules();
             const modules = res?.modules as VoucherFieldModule[] | undefined;
             const relations = Array.isArray(res?.relations) ? res.relations : [];
             if (Array.isArray(modules) && modules.length > 0) {
-                setVoucherFieldModules(modules);
-                setRelationOptions(relations.length > 0 ? relations : FALLBACK_RELATION_OPTIONS);
-
-                const marki = modules.find(m => String(m?.id) === 'marki') || modules[0];
-                const billsSource = (marki?.sources || []).find(s => String(s?.id) === 'bills' || String(s?.source_type) === 'bills');
-                const receiptBillsSource = (marki?.sources || []).find(s => String(s?.id) === 'receipt_bills' || String(s?.source_type) === 'receipt_bills');
-                const depositRecordsSource = (marki?.sources || []).find(s => String(s?.id) === 'deposit_records' || String(s?.source_type) === 'deposit_records');
-
-                const mergedBillsFields = mergeSourceFields(FALLBACK_BILL_SOURCE_FIELDS, normalizeSourceFields(billsSource?.fields ?? []));
-                const mergedReceiptFields = mergeSourceFields(FALLBACK_RECEIPT_BILL_SOURCE_FIELDS, normalizeSourceFields(receiptBillsSource?.fields ?? []));
-                const mergedDepositFields = mergeSourceFields(FALLBACK_DEPOSIT_RECORD_SOURCE_FIELDS, normalizeSourceFields(depositRecordsSource?.fields ?? []));
-
-                setBillSourceFields(mergedBillsFields);
-                setReceiptBillSourceFields(mergedReceiptFields);
-                setDepositSourceFields(mergedDepositFields);
+                applySourceMetadata(modules, relations);
                 return;
             }
         } catch (err) {
-            console.warn('Failed to fetch voucher source modules, falling back to source-fields.', err);
-            setRelationOptions(FALLBACK_RELATION_OPTIONS);
+            console.warn('Failed to fetch voucher source modules, falling back to source-fields APIs.', err);
         }
 
-        await fetchBillSourceFields();
-    };
-
-    const fetchBillSourceFields = async () => {
         try {
-            const res = await axios.get(`${API_BASE}/vouchers/source-fields`, {
-                params: { source_type: 'bills' }
-            });
-            const dynamicFields = normalizeSourceFields(res?.data?.fields ?? res?.data ?? []);
-            if (dynamicFields.length === 0) return;
-            const merged = mergeSourceFields(FALLBACK_BILL_SOURCE_FIELDS, dynamicFields);
-            setBillSourceFields(merged);
-            setVoucherFieldModules(buildDefaultVoucherFieldModules(
-                merged,
-                receiptBillSourceFields || FALLBACK_RECEIPT_BILL_SOURCE_FIELDS,
-                depositSourceFields || FALLBACK_DEPOSIT_RECORD_SOURCE_FIELDS,
-            ));
+            await fetchSourceFieldsFallback();
         } catch (err) {
-            console.warn('Failed to fetch dynamic bill source fields, fallback to built-in list.', err);
+            console.warn('Failed to fetch voucher source-fields metadata from backend.', err);
+            applySourceMetadata(EMPTY_VOUCHER_FIELD_MODULES, []);
         }
     };
 

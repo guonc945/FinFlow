@@ -2,56 +2,70 @@
     "code": 0,
     "msg": "",
     "data": {
-        "total": 3,
+        "total": 2,
         "hasMore": false,
         "list": [
             {
-                "id": 231173,
-                "houseId": 2804948,
-                "houseName": "9栋/2单元/9-2-801",
-                "amount": 300000,
-                "operateType": 1,
-                "operator": 4808284013,
-                "operatorName": "未来森林A区管家-钱丽",
-                "operateTime": 1773115200,
-                "cashPledgeName": "装修保证金",
-                "remark": "",
-                "payTime": 1773114752,
-                "hasRefundReceipt": false,
-                "refundReceiptId": 0,
-                "payChannelStr": "线下-微信"
-            },
-            {
-                "id": 229253,
-                "houseId": 2804856,
-                "houseName": "6栋/1单元/6-1-802",
-                "amount": 300000,
-                "operateType": 2,
-                "operator": 4808284013,
-                "operatorName": "未来森林A区管家-钱丽",
-                "operateTime": 1772434976,
-                "cashPledgeName": "装修保证金",
-                "remark": "",
-                "payTime": 1772434548,
-                "hasRefundReceipt": true,
-                "refundReceiptId": 51147,
-                "payChannelStr": "线下-其它"
-            },
-            {
-                "id": 229242,
-                "houseId": 2804951,
+                "changeLog": {
+                    "id": 1412746,
+                    "accountId": 710827,
+                    "communityId": 10956,
+                    "buildingId": 68440,
+                    "unitId": 109521,
+                    "houseId": 2804951,
+                    "type": 2,
+                    "payChannelId": 7,
+                    "createUid": 4808284013,
+                    "money": 300000,
+                    "remark": "",
+                    "depositOrderId": 0,
+                    "createTime": "2026-03-02T14:52:22+08:00",
+                    "updateTime": "2026-03-02T14:52:22+08:00",
+                    "payTime": 1772433918,
+                    "balanceAfterChange": 0,
+                    "categoryName": "通用预存款",
+                    "categoryId": 0,
+                    "status": 0,
+                    "payChannelStr": "线下-其它"
+                },
+                "refundReceipt": {
+                    "hasRefundReceipt": true,
+                    "refundReceiptId": 51142
+                },
                 "houseName": "9栋/2单元/9-2-302",
-                "amount": 300000,
-                "operateType": 2,
-                "operator": 4808284013,
                 "operatorName": "未来森林A区管家-钱丽",
-                "operateTime": 1772434303,
-                "cashPledgeName": "装修保证金",
-                "remark": "押金转入预存款",
-                "payTime": 1772434303,
-                "hasRefundReceipt": true,
-                "refundReceiptId": 51139,
-                "payChannelStr": "押金转预存"
+                "opTypeStr": "退款"
+            },
+            {
+                "changeLog": {
+                    "id": 1412741,
+                    "accountId": 710827,
+                    "communityId": 10956,
+                    "buildingId": 68440,
+                    "unitId": 109521,
+                    "houseId": 2804951,
+                    "type": 1,
+                    "payChannelId": 14,
+                    "createUid": 4808284013,
+                    "money": 300000,
+                    "remark": "押金转入预存款",
+                    "depositOrderId": 0,
+                    "createTime": "2026-03-02T14:51:43+08:00",
+                    "updateTime": "2026-03-02T14:51:43+08:00",
+                    "payTime": 1772434303,
+                    "balanceAfterChange": 300000,
+                    "categoryName": "通用预存款",
+                    "categoryId": 0,
+                    "status": 0,
+                    "payChannelStr": "押金转预存"
+                },
+                "refundReceipt": {
+                    "hasRefundReceipt": false,
+                    "refundReceiptId": 0
+                },
+                "houseName": "9栋/2单元/9-2-302",
+                "operatorName": "未来森林A区管家-钱丽",
+                "opTypeStr": "充值"
             }
         ]
     }

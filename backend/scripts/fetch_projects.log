@@ -1395,3 +1395,7 @@ DETAIL:  Failing row contains (1762393982111418368, iptm_online, null, f, 5, 1, 
 2026-03-06 10:40:54,664 - INFO - 拉取成功，提取到 10 个项目。
 2026-03-06 10:40:54,723 - INFO - 项目同步完成: 成功处理 10 个项目。
 2026-03-06 10:40:54,724 - INFO - Project sync completed successfully
+2026-03-18 15:52:29,906 - INFO - Using configuration from ExternalApi: 浼氳绉戠洰鍚屾鎺ュ彛
+2026-03-18 15:52:29,912 - INFO - Syncing accounting subjects page 1...
+2026-03-18 15:52:31,705 - INFO - Syncing accounting subjects page 2...
+2026-03-18 15:52:32,122 - INFO - Finished. Total synced accounting subjects: 751
