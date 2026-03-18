@@ -83,6 +83,8 @@ export interface VoucherFieldSource {
     id: string;
     label: string;
     source_type: string;
+    root_enabled?: boolean;
+    note?: string;
     fields: VoucherSourceFieldOption[];
 }
 
@@ -91,6 +93,18 @@ export interface VoucherFieldModule {
     label: string;
     note?: string;
     sources: VoucherFieldSource[];
+}
+
+export interface VoucherRelationOption {
+    resolver: string;
+    label: string;
+    root_source: string;
+    target_source: string;
+}
+
+export interface VoucherSourceMetadataResponse {
+    modules: VoucherFieldModule[];
+    relations: VoucherRelationOption[];
 }
 
 export interface PushStatusSummary {

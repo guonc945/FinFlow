@@ -11,12 +11,12 @@ import axios from 'axios';
 import VariablePicker from '../settings/VariablePicker';
 import ConditionBuilder from './ConditionBuilder';
 import AccountSelector from './AccountSelector';
-import type { AccountingSubject, VoucherFieldModule, VoucherSourceFieldOption } from '../../types';
+import type { AccountingSubject, VoucherFieldModule, VoucherRelationOption, VoucherSourceFieldOption } from '../../types';
 import SourceFieldPickerModal from './SourceFieldPickerModal';
 import './VoucherTemplates.css';
 
 import { API_BASE_URL } from '../../services/apiBase';
-import { getVoucherTemplateCategoriesTree } from '../../services/api';
+import { getVoucherFieldModules, getVoucherTemplateCategoriesTree } from '../../services/api';
 
 const API_BASE = API_BASE_URL;
 
@@ -40,6 +40,7 @@ const buildDefaultVoucherFieldModules = (
                     id: 'bills',
                     label: '运营账单',
                     source_type: 'bills',
+                    root_enabled: true,
                     fields: billsFields as unknown as VoucherSourceFieldOption[],
                 }
                 ,
@@ -47,12 +48,14 @@ const buildDefaultVoucherFieldModules = (
                     id: 'receipt_bills',
                     label: '收款账单',
                     source_type: 'receipt_bills',
+                    root_enabled: true,
                     fields: receiptBillFields as unknown as VoucherSourceFieldOption[],
                 },
                 {
                     id: 'deposit_records',
                     label: '押金记录',
                     source_type: 'deposit_records',
+                    root_enabled: false,
                     fields: depositRecordFields as unknown as VoucherSourceFieldOption[],
                 }
             ]
@@ -60,12 +63,14 @@ const buildDefaultVoucherFieldModules = (
         {
             id: 'oa',
             label: 'OA系统',
-            note: '暂未接入，缺省处理',
+            note: '仅预留扩展架构，暂未接入实体数据',
             sources: [
                 {
-                    id: 'oa_default',
-                    label: '缺省',
-                    source_type: 'oa',
+                    id: 'oa_forms',
+                    label: 'OA单据',
+                    source_type: 'oa_forms',
+                    root_enabled: false,
+                    note: '仅预留扩展架构，暂未接入实体字段与关联关系',
                     fields: [],
                 }
             ]
@@ -153,6 +158,12 @@ const FALLBACK_DEPOSIT_RECORD_SOURCE_FIELDS: SourceFieldOption[] = [
     { label: '退款收据ID (refund_receipt_id)', value: 'refund_receipt_id', group: '关联ID' },
     { label: '业务日期 (operate_date)', value: 'operate_date', group: '时间信息' },
     { label: '支付日期 (pay_date)', value: 'pay_date', group: '时间信息' },
+];
+
+const FALLBACK_RELATION_OPTIONS: VoucherRelationOption[] = [
+    { resolver: 'receipt_to_bills', label: '关联运营账单', root_source: 'receipt_bills', target_source: 'bills' },
+    { resolver: 'receipt_to_deposit_collect', label: '关联押金收取', root_source: 'receipt_bills', target_source: 'deposit_records' },
+    { resolver: 'receipt_to_deposit_refund', label: '关联押金退款', root_source: 'receipt_bills', target_source: 'deposit_records' },
 ];
 
 
@@ -825,6 +836,7 @@ const VoucherTemplates = () => {
             FALLBACK_DEPOSIT_RECORD_SOURCE_FIELDS
         )
     );
+    const [relationOptions, setRelationOptions] = useState<VoucherRelationOption[]>(FALLBACK_RELATION_OPTIONS);
     const [templateCategories, setTemplateCategories] = useState<TemplateCategory[]>([]);
     const [categoryFilter, setCategoryFilter] = useState<string>('all');
     const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
@@ -1264,10 +1276,12 @@ const VoucherTemplates = () => {
 
     const fetchVoucherFieldModules = async () => {
         try {
-            const res = await axios.get(`${API_BASE}/vouchers/source-modules`);
-            const modules = res?.data?.modules as VoucherFieldModule[] | undefined;
+            const res = await getVoucherFieldModules();
+            const modules = res?.modules as VoucherFieldModule[] | undefined;
+            const relations = Array.isArray(res?.relations) ? res.relations : [];
             if (Array.isArray(modules) && modules.length > 0) {
                 setVoucherFieldModules(modules);
+                setRelationOptions(relations.length > 0 ? relations : FALLBACK_RELATION_OPTIONS);
 
                 const marki = modules.find(m => String(m?.id) === 'marki') || modules[0];
                 const billsSource = (marki?.sources || []).find(s => String(s?.id) === 'bills' || String(s?.source_type) === 'bills');
@@ -1285,6 +1299,7 @@ const VoucherTemplates = () => {
             }
         } catch (err) {
             console.warn('Failed to fetch voucher source modules, falling back to source-fields.', err);
+            setRelationOptions(FALLBACK_RELATION_OPTIONS);
         }
 
         await fetchBillSourceFields();
@@ -1307,6 +1322,27 @@ const VoucherTemplates = () => {
         } catch (err) {
             console.warn('Failed to fetch dynamic bill source fields, fallback to built-in list.', err);
         }
+    };
+
+    const getTriggerSourcesForTemplate = (template: VoucherTemplate) => {
+        const effectiveSourceType = getEffectiveSourceType(template.source_type);
+        const moduleId = String(template.source_module || '').trim()
+            || inferModuleIdFromSourceType(voucherFieldModules, effectiveSourceType);
+        const module = voucherFieldModules.find(m => String(m?.id) === moduleId) || voucherFieldModules[0];
+        return (module?.sources || []).filter(source => Boolean(source?.root_enabled));
+    };
+
+    const getConditionRootFields = (sourceType: string): SourceFieldOption[] => {
+        const normalized = String(sourceType || '').trim().toLowerCase();
+        if (normalized === 'receipt_bills') return receiptBillSourceFields;
+        if (normalized === 'deposit_records') return depositSourceFields;
+        if (normalized === 'bills') return billSourceFields;
+
+        const matchedSource = voucherFieldModules
+            .flatMap(module => module.sources || [])
+            .find(source => String(source?.source_type || '').trim().toLowerCase() === normalized);
+
+        return normalizeSourceFields(matchedSource?.fields || []);
     };
 
     const normalizeTemplateFieldBindings = (template: VoucherTemplate) => {
@@ -1894,58 +1930,67 @@ const VoucherTemplates = () => {
                     {activeTab === 'condition' && (
                         <div className="modern-editor-layout animate-slide-up">
                             {/* 第二层级：触发条件区域 (仅在有数据源时显示) */}
-                            {['bills', 'receipt_bills'].includes(getEffectiveSourceType(currentTemplate.source_type)) ? (
-                                <div className="editor-card animate-slide-up">
-                                    <div className="card-header-styled">
-                                        <Sliders size={18} />
-                                        <div className="header-text">
-                                            <h3>自动化触发源配置 <span className="tag">高级逻辑</span></h3>
-                                            <p>只有满足下方所有条件的业务单据才会应用此凭证模板</p>
+                            {(() => {
+                                const triggerSources = getTriggerSourcesForTemplate(currentTemplate);
+                                return triggerSources.length > 0 ? (
+                                    <div className="editor-card animate-slide-up">
+                                        <div className="card-header-styled">
+                                            <Sliders size={18} />
+                                            <div className="header-text">
+                                                <h3>自动化触发源配置 <span className="tag">高级逻辑</span></h3>
+                                                <p>只有满足下方所有条件的业务单据才会应用此凭证模板</p>
+                                            </div>
                                         </div>
-                                    </div>
-                                    <div className="nested-body" style={{ padding: '1.5rem' }}>
-                                        <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', marginBottom: '1rem' }}>
-                                            <div className="field-item" style={{ paddingBottom: 0, minWidth: 240 }}>
-                                                <label>{'\u89e6\u53d1\u6570\u636e\u6e90'}</label>
-                                                <select
-                                                    value={getEffectiveSourceType(currentTemplate.source_type)}
-                                                    onChange={e => setCurrentTemplate({ ...currentTemplate, source_type: String(e.target.value || '').trim() })}
-                                                >
-                                                    {(() => {
-                                                        const mid = String(currentTemplate.source_module || '').trim()
-                                                            || inferModuleIdFromSourceType(voucherFieldModules, currentTemplate.source_type);
-                                                        const mod = voucherFieldModules.find(m => String(m?.id) === mid) || voucherFieldModules[0];
-                                                        const triggerSources = (mod?.sources || []).filter(s =>
-                                                            ['bills', 'receipt_bills'].includes(String(s?.source_type || '').trim())
-                                                        );
-                                                        return triggerSources.map(s => (
-                                                            <option key={`${mod?.id}:${s.id}`} value={String(s.source_type || '')}>
-                                                                {s.label} ({s.source_type})
+                                        <div className="nested-body" style={{ padding: '1.5rem' }}>
+                                            <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', marginBottom: '1rem' }}>
+                                                <div className="field-item" style={{ paddingBottom: 0, minWidth: 240 }}>
+                                                    <label>{'\u89e6\u53d1\u6570\u636e\u6e90'}</label>
+                                                    <select
+                                                        value={getEffectiveSourceType(currentTemplate.source_type)}
+                                                        onChange={e => setCurrentTemplate({ ...currentTemplate, source_type: String(e.target.value || '').trim() })}
+                                                    >
+                                                        {triggerSources.map(source => (
+                                                            <option key={`${source.id}:${source.source_type}`} value={String(source.source_type || '')}>
+                                                                {source.label} ({source.source_type})
                                                             </option>
-                                                        ));
-                                                    })()}
-                                                </select>
+                                                        ))}
+                                                    </select>
+                                                </div>
+                                                <div style={{ fontSize: '0.75rem', color: '#94a3b8', paddingBottom: '0.25rem' }}>
+                                                    仅用于触发条件判断，不限制分录取数来源
+                                                </div>
                                             </div>
-                                            <div style={{ fontSize: '0.75rem', color: '#94a3b8', paddingBottom: '0.25rem' }}>
-                                                仅用于触发条件判断，不限制分录取数来源
-                                            </div>
+                                            {getEffectiveSourceType(currentTemplate.source_type) === 'receipt_bills' && (
+                                                <div style={{
+                                                    marginBottom: '1rem',
+                                                    padding: '0.75rem 1rem',
+                                                    border: '1px solid #fcd34d',
+                                                    background: '#fffbeb',
+                                                    color: '#92400e',
+                                                    borderRadius: '0.75rem',
+                                                    fontSize: '0.875rem'
+                                                }}>
+                                                    当前已启用“收款账单根数据源”模式。你可以在下方条件树中直接点击“添加关联条件”，把子条件切到“运营账单”或“押金记录”。
+                                                </div>
+                                            )}
+                                            <ConditionBuilder
+                                                value={currentTemplate.trigger_condition}
+                                                onChange={(val) => setCurrentTemplate({ ...currentTemplate, trigger_condition: val })}
+                                                fields={getConditionRootFields(getEffectiveSourceType(currentTemplate.source_type))}
+                                                fieldModules={voucherFieldModules}
+                                                rootSourceType={getEffectiveSourceType(currentTemplate.source_type)}
+                                                relationOptions={relationOptions}
+                                            />
                                         </div>
-                                        <ConditionBuilder
-                                            value={currentTemplate.trigger_condition}
-                                            onChange={(val) => setCurrentTemplate({ ...currentTemplate, trigger_condition: val })}
-                                            fields={getEffectiveSourceType(currentTemplate.source_type) === 'receipt_bills' ? receiptBillSourceFields : billSourceFields}
-                                            fieldModules={voucherFieldModules}
-                                            rootSourceType={getEffectiveSourceType(currentTemplate.source_type)}
-                                        />
                                     </div>
-                                </div>
-                            ) : (
-                                <div className="editor-card animate-slide-up" style={{ padding: '3rem', textAlign: 'center', color: '#64748b' }}>
-                                    <AlertTriangle size={48} style={{ margin: '0 auto 1rem', opacity: 0.5 }} />
-                                    <h3>当前业务模块不支持触发条件</h3>
-                                    <p>请选择支持触发条件的业务模块（例如：马克系统）。</p>
-                                </div>
-                            )}
+                                ) : (
+                                    <div className="editor-card animate-slide-up" style={{ padding: '3rem', textAlign: 'center', color: '#64748b' }}>
+                                        <AlertTriangle size={48} style={{ margin: '0 auto 1rem', opacity: 0.5 }} />
+                                        <h3>当前业务模块不支持触发条件</h3>
+                                        <p>请选择支持触发条件的业务模块（例如：马克系统）。</p>
+                                    </div>
+                                );
+                            })()}
                         </div>
                     )}
 

@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import VariablePicker from '../settings/VariablePicker';
 import SourceFieldPickerModal from './SourceFieldPickerModal';
-import type { VoucherFieldModule, VoucherSourceFieldOption } from '../../types';
+import type { VoucherFieldModule, VoucherRelationOption, VoucherSourceFieldOption } from '../../types';
 import './ConditionBuilder.css';
 
 type ExpressionFunctionOption = {
@@ -92,19 +92,6 @@ export interface RelationCondition {
 
 type ConditionNode = Condition | ConditionGroup | RelationCondition;
 
-type RelationResolverOption = {
-    rootSourceType: string;
-    targetSource: string;
-    resolver: string;
-    label: string;
-};
-
-const RELATION_RESOLVER_OPTIONS: RelationResolverOption[] = [
-    { rootSourceType: 'receipt_bills', targetSource: 'bills', resolver: 'receipt_to_bills', label: '关联运营账单' },
-    { rootSourceType: 'receipt_bills', targetSource: 'deposit_records', resolver: 'receipt_to_deposit_collect', label: '关联押金收取' },
-    { rootSourceType: 'receipt_bills', targetSource: 'deposit_records', resolver: 'receipt_to_deposit_refund', label: '关联押金退款' },
-];
-
 interface DragState {
     nodeId: string;
     nodeType: 'rule' | 'group' | 'relation';
@@ -122,6 +109,7 @@ interface ConditionBuilderProps {
     fields: { label: string; value: string; group?: string }[];
     fieldModules?: VoucherFieldModule[] | null;
     rootSourceType?: string | null;
+    relationOptions?: VoucherRelationOption[] | null;
 }
 
 const generateId = () => Math.random().toString(36).slice(2, 11);
@@ -146,6 +134,7 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({
     fields,
     fieldModules,
     rootSourceType,
+    relationOptions,
 }) => {
     const [root, setRoot] = useState<ConditionGroup>({
         id: 'root',
@@ -289,7 +278,7 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({
     };
 
     const getRelationOptionsForSource = (sourceType: string) => (
-        RELATION_RESOLVER_OPTIONS.filter(option => option.rootSourceType === sourceType)
+        (relationOptions || []).filter(option => option.root_source === sourceType)
     );
 
     const findNode = (node: ConditionNode, id: string): ConditionNode | null => {
@@ -316,11 +305,11 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({
         return [node.id, ...node.children.flatMap(child => collectContainerIds(child))];
     };
 
-    const getNodeSourceType = (
+    const findNodeSourceType = (
         targetId: string,
         currentNode: ConditionNode = root,
         inheritedSourceType: string = effectiveRootSourceType
-    ): string => {
+    ): string | null => {
         const currentSourceType = currentNode.type === 'relation'
             ? String(currentNode.target_source || inheritedSourceType || effectiveRootSourceType)
             : inheritedSourceType;
@@ -328,12 +317,16 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({
         if (currentNode.id === targetId) return currentSourceType;
 
         for (const child of getNodeChildren(currentNode)) {
-            const found = getNodeSourceType(targetId, child, currentSourceType);
+            const found = findNodeSourceType(targetId, child, currentSourceType);
             if (found) return found;
         }
 
-        return inheritedSourceType;
+        return null;
     };
+
+    const getNodeSourceType = (targetId: string) => (
+        findNodeSourceType(targetId) || effectiveRootSourceType
+    );
 
     const getDisplayFieldLabel = (fieldKey: string, sourceType: string) => {
         const raw = String(fieldKey || '').trim();
@@ -545,7 +538,7 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({
             id: generateId(),
             type: 'relation',
             logic: 'AND',
-            target_source: option.targetSource,
+            target_source: option.target_source,
             resolver: option.resolver,
             quantifier: 'EXISTS',
             children: [],
@@ -778,18 +771,18 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({
                                         value={relationValue}
                                         onChange={(event) => {
                                             const next = relationOptions.find(option => (
-                                                `${option.resolver}::${option.targetSource}` === event.target.value
+                                                `${option.resolver}::${option.target_source}` === event.target.value
                                             ));
                                             if (!next) return;
                                             updateNode(node.id, {
                                                 resolver: next.resolver,
-                                                target_source: next.targetSource,
+                                                target_source: next.target_source,
                                             });
                                         }}
                                         className="logic-select"
                                     >
                                         {relationOptions.map(option => (
-                                            <option key={`${option.resolver}:${option.targetSource}`} value={`${option.resolver}::${option.targetSource}`}>
+                                            <option key={`${option.resolver}:${option.target_source}`} value={`${option.resolver}::${option.target_source}`}>
                                                 {option.label}
                                             </option>
                                         ))}
@@ -822,8 +815,8 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({
                                 <Layers size={14} /> 添加分组
                             </button>
                             {relationOptions.length > 0 && (
-                                <button onClick={() => addRelation(node.id)} className="action-btn add-group" type="button">
-                                    <Database size={14} /> 添加关联
+                                <button onClick={() => addRelation(node.id)} className="action-btn add-relation" type="button">
+                                    <Database size={14} /> 添加关联条件
                                 </button>
                             )}
                             {depth === 0 && (
@@ -864,7 +857,11 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({
                                 </React.Fragment>
                             ))
                         )}
-                        {!collapsed && node.children.length === 0 && <div className="empty-group">无条件</div>}
+                        {!collapsed && node.children.length === 0 && (
+                            <div className="empty-group">
+                                {relationOptions.length > 0 ? '暂无条件，可添加规则、分组或关联条件' : '无条件'}
+                            </div>
+                        )}
                         {collapsed && (
                             <div
                                 className="group-collapsed-hint"

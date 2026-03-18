@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { CashJournal, DepositRecord, PushResult, VoucherPreview, ChargeItem, House, Project, Resident, BillVoucherPushStatus, ReceiptBill, VoucherFieldModule } from '../types';
+import type { CashJournal, DepositRecord, PushResult, VoucherPreview, ChargeItem, House, Project, Resident, BillVoucherPushStatus, ReceiptBill, VoucherSourceMetadataResponse } from '../types';
 
 import { API_BASE_URL } from './apiBase';
 
@@ -261,7 +261,7 @@ export const getBillChargeItems = async () => {
 };
 
 export const getVoucherFieldModules = async () => {
-    const response = await axios.get<{ modules: VoucherFieldModule[] }>(`${API_BASE_URL}/vouchers/source-modules`);
+    const response = await axios.get<VoucherSourceMetadataResponse>(`${API_BASE_URL}/vouchers/source-modules`);
     return response.data;
 };
 

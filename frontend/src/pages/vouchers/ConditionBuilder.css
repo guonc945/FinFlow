@@ -171,6 +171,21 @@
     box-shadow: 0 4px 6px -1px rgba(139, 92, 246, 0.4);
 }
 
+.action-btn.add-relation {
+    background: #f59e0b;
+    color: white;
+    border: none;
+    box-shadow: 0 1px 3px rgba(245, 158, 11, 0.3);
+    padding: 0 1.25rem;
+    width: auto;
+}
+
+.action-btn.add-relation:hover {
+    background: #d97706;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 6px -1px rgba(245, 158, 11, 0.4);
+}
+
 .action-btn.history-btn {
     background: #ffffff;
     color: #334155;

@@ -42,6 +42,13 @@ from services.reporting_database import (
     ReportingDatabaseService,
     UnsafeQueryError,
 )
+from voucher_source_registry import (
+    VoucherRelationMeta,
+    VoucherSourceMeta,
+    VoucherSourceModuleMeta,
+    build_relation_payload,
+    build_source_modules_payload,
+)
 
 # Configure logger for project sync
 logger = logging.getLogger('project_sync')
@@ -572,58 +579,62 @@ def _enrich_deposit_record_data(record_data: Dict[str, Any]) -> Dict[str, Any]:
     return _prefix_source_fields(record_data, "deposit_records")
 
 
-def _load_relation_records_for_receipt(
+def _load_receipt_to_bills_relation(
     db: Session,
     receipt_bill: models.ReceiptBill,
-    resolver: str,
 ) -> List[Dict[str, Any]]:
-    if resolver == "receipt_to_bills":
-        bills = (
-            db.query(models.Bill)
-            .filter(
-                models.Bill.deal_log_id == int(receipt_bill.id),
-                models.Bill.community_id == int(receipt_bill.community_id),
-            )
-            .order_by(models.Bill.id.asc())
-            .all()
+    bills = (
+        db.query(models.Bill)
+        .filter(
+            models.Bill.deal_log_id == int(receipt_bill.id),
+            models.Bill.community_id == int(receipt_bill.community_id),
         )
-        from services.voucher_engine import enrich_bill_data
+        .order_by(models.Bill.id.asc())
+        .all()
+    )
+    from services.voucher_engine import enrich_bill_data
 
-        return [
-            enrich_bill_data(
-                {col.name: _jsonify_scalar(getattr(bill, col.name, None)) for col in models.Bill.__table__.columns},
-                db,
-            )
-            for bill in bills
-        ]
-
-    if resolver == "receipt_to_deposit_collect":
-        records = (
-            db.query(models.DepositRecord)
-            .filter(
-                models.DepositRecord.community_id == int(receipt_bill.community_id),
-                models.DepositRecord.payment_id == int(receipt_bill.id),
-                models.DepositRecord.operate_type == 1,
-            )
-            .order_by(models.DepositRecord.id.asc())
-            .all()
+    return [
+        enrich_bill_data(
+            {col.name: _jsonify_scalar(getattr(bill, col.name, None)) for col in models.Bill.__table__.columns},
+            db,
         )
-        return [_enrich_deposit_record_data(_serialize_deposit_record_model(record)) for record in records]
+        for bill in bills
+    ]
 
-    if resolver == "receipt_to_deposit_refund":
-        records = (
-            db.query(models.DepositRecord)
-            .filter(
-                models.DepositRecord.community_id == int(receipt_bill.community_id),
-                models.DepositRecord.refund_receipt_id == int(receipt_bill.id),
-                models.DepositRecord.operate_type == 2,
-            )
-            .order_by(models.DepositRecord.id.asc())
-            .all()
+
+def _load_receipt_to_deposit_collect_relation(
+    db: Session,
+    receipt_bill: models.ReceiptBill,
+) -> List[Dict[str, Any]]:
+    records = (
+        db.query(models.DepositRecord)
+        .filter(
+            models.DepositRecord.community_id == int(receipt_bill.community_id),
+            models.DepositRecord.payment_id == int(receipt_bill.id),
+            models.DepositRecord.operate_type == 1,
         )
-        return [_enrich_deposit_record_data(_serialize_deposit_record_model(record)) for record in records]
+        .order_by(models.DepositRecord.id.asc())
+        .all()
+    )
+    return [_enrich_deposit_record_data(_serialize_deposit_record_model(record)) for record in records]
 
-    return []
+
+def _load_receipt_to_deposit_refund_relation(
+    db: Session,
+    receipt_bill: models.ReceiptBill,
+) -> List[Dict[str, Any]]:
+    records = (
+        db.query(models.DepositRecord)
+        .filter(
+            models.DepositRecord.community_id == int(receipt_bill.community_id),
+            models.DepositRecord.refund_receipt_id == int(receipt_bill.id),
+            models.DepositRecord.operate_type == 2,
+        )
+        .order_by(models.DepositRecord.id.asc())
+        .all()
+    )
+    return [_enrich_deposit_record_data(_serialize_deposit_record_model(record)) for record in records]
 
 
 def _aggregate_receipt_bill_push_status(statuses: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -4152,29 +4163,120 @@ def _build_deposit_records_fields() -> Set[str]:
     return fields
 
 
+def _build_oa_fields() -> Set[str]:
+    return set()
+
+
+def _build_oa_field_options() -> List[Dict[str, str]]:
+    return []
+
+
+MODULE_REGISTRY: Dict[str, VoucherSourceModuleMeta] = {
+    "marki": VoucherSourceModuleMeta(id="marki", label="马克系统"),
+    "oa": VoucherSourceModuleMeta(id="oa", label="OA系统", note="仅预留扩展架构，暂未接入实体数据"),
+}
+
+
+SOURCE_REGISTRY: Dict[str, VoucherSourceMeta] = {
+    "bills": VoucherSourceMeta(
+        id="bills",
+        module_id="marki",
+        label="运营账单",
+        source_type="bills",
+        root_enabled=True,
+        field_names_builder=_build_bills_fields,
+        field_options_builder=lambda: _build_bills_field_options(),
+    ),
+    "receipt_bills": VoucherSourceMeta(
+        id="receipt_bills",
+        module_id="marki",
+        label="收款账单",
+        source_type="receipt_bills",
+        root_enabled=True,
+        field_names_builder=_build_receipt_bills_fields,
+        field_options_builder=lambda: _build_receipt_bills_field_options(),
+    ),
+    "deposit_records": VoucherSourceMeta(
+        id="deposit_records",
+        module_id="marki",
+        label="押金记录",
+        source_type="deposit_records",
+        root_enabled=False,
+        field_names_builder=_build_deposit_records_fields,
+        field_options_builder=lambda: _build_deposit_records_field_options(),
+    ),
+    "oa_forms": VoucherSourceMeta(
+        id="oa_forms",
+        module_id="oa",
+        label="OA单据",
+        source_type="oa_forms",
+        root_enabled=False,
+        note="仅预留扩展架构，暂未接入实体字段与关联关系",
+        field_names_builder=_build_oa_fields,
+        field_options_builder=_build_oa_field_options,
+    ),
+}
+
+
+RELATION_REGISTRY: Dict[str, VoucherRelationMeta] = {
+    "receipt_to_bills": VoucherRelationMeta(
+        resolver="receipt_to_bills",
+        label="关联运营账单",
+        root_source="receipt_bills",
+        target_source="bills",
+        loader=_load_receipt_to_bills_relation,
+    ),
+    "receipt_to_deposit_collect": VoucherRelationMeta(
+        resolver="receipt_to_deposit_collect",
+        label="关联押金收取",
+        root_source="receipt_bills",
+        target_source="deposit_records",
+        loader=_load_receipt_to_deposit_collect_relation,
+    ),
+    "receipt_to_deposit_refund": VoucherRelationMeta(
+        resolver="receipt_to_deposit_refund",
+        label="关联押金退款",
+        root_source="receipt_bills",
+        target_source="deposit_records",
+        loader=_load_receipt_to_deposit_refund_relation,
+    ),
+}
+
+
+def _get_source_meta(source_type: Optional[str]) -> Optional[VoucherSourceMeta]:
+    normalized_source = (source_type or "").strip().lower() or "bills"
+    return SOURCE_REGISTRY.get(normalized_source)
+
+
+def _get_module_source_types(module_id: Optional[str]) -> List[str]:
+    normalized_module = (module_id or "").strip().lower()
+    if not normalized_module:
+        return []
+    return [
+        source_meta.source_type
+        for source_meta in SOURCE_REGISTRY.values()
+        if source_meta.module_id == normalized_module
+    ]
+
+
 def _build_source_fields(source_type: str) -> Set[str]:
-    normalized_source = (source_type or "").strip().lower()
-    if normalized_source == "receipt_bills":
-        return _build_receipt_bills_fields()
-    if normalized_source == "deposit_records":
-        return _build_deposit_records_fields()
-    return _build_bills_fields()
+    source_meta = _get_source_meta(source_type)
+    if source_meta and source_meta.field_names_builder:
+        return set(source_meta.field_names_builder())
+    return set()
 
 
 def _build_source_field_options(source_type: str) -> List[Dict[str, str]]:
-    normalized_source = (source_type or "").strip().lower()
-    if normalized_source == "receipt_bills":
-        fields = _build_receipt_bills_fields()
-        labels = _RECEIPT_BILL_FIELD_LABELS
-        grouper = _group_receipt_bills_field
-    elif normalized_source == "deposit_records":
-        fields = _build_deposit_records_fields()
-        labels = _DEPOSIT_RECORD_FIELD_LABELS
-        grouper = _group_deposit_records_field
-    else:
-        fields = _build_bills_fields()
-        labels = _BILL_FIELD_LABELS
-        grouper = _group_bills_field
+    source_meta = _get_source_meta(source_type)
+    if source_meta and source_meta.field_options_builder:
+        return list(source_meta.field_options_builder())
+    return []
+
+
+def _build_bills_field_options() -> List[Dict[str, str]]:
+    fields = _build_bills_fields()
+    labels = _BILL_FIELD_LABELS
+    grouper = _group_bills_field
 
     options = []
     for field_name in sorted(fields):
@@ -4188,12 +4290,52 @@ def _build_source_field_options(source_type: str) -> List[Dict[str, str]]:
     return options
 
 
+def _build_receipt_bills_field_options() -> List[Dict[str, str]]:
+    fields = _build_receipt_bills_fields()
+    labels = _RECEIPT_BILL_FIELD_LABELS
+    grouper = _group_receipt_bills_field
+
+    options = []
+    for field_name in sorted(fields):
+        display_name = labels.get(field_name)
+        label = f"{display_name} ({field_name})" if display_name else field_name
+        options.append({
+            "label": label,
+            "value": field_name,
+            "group": grouper(field_name),
+        })
+    return options
+
+
+def _build_deposit_records_field_options() -> List[Dict[str, str]]:
+    fields = _build_deposit_records_fields()
+    labels = _DEPOSIT_RECORD_FIELD_LABELS
+    grouper = _group_deposit_records_field
+
+    options = []
+    for field_name in sorted(fields):
+        display_name = labels.get(field_name)
+        label = f"{display_name} ({field_name})" if display_name else field_name
+        options.append({
+            "label": label,
+            "value": field_name,
+            "group": grouper(field_name),
+        })
+    return options
+
+
+def _build_legacy_source_field_options(source_type: str) -> List[Dict[str, str]]:
+    normalized_source = (source_type or "").strip().lower()
+    if normalized_source == "receipt_bills":
+        return _build_receipt_bills_field_options()
+    if normalized_source == "deposit_records":
+        return _build_deposit_records_field_options()
+    return _build_bills_field_options()
+
+
 @app.get("/api/vouchers/source-fields")
 def get_voucher_source_fields(source_type: str = Query("bills")):
-    normalized_source = (source_type or "").strip().lower()
-    if normalized_source not in ("", "bills", "receipt_bills", "deposit_records"):
-        return {"source_type": normalized_source, "fields": []}
-    actual_source = normalized_source or "bills"
+    actual_source = (source_type or "").strip().lower() or "bills"
     return {"source_type": actual_source, "fields": _build_source_field_options(actual_source)}
 
 
@@ -4206,50 +4348,9 @@ def get_voucher_source_modules():
     - Mark system fields are loaded from backend data models (SQLAlchemy columns + runtime/derived fields).
     """
 
-    bills_fields = _build_source_field_options("bills")
-    receipt_bills_fields = _build_source_field_options("receipt_bills")
-    deposit_records_fields = _build_source_field_options("deposit_records")
-
     return {
-        "modules": [
-            {
-                "id": "marki",
-                "label": "马克系统",
-                "sources": [
-                    {
-                        "id": "bills",
-                        "label": "运营账单",
-                        "source_type": "bills",
-                        "fields": bills_fields,
-                    },
-                    {
-                        "id": "receipt_bills",
-                        "label": "收款账单",
-                        "source_type": "receipt_bills",
-                        "fields": receipt_bills_fields,
-                    },
-                    {
-                        "id": "deposit_records",
-                        "label": "押金记录",
-                        "source_type": "deposit_records",
-                        "fields": deposit_records_fields,
-                    },
-                ],
-            },
-            {
-                "id": "oa",
-                "label": "OA系统",
-                "note": "暂未接入，缺省处理",
-                "sources": [
-                    {
-                        "id": "oa_default",
-                        "label": "缺省",
-                        "source_type": "oa",
-                        "fields": [],
-                    }
-                ],
-            },
-        ]
+        "modules": build_source_modules_payload(MODULE_REGISTRY, SOURCE_REGISTRY),
+        "relations": build_relation_payload(RELATION_REGISTRY),
     }
 
 
@@ -4275,42 +4376,32 @@ def _build_allowed_placeholders(source_type: Optional[str], source_module: Optio
 
     normalized_source = (source_type or "").strip().lower()
     normalized_module = (source_module or "").strip().lower()
-    module_prefix = normalized_module or "marki"
+
+    source_meta = _get_source_meta(normalized_source) if normalized_source else None
+    module_prefix = normalized_module or (source_meta.module_id if source_meta else "marki")
 
     source_types: Set[str] = set()
-    # Module-level binding: allow placeholders from all sources inside the module.
-    # Backward compatibility: legacy templates may not persist `source_module` yet.
-    # If the template targets Marki sources, default to Marki module behavior.
-    if normalized_module in ("", "marki") and normalized_source in ("", "bills", "receipt_bills", "deposit_records"):
-        source_types.update({"bills", "receipt_bills", "deposit_records"})
+    if module_prefix:
+        source_types.update(_get_module_source_types(module_prefix))
 
-    # Always keep backward compatible behavior based on source_type.
-    if normalized_source in ("", "bills"):
-        source_types.add("bills")
-    elif normalized_source:
+    if normalized_source:
         source_types.add(normalized_source)
+    else:
+        source_types.add("bills")
 
-    if "bills" in source_types:
-        bills_fields = _build_bills_fields()
-        allowed.update(bills_fields)
-        allowed.update({f"bills.{name}" for name in bills_fields})
-        allowed.update({f"{module_prefix}.bills.{name}" for name in bills_fields})
-        # Backward compatible module prefix.
-        allowed.update({f"marki.bills.{name}" for name in bills_fields})
+    for current_source in sorted(source_types):
+        source_fields = _build_source_fields(current_source)
+        if not source_fields:
+            continue
 
-    if "receipt_bills" in source_types:
-        receipt_fields = _build_receipt_bills_fields()
-        allowed.update(receipt_fields)
-        allowed.update({f"receipt_bills.{name}" for name in receipt_fields})
-        allowed.update({f"{module_prefix}.receipt_bills.{name}" for name in receipt_fields})
-        # Backward compatible module prefix.
-        allowed.update({f"marki.receipt_bills.{name}" for name in receipt_fields})
-    if "deposit_records" in source_types:
-        deposit_fields = _build_deposit_records_fields()
-        allowed.update(deposit_fields)
-        allowed.update({f"deposit_records.{name}" for name in deposit_fields})
-        allowed.update({f"{module_prefix}.deposit_records.{name}" for name in deposit_fields})
-        allowed.update({f"marki.deposit_records.{name}" for name in deposit_fields})
+        allowed.update(source_fields)
+        allowed.update({f"{current_source}.{name}" for name in source_fields})
+        if module_prefix:
+            allowed.update({f"{module_prefix}.{current_source}.{name}" for name in source_fields})
+
+        registered_meta = _get_source_meta(current_source)
+        if registered_meta and registered_meta.module_id == "marki" and module_prefix != "marki":
+            allowed.update({f"marki.{current_source}.{name}" for name in source_fields})
     return allowed
 
 
@@ -4407,22 +4498,6 @@ def _validate_dimension_mapping_json(
     return normalized_mapping
 
 
-_TRIGGER_RELATION_RESOLVERS: Dict[str, Dict[str, Any]] = {
-    "receipt_to_bills": {
-        "root_sources": {"receipt_bills"},
-        "target_source": "bills",
-    },
-    "receipt_to_deposit_collect": {
-        "root_sources": {"receipt_bills"},
-        "target_source": "deposit_records",
-    },
-    "receipt_to_deposit_refund": {
-        "root_sources": {"receipt_bills"},
-        "target_source": "deposit_records",
-    },
-}
-
-
 def _build_allowed_source_fields_for_type(source_type: Optional[str], module_prefix: str = "marki") -> Set[str]:
     normalized_source = (source_type or "").strip().lower()
     if not normalized_source:
@@ -4484,7 +4559,7 @@ def _validate_trigger_condition(
         return
 
     normalized_source = (source_type or "").strip().lower() or "bills"
-    enforce_field_check = normalized_source in ("bills", "receipt_bills", "deposit_records")
+    enforce_field_check = _get_source_meta(normalized_source) is not None
 
     def walk(node: Any, path: str, current_source: str, current_fields: Set[str]) -> None:
         if not isinstance(node, dict):
@@ -4524,10 +4599,7 @@ def _validate_trigger_condition(
             resolver = str(node.get("resolver", "")).strip()
             target_source = str(node.get("target_source", "")).strip().lower()
             quantifier = str(node.get("quantifier", "EXISTS")).upper()
-            relation_meta = _TRIGGER_RELATION_RESOLVERS.get(resolver)
-
-            if current_source != "receipt_bills":
-                errors.append(f"{path}.relation is only supported when current source is receipt_bills")
+            relation_meta = RELATION_REGISTRY.get(resolver)
 
             if quantifier not in {"EXISTS", "NOT_EXISTS"}:
                 errors.append(f"{path}.quantifier must be EXISTS or NOT_EXISTS")
@@ -4536,9 +4608,11 @@ def _validate_trigger_condition(
                 errors.append(f"{path}.resolver is not supported: {resolver or '<empty>'}")
                 expected_target = target_source
             else:
-                expected_target = str(relation_meta["target_source"])
-                if current_source not in relation_meta["root_sources"]:
-                    errors.append(f"{path}.resolver {resolver} is not supported under source_type={current_source}")
+                expected_target = relation_meta.target_source
+                if current_source != relation_meta.root_source:
+                    errors.append(
+                        f"{path}.resolver {resolver} is not supported under source_type={current_source}"
+                    )
 
             if not target_source:
                 errors.append(f"{path}.target_source is required")
@@ -4961,6 +5035,7 @@ def preview_voucher_for_receipt(
             debug_logs = []
             relation_eval_ctx = {
                 "db": db,
+                "root_record": receipt_bill,
                 "receipt_bill": receipt_bill,
                 "cache": {},
                 "selected_records": {},
@@ -6149,7 +6224,8 @@ def _check_trigger_conditions(
             if node_type == "relation":
                 resolver = str(node.get("resolver", "")).strip()
                 quantifier = str(node.get("quantifier", "EXISTS")).upper()
-                receipt_bill = (relation_context or {}).get("receipt_bill")
+                relation_meta = RELATION_REGISTRY.get(resolver)
+                root_record = (relation_context or {}).get("root_record") or (relation_context or {}).get("receipt_bill")
                 db = (relation_context or {}).get("db")
                 relation_cache = (relation_context or {}).setdefault("cache", {})
                 selected_records = (relation_context or {}).setdefault("selected_records", {})
@@ -6157,17 +6233,21 @@ def _check_trigger_conditions(
                 logic = relation_group["logic"]
                 children = relation_group["children"]
 
-                if not db or receipt_bill is None:
+                if not relation_meta or not relation_meta.loader:
+                    debug_logs.append(f"Relation resolver '{resolver}' is not registered")
+                    return False
+
+                if not db or root_record is None:
                     debug_logs.append(f"Relation resolver '{resolver}' is unavailable in current context")
                     return False
 
                 cache_key = (
                     resolver,
-                    int(getattr(receipt_bill, "id", 0) or 0),
-                    int(getattr(receipt_bill, "community_id", 0) or 0),
+                    int(getattr(root_record, "id", 0) or 0),
+                    int(getattr(root_record, "community_id", 0) or 0),
                 )
                 if cache_key not in relation_cache:
-                    relation_cache[cache_key] = _load_relation_records_for_receipt(db, receipt_bill, resolver)
+                    relation_cache[cache_key] = relation_meta.loader(db, root_record)
                 records = relation_cache.get(cache_key, [])
                 matched_record = None
 
@@ -6195,8 +6275,8 @@ def _check_trigger_conditions(
                         break
 
                 matched = matched_record is not None
-                if matched and resolver in _TRIGGER_RELATION_RESOLVERS:
-                    selected_records[_TRIGGER_RELATION_RESOLVERS[resolver]["target_source"]] = matched_record
+                if matched:
+                    selected_records[relation_meta.target_source] = matched_record
 
                 if quantifier == "NOT_EXISTS":
                     return not matched
