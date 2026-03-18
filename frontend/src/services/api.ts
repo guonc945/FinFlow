@@ -537,6 +537,20 @@ export const previewBatchVoucherForBills = async (bills: Array<{ bill_id: number
     return response.data;
 };
 
+export const previewVoucherForReceipt = async (receiptBillId: number, communityId: number) => {
+    const response = await axios.post(`${API_BASE_URL}/vouchers/preview-receipt/${receiptBillId}`, null, {
+        params: { community_id: communityId }
+    });
+    return response.data;
+};
+
+export const previewBatchVoucherForReceipts = async (
+    receipts: Array<{ receipt_bill_id: number; community_id: number }>
+) => {
+    const response = await axios.post(`${API_BASE_URL}/vouchers/preview-receipts`, { receipts });
+    return response.data;
+};
+
 export const pushVoucherToKingdee = async (
     kingdeeJson: any,
     bills: Array<{ bill_id: number; community_id: number }> = [],

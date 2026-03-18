@@ -23,7 +23,8 @@ import {
     getProjects,
     getReceiptBills,
     getReceiptBillSyncStatus,
-    previewBatchVoucherForBills,
+    previewBatchVoucherForReceipts,
+    previewVoucherForReceipt,
     pushVoucherToKingdee,
     queryVoucherById,
     resetBillVoucherBinding,
@@ -582,20 +583,6 @@ const ReceiptBills = () => {
 
         return relatedBills;
     }, []);
-    const buildBillRefsFromBills = useCallback((billsToConvert: Bill[]) => {
-        const refs: Array<{ bill_id: number; community_id: number }> = [];
-        const seen = new Set<string>();
-        for (const bill of billsToConvert) {
-            const billId = Number(bill.id);
-            const communityId = Number(bill.community_id);
-            if (!Number.isFinite(billId) || !Number.isFinite(communityId)) continue;
-            const key = `${communityId}|${billId}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
-            refs.push({ bill_id: billId, community_id: communityId });
-        }
-        return refs;
-    }, []);
     const collectRelatedBillsForReceipts = useCallback(async (receipts: Array<{ receipt_bill_id: number; community_id: number }>) => {
         const allBills: Bill[] = [];
         const seen = new Set<string>();
@@ -673,15 +660,7 @@ const ReceiptBills = () => {
     const handlePreviewVoucherForReceipt = useCallback(async (receipt: { id: string | number; community_id: number }) => {
         setVoucherPreview({ isOpen: true, data: null, isLoading: true, error: null });
         try {
-            const relatedBillsForReceipt = await fetchRelatedBillsForReceipt(receipt.id, receipt.community_id);
-            const refs = buildBillRefsFromBills(relatedBillsForReceipt);
-            if (!refs.length) {
-                setVoucherPreview({ isOpen: false, data: null, isLoading: false, error: null });
-                showToast('info', '提示', '当前收款单下没有关联的运营账单，无法预览凭证');
-                return;
-            }
-
-            const result = await previewBatchVoucherForBills(refs);
+            const result = await previewVoucherForReceipt(Number(receipt.id), Number(receipt.community_id));
             notifySkippedBills(result?.skipped_bills || []);
             setVoucherPreview({ isOpen: true, data: result, isLoading: false, error: null });
         } catch (err: any) {
@@ -690,7 +669,7 @@ const ReceiptBills = () => {
                 error: err?.response?.data?.detail || err?.message || '预览失败'
             });
         }
-    }, [buildBillRefsFromBills, fetchRelatedBillsForReceipt, notifySkippedBills, showToast]);
+    }, [notifySkippedBills]);
 
     const handlePreviewBatchVoucher = useCallback(async () => {
         const receipts = Array.from(selectedReceiptRefs.values());
@@ -701,20 +680,8 @@ const ReceiptBills = () => {
 
         setVoucherPreview({ isOpen: true, data: null, isLoading: true, error: null });
         try {
-            const { bills: relatedBillsForSelection, missingCount } = await collectRelatedBillsForReceipts(receipts);
-            const allRefs = buildBillRefsFromBills(relatedBillsForSelection);
-
-            if (!allRefs.length) {
-                setVoucherPreview({ isOpen: false, data: null, isLoading: false, error: null });
-                showToast('info', '提示', '所选收款单下均没有关联的运营账单，无法预览凭证');
-                return;
-            }
-
-            const result = await previewBatchVoucherForBills(allRefs);
+            const result = await previewBatchVoucherForReceipts(receipts);
             notifySkippedBills(result?.skipped_bills || []);
-            if (missingCount > 0) {
-                showToast('info', '提示', `有 ${missingCount} 条收款单没有关联账单，已自动跳过`);
-            }
             setVoucherPreview({ isOpen: true, data: result, isLoading: false, error: null });
         } catch (err: any) {
             setVoucherPreview({
@@ -722,7 +689,7 @@ const ReceiptBills = () => {
                 error: err?.response?.data?.detail || err?.message || '预览失败'
             });
         }
-    }, [buildBillRefsFromBills, collectRelatedBillsForReceipts, notifySkippedBills, selectedReceiptRefs, showToast]);
+    }, [notifySkippedBills, selectedReceiptRefs, showToast]);
 
     const handlePushVoucher = useCallback(async (kingdeeJson: any) => {
         try {

@@ -183,6 +183,15 @@ class BatchVoucherPreviewRequest(BaseModel):
     bills: List[BillPreviewRef] = Field(default_factory=list)
 
 
+class ReceiptBillPreviewRef(BaseModel):
+    receipt_bill_id: int
+    community_id: int
+
+
+class BatchReceiptVoucherPreviewRequest(BaseModel):
+    receipts: List[ReceiptBillPreviewRef] = Field(default_factory=list)
+
+
 class VoucherPushRequest(BaseModel):
     kingdee_json: Dict[str, Any]
     api_id: Optional[int] = None

@@ -42,6 +42,11 @@
     background: #e2e8f0;
 }
 
+.condition-relation {
+    border-color: #f59e0b;
+    background: linear-gradient(180deg, #fff7ed 0%, #fffbeb 100%);
+}
+
 .group-header {
     display: flex;
     justify-content: space-between;

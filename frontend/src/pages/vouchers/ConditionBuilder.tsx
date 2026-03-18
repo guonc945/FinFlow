@@ -1,9 +1,22 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { DragEvent } from 'react';
-import { ChevronDown, ChevronRight, Database, GripVertical, Hash, Layers, Plus, Redo2, Sliders, Trash2, Undo2, X } from 'lucide-react';
+import {
+    ChevronDown,
+    ChevronRight,
+    Database,
+    GripVertical,
+    Hash,
+    Layers,
+    Plus,
+    Redo2,
+    Sliders,
+    Trash2,
+    Undo2,
+    X,
+} from 'lucide-react';
 import VariablePicker from '../settings/VariablePicker';
 import SourceFieldPickerModal from './SourceFieldPickerModal';
-import type { VoucherFieldModule } from '../../types';
+import type { VoucherFieldModule, VoucherSourceFieldOption } from '../../types';
 import './ConditionBuilder.css';
 
 type ExpressionFunctionOption = {
@@ -13,7 +26,6 @@ type ExpressionFunctionOption = {
     label?: string;
 };
 
-// 字段侧格式化预设（对字段原始值做变换后再比较）
 const FIELD_FORMAT_PRESETS: ExpressionFunctionOption[] = [
     { key: '__field_date_ymd', label: '提取日期 YYYY-MM-DD', category: '日期提取', insert_text: "DATE_FORMAT(__VALUE__, 'YYYY-MM-DD')" },
     { key: '__field_date_ym', label: '提取年月 YYYY-MM', category: '日期提取', insert_text: "DATE_FORMAT(__VALUE__, 'YYYY-MM')" },
@@ -24,7 +36,6 @@ const FIELD_FORMAT_PRESETS: ExpressionFunctionOption[] = [
     { key: '__field_lower', label: '转小写', category: '文本处理', insert_text: 'LOWER(__VALUE__)' },
 ];
 
-/** 构建格式化后的源字段文本 */
 const buildFormattedText = (
     fieldValue: string,
     formatter: ExpressionFunctionOption | null | undefined,
@@ -51,11 +62,11 @@ const buildFormattedText = (
 
 export type Operator = '==' | '!=' | '>' | '>=' | '<' | '<=' | 'contains' | 'startswith' | 'endswith';
 export type LogicType = 'AND' | 'OR';
+export type RelationQuantifier = 'EXISTS' | 'NOT_EXISTS';
 
 export interface Condition {
     id: string;
     field: string;
-    /** 字段侧格式化模板，如 DATE_FORMAT(__VALUE__, 'YYYY-MM')  */
     field_format?: string;
     operator: Operator;
     value: string;
@@ -66,14 +77,37 @@ export interface ConditionGroup {
     id: string;
     type: 'group';
     logic: LogicType;
-    children: (Condition | ConditionGroup)[];
+    children: ConditionNode[];
 }
 
-type ConditionNode = Condition | ConditionGroup;
+export interface RelationCondition {
+    id: string;
+    type: 'relation';
+    logic: LogicType;
+    target_source: string;
+    resolver: string;
+    quantifier: RelationQuantifier;
+    children: ConditionNode[];
+}
+
+type ConditionNode = Condition | ConditionGroup | RelationCondition;
+
+type RelationResolverOption = {
+    rootSourceType: string;
+    targetSource: string;
+    resolver: string;
+    label: string;
+};
+
+const RELATION_RESOLVER_OPTIONS: RelationResolverOption[] = [
+    { rootSourceType: 'receipt_bills', targetSource: 'bills', resolver: 'receipt_to_bills', label: '关联运营账单' },
+    { rootSourceType: 'receipt_bills', targetSource: 'deposit_records', resolver: 'receipt_to_deposit_collect', label: '关联押金收取' },
+    { rootSourceType: 'receipt_bills', targetSource: 'deposit_records', resolver: 'receipt_to_deposit_refund', label: '关联押金退款' },
+];
 
 interface DragState {
     nodeId: string;
-    nodeType: 'rule' | 'group';
+    nodeType: 'rule' | 'group' | 'relation';
     sourceParentId: string;
 }
 
@@ -86,8 +120,8 @@ interface ConditionBuilderProps {
     value?: string;
     onChange: (value: string) => void;
     fields: { label: string; value: string; group?: string }[];
-    /** 数据源字段列表（如账单字段） */
     fieldModules?: VoucherFieldModule[] | null;
+    rootSourceType?: string | null;
 }
 
 const generateId = () => Math.random().toString(36).slice(2, 11);
@@ -106,7 +140,13 @@ const OPERATORS: { label: string; value: Operator }[] = [
 
 const HISTORY_LIMIT = 60;
 
-const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fields, fieldModules }) => {
+const ConditionBuilder: React.FC<ConditionBuilderProps> = ({
+    value,
+    onChange,
+    fields,
+    fieldModules,
+    rootSourceType,
+}) => {
     const [root, setRoot] = useState<ConditionGroup>({
         id: 'root',
         type: 'group',
@@ -121,14 +161,82 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
     const [historyPast, setHistoryPast] = useState<string[]>([]);
     const [historyFuture, setHistoryFuture] = useState<string[]>([]);
     const [sourceFieldPickerOpen, setSourceFieldPickerOpen] = useState(false);
-    const [sourceFieldPickerTarget, setSourceFieldPickerTarget] = useState<{ mode: 'field' | 'value'; nodeId: string } | null>(null);
+    const [sourceFieldPickerTarget, setSourceFieldPickerTarget] = useState<{
+        mode: 'field' | 'value';
+        nodeId: string;
+        sourceType: string;
+    } | null>(null);
     const builderRef = useRef<HTMLDivElement | null>(null);
     const lastAutoScrollAtRef = useRef<number>(0);
     const autoExpandTimerRef = useRef<number | null>(null);
     const pendingAutoExpandGroupRef = useRef<string | null>(null);
     const lastSerializedRef = useRef<string>('');
+    const effectiveRootSourceType = String(rootSourceType || '').trim() || 'bills';
 
-    const serializeRoot = (node: ConditionGroup): string => JSON.stringify(node);
+    const getNodeChildren = (node: ConditionNode): ConditionNode[] => (
+        node.type === 'rule' ? [] : node.children
+    );
+
+    const normalizeNode = (node: any): ConditionNode => {
+        if (!node || typeof node !== 'object') {
+            return {
+                id: generateId(),
+                type: 'group',
+                logic: 'AND',
+                children: [],
+            };
+        }
+
+        const nodeType = node.type || 'group';
+        if (nodeType === 'rule') {
+            return {
+                id: String(node.id || generateId()),
+                type: 'rule',
+                field: String(node.field || ''),
+                field_format: typeof node.field_format === 'string' ? node.field_format : undefined,
+                operator: (node.operator || '==') as Operator,
+                value: String(node.value || ''),
+            };
+        }
+
+        if (nodeType === 'relation') {
+            const relationChildren = Array.isArray(node.children)
+                ? node.children
+                : Array.isArray(node.where?.children)
+                    ? node.where.children
+                    : [];
+
+            return {
+                id: String(node.id || generateId()),
+                type: 'relation',
+                logic: ((node.logic || node.where?.logic || 'AND') as LogicType),
+                target_source: String(node.target_source || 'bills'),
+                resolver: String(node.resolver || 'receipt_to_bills'),
+                quantifier: (node.quantifier || 'EXISTS') as RelationQuantifier,
+                children: relationChildren.map((child: any) => normalizeNode(child)),
+            };
+        }
+
+        return {
+            id: String(node.id || generateId()),
+            type: 'group',
+            logic: ((node.logic || 'AND') as LogicType),
+            children: (Array.isArray(node.children) ? node.children : []).map((child: any) => normalizeNode(child)),
+        };
+    };
+
+    const normalizeRootNode = (node: any): ConditionGroup => {
+        const normalized = normalizeNode(node);
+        if (normalized.type === 'group') return normalized;
+        return {
+            id: 'root',
+            type: 'group',
+            logic: 'AND',
+            children: [normalized],
+        };
+    };
+
+    const serializeRoot = (node: ConditionGroup) => JSON.stringify(node);
 
     const applyRootState = (nextRoot: ConditionGroup, serialized?: string) => {
         const nextSerialized = serialized ?? serializeRoot(nextRoot);
@@ -137,9 +245,9 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
         onChange(nextSerialized);
     };
 
-    const updateRoot = (newRoot: ConditionGroup, options?: { recordHistory?: boolean }) => {
+    const updateRoot = (nextRoot: ConditionGroup, options?: { recordHistory?: boolean }) => {
         const currentSerialized = lastSerializedRef.current || serializeRoot(root);
-        const nextSerialized = serializeRoot(newRoot);
+        const nextSerialized = serializeRoot(nextRoot);
         if (currentSerialized === nextSerialized) return;
 
         if (options?.recordHistory !== false) {
@@ -147,106 +255,127 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
             setHistoryFuture([]);
         }
 
-        applyRootState(newRoot, nextSerialized);
+        applyRootState(nextRoot, nextSerialized);
     };
 
-    useEffect(() => {
-        const defaultSerialized = serializeRoot(root);
-        if (!lastSerializedRef.current) {
-            lastSerializedRef.current = defaultSerialized;
-        }
-    }, [root]);
+    const filterModulesForSourceType = (sourceType: string) => {
+        const normalized = String(sourceType || '').trim().toLowerCase();
+        if (!fieldModules || fieldModules.length === 0 || !normalized) return fieldModules || [];
 
-    useEffect(() => {
-        if (!value || value === lastSerializedRef.current) return;
-        try {
-            const parsed = JSON.parse(value);
-            if (parsed && parsed.type === 'group') {
-                lastSerializedRef.current = value;
-                setRoot(parsed);
-                setHistoryPast([]);
-                setHistoryFuture([]);
-            }
-        } catch (e) {
-            console.error('Failed to parse condition JSON', e);
-        }
-    }, [value]);
+        const next = fieldModules
+            .map(module => ({
+                ...module,
+                sources: (module.sources || []).filter(source => (
+                    String(source?.source_type || '').trim().toLowerCase() === normalized
+                )),
+            }))
+            .filter(module => module.sources.length > 0);
+
+        return next.length > 0 ? next : fieldModules;
+    };
+
+    const getFieldOptionsForSourceType = (sourceType: string): VoucherSourceFieldOption[] => {
+        const fromModules = filterModulesForSourceType(sourceType)
+            .flatMap(module => module.sources || [])
+            .flatMap(source => source.fields || [])
+            .map(field => ({
+                label: String(field.label || field.value || ''),
+                value: String(field.value || ''),
+                group: field.group ? String(field.group) : undefined,
+            }))
+            .filter(field => field.value);
+
+        return fromModules.length > 0 ? fromModules : fields;
+    };
+
+    const getRelationOptionsForSource = (sourceType: string) => (
+        RELATION_RESOLVER_OPTIONS.filter(option => option.rootSourceType === sourceType)
+    );
 
     const findNode = (node: ConditionNode, id: string): ConditionNode | null => {
         if (node.id === id) return node;
-        if (node.type === 'group') {
-            for (const child of node.children) {
-                const found = findNode(child, id);
-                if (found) return found;
-            }
+        for (const child of getNodeChildren(node)) {
+            const found = findNode(child, id);
+            if (found) return found;
         }
         return null;
     };
 
-    const findParent = (node: ConditionGroup, id: string): ConditionGroup | null => {
-        if (node.children.some(c => c.id === id)) return node;
-        for (const child of node.children) {
-            if (child.type === 'group') {
-                const found = findParent(child as ConditionGroup, id);
-                if (found) return found;
-            }
+    const findParent = (node: ConditionNode, id: string): ConditionNode | null => {
+        const children = getNodeChildren(node);
+        if (children.some(child => child.id === id)) return node;
+        for (const child of children) {
+            const found = findParent(child, id);
+            if (found) return found;
         }
         return null;
     };
 
-    const getDisplayFieldLabel = (fieldKey: string) => {
+    const collectContainerIds = (node: ConditionNode): string[] => {
+        if (node.type === 'rule') return [];
+        return [node.id, ...node.children.flatMap(child => collectContainerIds(child))];
+    };
+
+    const getNodeSourceType = (
+        targetId: string,
+        currentNode: ConditionNode = root,
+        inheritedSourceType: string = effectiveRootSourceType
+    ): string => {
+        const currentSourceType = currentNode.type === 'relation'
+            ? String(currentNode.target_source || inheritedSourceType || effectiveRootSourceType)
+            : inheritedSourceType;
+
+        if (currentNode.id === targetId) return currentSourceType;
+
+        for (const child of getNodeChildren(currentNode)) {
+            const found = getNodeSourceType(targetId, child, currentSourceType);
+            if (found) return found;
+        }
+
+        return inheritedSourceType;
+    };
+
+    const getDisplayFieldLabel = (fieldKey: string, sourceType: string) => {
         const raw = String(fieldKey || '').trim();
         if (!raw) return '选择字段';
 
         const parts = raw.split('.').filter(Boolean);
         if (parts.length >= 3) {
-            const moduleId = parts[0];
-            const sourceId = parts[1];
-            const baseKey = parts.slice(2).join('.');
-            const baseLabel = fields.find(f => f.value === baseKey)?.label || baseKey;
-
-            const moduleLabel = fieldModules?.find(m => m.id === moduleId)?.label || moduleId;
-            const sourceLabel = fieldModules
-                ?.find(m => m.id === moduleId)
-                ?.sources
-                ?.find(s => s.id === sourceId)?.label || sourceId;
-
-            return `${moduleLabel}.${sourceLabel}.${baseLabel}`;
+            const [moduleId, sourceId, ...rest] = parts;
+            const baseKey = rest.join('.');
+            const module = fieldModules?.find(item => item.id === moduleId);
+            const source = module?.sources?.find(item => item.id === sourceId);
+            const fieldLabel = source?.fields?.find(item => item.value === baseKey)?.label
+                || getFieldOptionsForSourceType(source?.source_type || sourceType).find(item => item.value === baseKey)?.label
+                || baseKey;
+            return `${module?.label || moduleId}.${source?.label || sourceId}.${fieldLabel}`;
         }
+
         if (parts.length === 2) {
-            const [sourcePrefix, baseKey] = parts as [string, string];
-            const baseLabel = fields.find(f => f.value === baseKey)?.label || baseKey;
+            const [prefix, baseKey] = parts;
             const matched = fieldModules
-                ?.flatMap(m => (m.sources || []).map(s => ({ module: m, source: s })))
-                ?.find(x => String(x.source.source_type || '').toLowerCase() === String(sourcePrefix).toLowerCase());
-            const sourceLabel = matched?.source?.label || sourcePrefix;
-            return `${sourceLabel}.${baseLabel}`;
+                ?.flatMap(module => (module.sources || []).map(source => ({ module, source })))
+                ?.find(item => (
+                    String(item.source.source_type || '').trim().toLowerCase() === prefix.toLowerCase()
+                    || String(item.source.id || '').trim().toLowerCase() === prefix.toLowerCase()
+                ));
+            const fieldLabel = matched?.source?.fields?.find(item => item.value === baseKey)?.label
+                || getFieldOptionsForSourceType(matched?.source?.source_type || sourceType).find(item => item.value === baseKey)?.label
+                || baseKey;
+            return `${matched?.source?.label || prefix}.${fieldLabel}`;
         }
 
-        return fields.find(f => f.value === raw)?.label || raw;
+        return getFieldOptionsForSourceType(sourceType).find(item => item.value === raw)?.label || raw;
     };
-
-    const collectGroupIds = (node: ConditionNode): string[] => {
-        if (node.type !== 'group') return [];
-        return [node.id, ...node.children.flatMap(child => collectGroupIds(child))];
-    };
-
-    useEffect(() => {
-        const activeGroupIds = new Set(collectGroupIds(root));
-        setCollapsedGroupIds(prev => {
-            const filtered = prev.filter(id => activeGroupIds.has(id) && id !== 'root');
-            return filtered.length === prev.length ? prev : filtered;
-        });
-    }, [root]);
 
     const applyHistorySnapshot = (serialized: string) => {
         try {
             const parsed = JSON.parse(serialized);
             if (parsed && parsed.type === 'group') {
-                applyRootState(parsed, serialized);
+                applyRootState(normalizeRootNode(parsed), serialized);
             }
-        } catch (e) {
-            console.error('Failed to apply history snapshot', e);
+        } catch (error) {
+            console.error('Failed to apply history snapshot', error);
         }
     };
 
@@ -267,6 +396,36 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
         setHistoryPast(prev => [...prev, currentSerialized].slice(-HISTORY_LIMIT));
         applyHistorySnapshot(nextSerialized);
     };
+
+    useEffect(() => {
+        const defaultSerialized = serializeRoot(root);
+        if (!lastSerializedRef.current) {
+            lastSerializedRef.current = defaultSerialized;
+        }
+    }, [root]);
+
+    useEffect(() => {
+        if (!value || value === lastSerializedRef.current) return;
+        try {
+            const parsed = JSON.parse(value);
+            if (parsed && parsed.type === 'group') {
+                lastSerializedRef.current = value;
+                setRoot(normalizeRootNode(parsed));
+                setHistoryPast([]);
+                setHistoryFuture([]);
+            }
+        } catch (error) {
+            console.error('Failed to parse condition JSON', error);
+        }
+    }, [value]);
+
+    useEffect(() => {
+        const activeIds = new Set(collectContainerIds(root));
+        setCollapsedGroupIds(prev => {
+            const next = prev.filter(id => activeIds.has(id) && id !== 'root');
+            return next.length === prev.length ? prev : next;
+        });
+    }, [root]);
 
     useEffect(() => {
         const onKeyDown = (event: KeyboardEvent) => {
@@ -291,7 +450,7 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
         return () => window.removeEventListener('keydown', onKeyDown);
     }, [historyPast, historyFuture, root]);
 
-    const isGroupCollapsed = (groupId: string): boolean => collapsedGroupIds.includes(groupId);
+    const isGroupCollapsed = (groupId: string) => collapsedGroupIds.includes(groupId);
 
     const toggleGroupCollapse = (groupId: string) => {
         if (groupId === 'root') return;
@@ -310,6 +469,23 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
         pendingAutoExpandGroupRef.current = null;
     };
 
+    const containsNode = (node: ConditionNode, targetId: string): boolean => {
+        if (node.id === targetId) return true;
+        return getNodeChildren(node).some(child => containsNode(child, targetId));
+    };
+
+    const isDropValid = (targetParentId: string): boolean => {
+        if (!dragState) return false;
+        if (targetParentId === dragState.nodeId) return false;
+        if (dragState.nodeType !== 'rule') {
+            const draggingNode = findNode(root, dragState.nodeId);
+            if (draggingNode && draggingNode.type !== 'rule' && containsNode(draggingNode, targetParentId)) {
+                return false;
+            }
+        }
+        return true;
+    };
+
     const scheduleAutoExpand = (groupId: string) => {
         if (!dragState || !isGroupCollapsed(groupId) || !isDropValid(groupId)) return;
         if (pendingAutoExpandGroupRef.current === groupId) return;
@@ -326,21 +502,22 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
     }, []);
 
     const addRule = (parentId: string) => {
+        const sourceType = getNodeSourceType(parentId);
+        const sourceFields = getFieldOptionsForSourceType(sourceType);
         const newRule: Condition = {
             id: generateId(),
             type: 'rule',
-            field: fields[0]?.value || '',
+            field: sourceFields[0]?.value || '',
             operator: '==',
             value: '',
         };
-        const newRoot = JSON.parse(JSON.stringify(root));
-        if (newRoot.id === parentId) {
-            newRoot.children.push(newRule);
-        } else {
-            const parent = findNode(newRoot, parentId) as ConditionGroup;
-            if (parent) parent.children.push(newRule);
+
+        const nextRoot = JSON.parse(JSON.stringify(root)) as ConditionGroup;
+        const parent = parentId === 'root' ? nextRoot : findNode(nextRoot, parentId);
+        if (parent && parent.type !== 'rule') {
+            parent.children.push(newRule);
+            updateRoot(nextRoot);
         }
-        updateRoot(newRoot);
     };
 
     const addGroup = (parentId: string) => {
@@ -350,61 +527,63 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
             logic: 'AND',
             children: [],
         };
-        const newRoot = JSON.parse(JSON.stringify(root));
-        if (newRoot.id === parentId) {
-            newRoot.children.push(newGroup);
-        } else {
-            const parent = findNode(newRoot, parentId) as ConditionGroup;
-            if (parent) parent.children.push(newGroup);
+
+        const nextRoot = JSON.parse(JSON.stringify(root)) as ConditionGroup;
+        const parent = parentId === 'root' ? nextRoot : findNode(nextRoot, parentId);
+        if (parent && parent.type !== 'rule') {
+            parent.children.push(newGroup);
+            updateRoot(nextRoot);
         }
-        updateRoot(newRoot);
+    };
+
+    const addRelation = (parentId: string) => {
+        const sourceType = getNodeSourceType(parentId);
+        const option = getRelationOptionsForSource(sourceType)[0];
+        if (!option) return;
+
+        const newRelation: RelationCondition = {
+            id: generateId(),
+            type: 'relation',
+            logic: 'AND',
+            target_source: option.targetSource,
+            resolver: option.resolver,
+            quantifier: 'EXISTS',
+            children: [],
+        };
+
+        const nextRoot = JSON.parse(JSON.stringify(root)) as ConditionGroup;
+        const parent = parentId === 'root' ? nextRoot : findNode(nextRoot, parentId);
+        if (parent && parent.type !== 'rule') {
+            parent.children.push(newRelation);
+            updateRoot(nextRoot);
+        }
     };
 
     const removeNode = (id: string) => {
         if (id === 'root') return;
-        const newRoot = JSON.parse(JSON.stringify(root));
-        const removedNode = findNode(newRoot, id);
-        const removedGroupIds = removedNode ? collectGroupIds(removedNode) : [];
-        const parent = findParent(newRoot, id);
-        if (parent) {
-            parent.children = parent.children.filter((c: { id: string }) => c.id !== id);
-            updateRoot(newRoot);
-            if (removedGroupIds.length > 0) {
-                setCollapsedGroupIds(prev => prev.filter(groupId => !removedGroupIds.includes(groupId)));
+        const nextRoot = JSON.parse(JSON.stringify(root)) as ConditionGroup;
+        const removedNode = findNode(nextRoot, id);
+        const removedIds = removedNode ? collectContainerIds(removedNode) : [];
+        const parent = findParent(nextRoot, id);
+        if (parent && parent.type !== 'rule') {
+            parent.children = parent.children.filter(child => child.id !== id);
+            updateRoot(nextRoot);
+            if (removedIds.length > 0) {
+                setCollapsedGroupIds(prev => prev.filter(groupId => !removedIds.includes(groupId)));
             }
         }
     };
 
     const updateNode = (id: string, updates: Partial<ConditionNode>) => {
-        const newRoot = JSON.parse(JSON.stringify(root));
-        const node = findNode(newRoot, id);
+        const nextRoot = JSON.parse(JSON.stringify(root)) as ConditionGroup;
+        const node = findNode(nextRoot, id);
         if (!node) return;
         Object.assign(node, updates);
-        updateRoot(newRoot);
-    };
-
-    const containsNode = (node: ConditionNode, targetId: string): boolean => {
-        if (node.id === targetId) return true;
-        if (node.type === 'group') {
-            return node.children.some(child => containsNode(child, targetId));
-        }
-        return false;
-    };
-
-    const isDropValid = (targetParentId: string): boolean => {
-        if (!dragState) return false;
-        if (targetParentId === dragState.nodeId) return false;
-        if (dragState.nodeType === 'group') {
-            const draggingNode = findNode(root, dragState.nodeId);
-            if (draggingNode && draggingNode.type === 'group' && containsNode(draggingNode, targetParentId)) {
-                return false;
-            }
-        }
-        return true;
+        updateRoot(nextRoot);
     };
 
     const handleDragStart = (
-        e: DragEvent<HTMLElement>,
+        event: DragEvent<HTMLElement>,
         node: ConditionNode,
         sourceParentId: string
     ) => {
@@ -414,8 +593,8 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
             sourceParentId,
         });
         setDropTarget(null);
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', node.id);
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', node.id);
     };
 
     const handleDragEnd = () => {
@@ -449,16 +628,16 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
     };
 
     const handleDragOver = (
-        e: DragEvent<HTMLDivElement>,
+        event: DragEvent<HTMLDivElement>,
         targetParentId: string,
         targetIndex: number
     ) => {
         if (!dragState) return;
-        e.preventDefault();
+        event.preventDefault();
         const valid = isDropValid(targetParentId);
-        handleAutoScroll(e.clientY);
+        handleAutoScroll(event.clientY);
         scheduleAutoExpand(targetParentId);
-        e.dataTransfer.dropEffect = valid ? 'move' : 'none';
+        event.dataTransfer.dropEffect = valid ? 'move' : 'none';
         setDropTarget(prev => (
             prev && prev.parentId === targetParentId && prev.index === targetIndex
                 ? prev
@@ -467,29 +646,28 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
     };
 
     const handleDrop = (
-        e: DragEvent<HTMLDivElement>,
+        event: DragEvent<HTMLDivElement>,
         targetParentId: string,
         targetIndex: number
     ) => {
-        e.preventDefault();
+        event.preventDefault();
         clearAutoExpandTimer();
-        if (!dragState) return;
-        if (!isDropValid(targetParentId)) {
+        if (!dragState || !isDropValid(targetParentId)) {
             setDragState(null);
             setDropTarget(null);
             return;
         }
 
-        const newRoot = JSON.parse(JSON.stringify(root)) as ConditionGroup;
-        const sourceParent = findNode(newRoot, dragState.sourceParentId);
-        const targetParent = findNode(newRoot, targetParentId);
-        if (!sourceParent || sourceParent.type !== 'group' || !targetParent || targetParent.type !== 'group') {
+        const nextRoot = JSON.parse(JSON.stringify(root)) as ConditionGroup;
+        const sourceParent = findNode(nextRoot, dragState.sourceParentId);
+        const targetParent = findNode(nextRoot, targetParentId);
+        if (!sourceParent || sourceParent.type === 'rule' || !targetParent || targetParent.type === 'rule') {
             setDragState(null);
             setDropTarget(null);
             return;
         }
 
-        const sourceIndex = sourceParent.children.findIndex(c => c.id === dragState.nodeId);
+        const sourceIndex = sourceParent.children.findIndex(child => child.id === dragState.nodeId);
         if (sourceIndex < 0) {
             setDragState(null);
             setDropTarget(null);
@@ -510,7 +688,7 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
         }
 
         targetParent.children.splice(insertIndex, 0, movingNode);
-        updateRoot(newRoot);
+        updateRoot(nextRoot);
         setDragState(null);
         setDropTarget(null);
     };
@@ -532,8 +710,8 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
                 <div
                     key={`drop-${targetParentId}-${targetIndex}`}
                     className={`condition-insert-line ${isTail ? 'is-tail' : ''} ${isActive ? 'is-active' : ''} ${isInvalid ? 'is-invalid' : ''}`}
-                    onDragOver={(e) => handleDragOver(e, targetParentId, targetIndex)}
-                    onDrop={(e) => handleDrop(e, targetParentId, targetIndex)}
+                    onDragOver={(event) => handleDragOver(event, targetParentId, targetIndex)}
+                    onDrop={(event) => handleDrop(event, targetParentId, targetIndex)}
                 >
                     {isActive && (
                         <span>{isInvalid ? '该位置不可放置' : '在此插入'}</span>
@@ -542,14 +720,25 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
             );
         };
 
-        if (node.type === 'group') {
+        if (node.type !== 'rule') {
             const collapsed = isGroupCollapsed(node.id);
-            const isGroupDropActive = dropTarget?.parentId === node.id;
-            const isGroupDropInvalid = isGroupDropActive && dragState && !isDropValid(node.id);
+            const isContainerDropActive = dropTarget?.parentId === node.id;
+            const isContainerDropInvalid = isContainerDropActive && dragState && !isDropValid(node.id);
+            const currentSourceType = node.type === 'relation'
+                ? String(node.target_source || getNodeSourceType(node.id))
+                : getNodeSourceType(node.id);
+            const parentSourceType = parentId ? getNodeSourceType(parentId) : effectiveRootSourceType;
+            const relationOptions = node.type === 'relation'
+                ? getRelationOptionsForSource(parentSourceType)
+                : getRelationOptionsForSource(currentSourceType);
+            const relationValue = node.type === 'relation'
+                ? `${node.resolver}::${node.target_source}`
+                : '';
+
             return (
                 <div
                     key={node.id}
-                    className={`condition-group depth-${depth} ${dragState?.nodeId === node.id ? 'is-dragging' : ''} ${isGroupDropActive ? 'is-drop-active' : ''} ${isGroupDropInvalid ? 'is-drop-invalid' : ''}`}
+                    className={`condition-group ${node.type === 'relation' ? 'condition-relation' : ''} depth-${depth} ${dragState?.nodeId === node.id ? 'is-dragging' : ''} ${isContainerDropActive ? 'is-drop-active' : ''} ${isContainerDropInvalid ? 'is-drop-invalid' : ''}`}
                 >
                     <div className="group-header">
                         <div className="group-header-left">
@@ -557,9 +746,9 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
                                 <button
                                     className="drag-handle"
                                     draggable
-                                    onDragStart={(e) => handleDragStart(e, node, parentId)}
+                                    onDragStart={(event) => handleDragStart(event, node, parentId)}
                                     onDragEnd={handleDragEnd}
-                                    title="拖动规则组"
+                                    title="拖动条件组"
                                     type="button"
                                 >
                                     <GripVertical size={14} />
@@ -575,22 +764,68 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
                                     {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                                 </button>
                             )}
-                            <select
-                                value={node.logic}
-                                onChange={(e) => updateNode(node.id, { logic: e.target.value as LogicType })}
-                                className="logic-select"
-                            >
-                                <option value="AND">全部满足 (AND)</option>
-                                <option value="OR">任意满足 (OR)</option>
-                            </select>
+                            {node.type === 'relation' ? (
+                                <>
+                                    <select
+                                        value={node.quantifier}
+                                        onChange={(event) => updateNode(node.id, { quantifier: event.target.value as RelationQuantifier })}
+                                        className="logic-select"
+                                    >
+                                        <option value="EXISTS">存在关联记录</option>
+                                        <option value="NOT_EXISTS">不存在关联记录</option>
+                                    </select>
+                                    <select
+                                        value={relationValue}
+                                        onChange={(event) => {
+                                            const next = relationOptions.find(option => (
+                                                `${option.resolver}::${option.targetSource}` === event.target.value
+                                            ));
+                                            if (!next) return;
+                                            updateNode(node.id, {
+                                                resolver: next.resolver,
+                                                target_source: next.targetSource,
+                                            });
+                                        }}
+                                        className="logic-select"
+                                    >
+                                        {relationOptions.map(option => (
+                                            <option key={`${option.resolver}:${option.targetSource}`} value={`${option.resolver}::${option.targetSource}`}>
+                                                {option.label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <select
+                                        value={node.logic}
+                                        onChange={(event) => updateNode(node.id, { logic: event.target.value as LogicType })}
+                                        className="logic-select"
+                                    >
+                                        <option value="AND">子条件全部满足</option>
+                                        <option value="OR">子条件任一满足</option>
+                                    </select>
+                                </>
+                            ) : (
+                                <select
+                                    value={node.logic}
+                                    onChange={(event) => updateNode(node.id, { logic: event.target.value as LogicType })}
+                                    className="logic-select"
+                                >
+                                    <option value="AND">全部满足 (AND)</option>
+                                    <option value="OR">任一满足 (OR)</option>
+                                </select>
+                            )}
                         </div>
                         <div className="group-actions">
-                            <button onClick={() => addRule(node.id)} className="action-btn add-rule">
+                            <button onClick={() => addRule(node.id)} className="action-btn add-rule" type="button">
                                 <Plus size={14} /> 添加规则
                             </button>
-                            <button onClick={() => addGroup(node.id)} className="action-btn add-group">
-                                <Layers size={14} /> 添加规则组
+                            <button onClick={() => addGroup(node.id)} className="action-btn add-group" type="button">
+                                <Layers size={14} /> 添加分组
                             </button>
+                            {relationOptions.length > 0 && (
+                                <button onClick={() => addRelation(node.id)} className="action-btn add-group" type="button">
+                                    <Database size={14} /> 添加关联
+                                </button>
+                            )}
                             {depth === 0 && (
                                 <div className="history-actions">
                                     <button
@@ -614,7 +849,7 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
                                 </div>
                             )}
                             {depth > 0 && (
-                                <button onClick={() => removeNode(node.id)} className="action-btn remove">
+                                <button onClick={() => removeNode(node.id)} className="action-btn remove" type="button">
                                     <X size={14} />
                                 </button>
                             )}
@@ -633,7 +868,7 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
                         {collapsed && (
                             <div
                                 className="group-collapsed-hint"
-                                onDragOver={(e) => handleDragOver(e, node.id, node.children.length)}
+                                onDragOver={(event) => handleDragOver(event, node.id, node.children.length)}
                             >
                                 已折叠，拖拽悬停可自动展开
                             </div>
@@ -644,12 +879,11 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
             );
         }
 
-        // ---------- 字段侧格式化 ----------
         const fieldFormatKey = node.field_format || '';
-        const fieldFormatter = FIELD_FORMAT_PRESETS.find(f => f.insert_text === fieldFormatKey) || null;
-        const fieldFormatPreview = fieldFormatter
-            ? buildFormattedText(node.field, fieldFormatter, false)
-            : '';
+        const fieldFormatter = FIELD_FORMAT_PRESETS.find(item => item.insert_text === fieldFormatKey) || null;
+        const fieldFormatPreview = fieldFormatter ? buildFormattedText(node.field, fieldFormatter, false) : '';
+        const activeSourceType = parentId ? getNodeSourceType(parentId) : effectiveRootSourceType;
+        const activeFields = getFieldOptionsForSourceType(activeSourceType);
 
         return (
             <div key={node.id} className={`condition-rule ${dragState?.nodeId === node.id ? 'is-dragging' : ''}`}>
@@ -657,7 +891,7 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
                     <button
                         className="drag-handle"
                         draggable
-                        onDragStart={(e) => handleDragStart(e, node, parentId)}
+                        onDragStart={(event) => handleDragStart(event, node, parentId)}
                         onDragEnd={handleDragEnd}
                         title="拖动规则"
                         type="button"
@@ -666,53 +900,52 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
                     </button>
                 )}
                 <div className="rule-content">
-                    {/* 字段选择 + 字段格式化 */}
                     <div className="rule-field-group">
                         {fieldModules && fieldModules.length > 0 ? (
                             <button
                                 type="button"
                                 className="rule-field cb-adv-field-btn"
                                 onClick={() => {
-                                    setSourceFieldPickerTarget({ mode: 'field', nodeId: node.id });
+                                    setSourceFieldPickerTarget({ mode: 'field', nodeId: node.id, sourceType: activeSourceType });
                                     setSourceFieldPickerOpen(true);
                                 }}
                                 title="选择字段"
                             >
                                 <span className="cb-adv-field-text">
-                                    {getDisplayFieldLabel(node.field)}
+                                    {getDisplayFieldLabel(node.field, activeSourceType)}
                                 </span>
                                 <Database size={14} />
                             </button>
                         ) : (
                             <select
                                 value={node.field}
-                                onChange={(e) => updateNode(node.id, { field: e.target.value })}
+                                onChange={(event) => updateNode(node.id, { field: event.target.value })}
                                 className="rule-field"
                             >
-                                {fields.map(f => (
-                                    <option key={f.value} value={f.value}>{f.label}</option>
+                                {activeFields.map(field => (
+                                    <option key={field.value} value={field.value}>{field.label}</option>
                                 ))}
                             </select>
                         )}
-                        <div className="cb-field-format-combo" title={fieldFormatter ? `字段格式：${fieldFormatPreview}` : '对字段值做格式化后再比较'}>
+                        <div className="cb-field-format-combo" title={fieldFormatter ? `字段格式：${fieldFormatPreview}` : '对字段值格式化后再比较'}>
                             <Sliders size={11} />
                             <select
                                 className="cb-format-select"
                                 value={fieldFormatKey}
-                                onChange={(e) => updateNode(node.id, { field_format: e.target.value || undefined } as any)}
+                                onChange={(event) => updateNode(node.id, { field_format: event.target.value || undefined } as Partial<ConditionNode>)}
                             >
                                 <option value="">原始值</option>
                                 {(() => {
-                                    const groups: Record<string, ExpressionFunctionOption[]> = {};
+                                    const grouped: Record<string, ExpressionFunctionOption[]> = {};
                                     FIELD_FORMAT_PRESETS.forEach(item => {
-                                        const g = item.category || '其他';
-                                        if (!groups[g]) groups[g] = [];
-                                        groups[g]!.push(item);
+                                        const category = item.category || '其他';
+                                        if (!grouped[category]) grouped[category] = [];
+                                        grouped[category].push(item);
                                     });
-                                    return Object.entries(groups).map(([gName, fns]) => (
-                                        <optgroup key={gName} label={gName}>
-                                            {fns.map(f => (
-                                                <option key={f.key} value={f.insert_text || ''}>{f.label}</option>
+                                    return Object.entries(grouped).map(([groupName, items]) => (
+                                        <optgroup key={groupName} label={groupName}>
+                                            {items.map(item => (
+                                                <option key={item.key} value={item.insert_text || ''}>{item.label}</option>
                                             ))}
                                         </optgroup>
                                     ));
@@ -727,11 +960,11 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
                     </div>
                     <select
                         value={node.operator}
-                        onChange={(e) => updateNode(node.id, { operator: e.target.value as Operator })}
+                        onChange={(event) => updateNode(node.id, { operator: event.target.value as Operator })}
                         className="rule-operator"
                     >
-                        {OPERATORS.map(op => (
-                            <option key={op.value} value={op.value}>{op.label}</option>
+                        {OPERATORS.map(operator => (
+                            <option key={operator.value} value={operator.value}>{operator.label}</option>
                         ))}
                     </select>
                     <div className="rule-value-group">
@@ -739,11 +972,12 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
                             <input
                                 type="text"
                                 value={node.value}
-                                onChange={(e) => updateNode(node.id, { value: e.target.value })}
-                                placeholder="值（支持变量和格式化函数）"
+                                onChange={(event) => updateNode(node.id, { value: event.target.value })}
+                                placeholder="值（支持变量和数据源字段）"
                                 className="rule-value"
                             />
                             <button
+                                type="button"
                                 onClick={() => {
                                     setTargetConditionId(node.id);
                                     setVariablePickerOpen(true);
@@ -758,7 +992,7 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
                                         type="button"
                                         className="cb-field-trigger"
                                         onClick={() => {
-                                            setSourceFieldPickerTarget({ mode: 'value', nodeId: node.id });
+                                            setSourceFieldPickerTarget({ mode: 'value', nodeId: node.id, sourceType: activeSourceType });
                                             setSourceFieldPickerOpen(true);
                                         }}
                                         title="选择数据源字段"
@@ -770,7 +1004,7 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
                         </div>
                     </div>
                 </div>
-                <button onClick={() => removeNode(node.id)} className="action-btn remove-rule">
+                <button onClick={() => removeNode(node.id)} className="action-btn remove-rule" type="button">
                     <Trash2 size={14} />
                 </button>
             </div>
@@ -785,13 +1019,12 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
                 onClose={() => setVariablePickerOpen(false)}
                 includeFunctions
                 onSelect={(variable) => {
-                    if (targetConditionId) {
-                        const node = findNode(root, targetConditionId) as Condition | null;
-                        const prevValue = node && node.type === 'rule' ? (node.value || '') : '';
-                        const insertText = variable?.insert_text || (variable?.key ? `{${variable.key}}` : String(variable || ''));
-                        updateNode(targetConditionId, { value: prevValue + insertText });
-                        setTargetConditionId(null);
-                    }
+                    if (!targetConditionId) return;
+                    const node = findNode(root, targetConditionId);
+                    const prevValue = node && node.type === 'rule' ? (node.value || '') : '';
+                    const insertText = variable?.insert_text || (variable?.key ? `{${variable.key}}` : String(variable || ''));
+                    updateNode(targetConditionId, { value: prevValue + insertText });
+                    setTargetConditionId(null);
                 }}
             />
             {fieldModules && fieldModules.length > 0 && (
@@ -801,20 +1034,22 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ value, onChange, fi
                         setSourceFieldPickerOpen(false);
                         setSourceFieldPickerTarget(null);
                     }}
-                    modules={fieldModules}
-                    onPick={(f, ctx) => {
+                    modules={filterModulesForSourceType(sourceFieldPickerTarget?.sourceType || effectiveRootSourceType)}
+                    onPick={(field, ctx) => {
                         const target = sourceFieldPickerTarget;
                         if (!target) return;
                         const key = (ctx?.module_id && ctx?.source_id)
-                            ? `${ctx.module_id}.${ctx.source_id}.${f.value}`
-                            : (ctx?.source_type ? `${ctx.source_type}.${f.value}` : f.value);
+                            ? `${ctx.module_id}.${ctx.source_id}.${field.value}`
+                            : (ctx?.source_type ? `${ctx.source_type}.${field.value}` : field.value);
+
                         if (target.mode === 'field') {
                             updateNode(target.nodeId, { field: key });
                         } else {
-                            const node = findNode(root, target.nodeId) as Condition | null;
+                            const node = findNode(root, target.nodeId);
                             const prevValue = node && node.type === 'rule' ? (node.value || '') : '';
                             updateNode(target.nodeId, { value: prevValue + `{${key}}` });
                         }
+
                         setSourceFieldPickerOpen(false);
                         setSourceFieldPickerTarget(null);
                     }}

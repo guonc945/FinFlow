@@ -437,6 +437,195 @@ def _get_related_bill_refs_for_receipts(
     return result_map
 
 
+def _normalize_receipt_refs(receipts: Optional[List[Any]]) -> List[Dict[str, int]]:
+    normalized_receipts: List[Dict[str, int]] = []
+    seen = set()
+
+    for ref in receipts or []:
+        if isinstance(ref, dict):
+            receipt_bill_id = ref.get("receipt_bill_id", ref.get("id"))
+            community_id = ref.get("community_id")
+        else:
+            receipt_bill_id = getattr(ref, "receipt_bill_id", getattr(ref, "id", None))
+            community_id = getattr(ref, "community_id", None)
+
+        if receipt_bill_id is None or community_id is None:
+            continue
+
+        key = (int(receipt_bill_id), int(community_id))
+        if key in seen:
+            continue
+
+        seen.add(key)
+        normalized_receipts.append({
+            "receipt_bill_id": int(receipt_bill_id),
+            "community_id": int(community_id),
+        })
+
+    return normalized_receipts
+
+
+def _jsonify_scalar(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        return float(value)
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return value
+
+
+def _prefix_source_fields(data: Dict[str, Any], source_type: str, module_prefix: str = "marki") -> Dict[str, Any]:
+    enriched = dict(data)
+    for key, val in list(data.items()):
+        if not isinstance(key, str) or "." in key:
+            continue
+        enriched[f"{source_type}.{key}"] = val
+        enriched[f"{module_prefix}.{source_type}.{key}"] = val
+    return enriched
+
+
+def _serialize_receipt_bill_model(
+    receipt_bill: models.ReceiptBill,
+    db: Session,
+) -> Dict[str, Any]:
+    project_name = (
+        db.query(models.ProjectList.proj_name)
+        .filter(models.ProjectList.proj_id == int(receipt_bill.community_id))
+        .scalar()
+    )
+    users = list(getattr(receipt_bill, "users", None) or [])
+    payer_name = ", ".join(
+        [str(getattr(user, "user_name", "")).strip() for user in users if str(getattr(user, "user_name", "")).strip()]
+    )
+
+    data = {
+        "id": receipt_bill.id,
+        "community_id": receipt_bill.community_id,
+        "community_name": project_name or "",
+        "payer_name": payer_name,
+        "receipt_id": receipt_bill.receipt_id,
+        "deal_type": receipt_bill.deal_type,
+        "deal_type_label": RECEIPT_BILL_DEAL_TYPE_LABELS.get(receipt_bill.deal_type, "其他"),
+        "asset_type": receipt_bill.asset_type,
+        "asset_name": receipt_bill.asset_name,
+        "asset_id": receipt_bill.asset_id,
+        "income_amount": receipt_bill.income_amount,
+        "amount": receipt_bill.amount,
+        "discount_amount": receipt_bill.discount_amount,
+        "late_money_amount": receipt_bill.late_money_amount,
+        "bill_amount": receipt_bill.bill_amount,
+        "deposit_amount": receipt_bill.deposit_amount,
+        "pay_channel": receipt_bill.pay_channel,
+        "pay_channel_list": receipt_bill.pay_channel_list,
+        "pay_channel_str": receipt_bill.pay_channel_str,
+        "deal_time": receipt_bill.deal_time,
+        "deal_date": receipt_bill.deal_date,
+        "remark": receipt_bill.remark,
+        "fk_id": receipt_bill.fk_id,
+        "receipt_record_id": receipt_bill.receipt_record_id,
+        "receipt_version": receipt_bill.receipt_version,
+        "invoice_number": receipt_bill.invoice_number,
+        "invoice_urls": receipt_bill.invoice_urls,
+        "invoice_status": receipt_bill.invoice_status,
+        "open_invoice": receipt_bill.open_invoice,
+        "payee": receipt_bill.payee,
+        "bind_users_raw": receipt_bill.bind_users_raw,
+        "created_at": receipt_bill.created_at,
+        "updated_at": receipt_bill.updated_at,
+    }
+    return {key: _jsonify_scalar(value) for key, value in data.items()}
+
+
+def _enrich_receipt_bill_data(receipt_data: Dict[str, Any]) -> Dict[str, Any]:
+    return _prefix_source_fields(receipt_data, "receipt_bills")
+
+
+def _serialize_deposit_record_model(record: models.DepositRecord) -> Dict[str, Any]:
+    data = {
+        "id": record.id,
+        "community_id": record.community_id,
+        "community_name": record.community_name,
+        "house_id": record.house_id,
+        "house_name": record.house_name,
+        "amount": record.amount,
+        "operate_type": record.operate_type,
+        "operate_type_label": DEPOSIT_OPERATE_TYPE_LABELS.get(record.operate_type, "其他"),
+        "operator": record.operator,
+        "operator_name": record.operator_name,
+        "operate_time": record.operate_time,
+        "operate_date": record.operate_date,
+        "cash_pledge_name": record.cash_pledge_name,
+        "remark": record.remark,
+        "pay_time": record.pay_time,
+        "pay_date": record.pay_date,
+        "payment_id": record.payment_id,
+        "has_refund_receipt": record.has_refund_receipt,
+        "refund_receipt_id": record.refund_receipt_id,
+        "pay_channel_str": record.pay_channel_str,
+        "raw_data": record.raw_data,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+    }
+    return {key: _jsonify_scalar(value) for key, value in data.items()}
+
+
+def _enrich_deposit_record_data(record_data: Dict[str, Any]) -> Dict[str, Any]:
+    return _prefix_source_fields(record_data, "deposit_records")
+
+
+def _load_relation_records_for_receipt(
+    db: Session,
+    receipt_bill: models.ReceiptBill,
+    resolver: str,
+) -> List[Dict[str, Any]]:
+    if resolver == "receipt_to_bills":
+        bills = (
+            db.query(models.Bill)
+            .filter(
+                models.Bill.deal_log_id == int(receipt_bill.id),
+                models.Bill.community_id == int(receipt_bill.community_id),
+            )
+            .order_by(models.Bill.id.asc())
+            .all()
+        )
+        from services.voucher_engine import enrich_bill_data
+
+        return [
+            enrich_bill_data(
+                {col.name: _jsonify_scalar(getattr(bill, col.name, None)) for col in models.Bill.__table__.columns},
+                db,
+            )
+            for bill in bills
+        ]
+
+    if resolver == "receipt_to_deposit_collect":
+        records = (
+            db.query(models.DepositRecord)
+            .filter(
+                models.DepositRecord.community_id == int(receipt_bill.community_id),
+                models.DepositRecord.payment_id == int(receipt_bill.id),
+                models.DepositRecord.operate_type == 1,
+            )
+            .order_by(models.DepositRecord.id.asc())
+            .all()
+        )
+        return [_enrich_deposit_record_data(_serialize_deposit_record_model(record)) for record in records]
+
+    if resolver == "receipt_to_deposit_refund":
+        records = (
+            db.query(models.DepositRecord)
+            .filter(
+                models.DepositRecord.community_id == int(receipt_bill.community_id),
+                models.DepositRecord.refund_receipt_id == int(receipt_bill.id),
+                models.DepositRecord.operate_type == 2,
+            )
+            .order_by(models.DepositRecord.id.asc())
+            .all()
+        )
+        return [_enrich_deposit_record_data(_serialize_deposit_record_model(record)) for record in records]
+
+    return []
+
+
 def _aggregate_receipt_bill_push_status(statuses: List[Dict[str, Any]]) -> Dict[str, Any]:
     related_bill_count = len(statuses)
     summary = _summarize_bill_push_statuses(statuses)
@@ -3828,7 +4017,7 @@ _BILL_FIELD_LABELS: Dict[str, str] = {
 }
 
 
-_RECEIPT_BILL_RUNTIME_EXTRA_FIELDS: Set[str] = {"community_name", "payer_name"}
+_RECEIPT_BILL_RUNTIME_EXTRA_FIELDS: Set[str] = {"community_name", "payer_name", "deal_type_label"}
 _RECEIPT_BILL_FIELD_LABELS: Dict[str, str] = {
     "id": "收款明细ID",
     "community_id": "园区ID",
@@ -3860,6 +4049,34 @@ _RECEIPT_BILL_FIELD_LABELS: Dict[str, str] = {
     "remark": "备注",
     "fk_id": "FK_ID",
     "bind_users_raw": "关联住户备份(JSON)",
+    "created_at": "创建时间(系统)",
+    "updated_at": "更新时间(系统)",
+}
+
+
+_DEPOSIT_RECORD_RUNTIME_EXTRA_FIELDS: Set[str] = {"operate_type_label"}
+_DEPOSIT_RECORD_FIELD_LABELS: Dict[str, str] = {
+    "id": "押金记录ID",
+    "community_id": "园区ID",
+    "community_name": "园区名称",
+    "house_id": "房屋ID",
+    "house_name": "房屋名称",
+    "amount": "押金金额",
+    "operate_type": "操作类型编码",
+    "operate_type_label": "操作类型",
+    "operator": "操作人ID",
+    "operator_name": "操作人",
+    "operate_time": "操作时间戳",
+    "operate_date": "操作日期",
+    "cash_pledge_name": "押金类型",
+    "remark": "备注",
+    "pay_time": "支付时间戳",
+    "pay_date": "支付日期",
+    "payment_id": "关联收款单ID",
+    "has_refund_receipt": "是否关联退款收据",
+    "refund_receipt_id": "关联退款收款单ID",
+    "pay_channel_str": "支付方式",
+    "raw_data": "原始数据(JSON)",
     "created_at": "创建时间(系统)",
     "updated_at": "更新时间(系统)",
 }
@@ -3897,6 +4114,20 @@ def _group_receipt_bills_field(field_name: str) -> str:
     return "收款字段"
 
 
+def _group_deposit_records_field(field_name: str) -> str:
+    if field_name in _DEPOSIT_RECORD_RUNTIME_EXTRA_FIELDS:
+        return "运行时字段"
+    if field_name == "amount" or field_name.endswith("_amount"):
+        return "金额信息"
+    if field_name.startswith("operate_"):
+        return "操作信息"
+    if field_name.startswith("pay_"):
+        return "支付信息"
+    if field_name in {"id", "community_id", "house_id", "payment_id", "refund_receipt_id"}:
+        return "关联ID"
+    return "押金字段"
+
+
 def _build_bills_fields() -> Set[str]:
     fields = {col.name for col in models.Bill.__table__.columns}
     try:
@@ -3915,34 +4146,55 @@ def _build_receipt_bills_fields() -> Set[str]:
     return fields
 
 
+def _build_deposit_records_fields() -> Set[str]:
+    fields = {col.name for col in models.DepositRecord.__table__.columns}
+    fields.update(_DEPOSIT_RECORD_RUNTIME_EXTRA_FIELDS)
+    return fields
+
+
+def _build_source_fields(source_type: str) -> Set[str]:
+    normalized_source = (source_type or "").strip().lower()
+    if normalized_source == "receipt_bills":
+        return _build_receipt_bills_fields()
+    if normalized_source == "deposit_records":
+        return _build_deposit_records_fields()
+    return _build_bills_fields()
+
+
+def _build_source_field_options(source_type: str) -> List[Dict[str, str]]:
+    normalized_source = (source_type or "").strip().lower()
+    if normalized_source == "receipt_bills":
+        fields = _build_receipt_bills_fields()
+        labels = _RECEIPT_BILL_FIELD_LABELS
+        grouper = _group_receipt_bills_field
+    elif normalized_source == "deposit_records":
+        fields = _build_deposit_records_fields()
+        labels = _DEPOSIT_RECORD_FIELD_LABELS
+        grouper = _group_deposit_records_field
+    else:
+        fields = _build_bills_fields()
+        labels = _BILL_FIELD_LABELS
+        grouper = _group_bills_field
+
+    options = []
+    for field_name in sorted(fields):
+        display_name = labels.get(field_name)
+        label = f"{display_name} ({field_name})" if display_name else field_name
+        options.append({
+            "label": label,
+            "value": field_name,
+            "group": grouper(field_name),
+        })
+    return options
+
+
 @app.get("/api/vouchers/source-fields")
 def get_voucher_source_fields(source_type: str = Query("bills")):
     normalized_source = (source_type or "").strip().lower()
-    if normalized_source not in ("", "bills", "receipt_bills"):
+    if normalized_source not in ("", "bills", "receipt_bills", "deposit_records"):
         return {"source_type": normalized_source, "fields": []}
-
-    if normalized_source in ("", "bills"):
-        fields = []
-        for field_name in sorted(_build_bills_fields()):
-            display_name = _BILL_FIELD_LABELS.get(field_name)
-            label = f"{display_name} ({field_name})" if display_name else field_name
-            fields.append({
-                "label": label,
-                "value": field_name,
-                "group": _group_bills_field(field_name),
-            })
-        return {"source_type": "bills", "fields": fields}
-
-    fields = []
-    for field_name in sorted(_build_receipt_bills_fields()):
-        display_name = _RECEIPT_BILL_FIELD_LABELS.get(field_name)
-        label = f"{display_name} ({field_name})" if display_name else field_name
-        fields.append({
-            "label": label,
-            "value": field_name,
-            "group": _group_receipt_bills_field(field_name),
-        })
-    return {"source_type": "receipt_bills", "fields": fields}
+    actual_source = normalized_source or "bills"
+    return {"source_type": actual_source, "fields": _build_source_field_options(actual_source)}
 
 
 @app.get("/api/vouchers/source-modules")
@@ -3954,25 +4206,9 @@ def get_voucher_source_modules():
     - Mark system fields are loaded from backend data models (SQLAlchemy columns + runtime/derived fields).
     """
 
-    bills_fields = []
-    for field_name in sorted(_build_bills_fields()):
-        display_name = _BILL_FIELD_LABELS.get(field_name)
-        label = f"{display_name} ({field_name})" if display_name else field_name
-        bills_fields.append({
-            "label": label,
-            "value": field_name,
-            "group": _group_bills_field(field_name),
-        })
-
-    receipt_bills_fields = []
-    for field_name in sorted(_build_receipt_bills_fields()):
-        display_name = _RECEIPT_BILL_FIELD_LABELS.get(field_name)
-        label = f"{display_name} ({field_name})" if display_name else field_name
-        receipt_bills_fields.append({
-            "label": label,
-            "value": field_name,
-            "group": _group_receipt_bills_field(field_name),
-        })
+    bills_fields = _build_source_field_options("bills")
+    receipt_bills_fields = _build_source_field_options("receipt_bills")
+    deposit_records_fields = _build_source_field_options("deposit_records")
 
     return {
         "modules": [
@@ -3991,6 +4227,12 @@ def get_voucher_source_modules():
                         "label": "收款账单",
                         "source_type": "receipt_bills",
                         "fields": receipt_bills_fields,
+                    },
+                    {
+                        "id": "deposit_records",
+                        "label": "押金记录",
+                        "source_type": "deposit_records",
+                        "fields": deposit_records_fields,
                     },
                 ],
             },
@@ -4038,9 +4280,9 @@ def _build_allowed_placeholders(source_type: Optional[str], source_module: Optio
     source_types: Set[str] = set()
     # Module-level binding: allow placeholders from all sources inside the module.
     # Backward compatibility: legacy templates may not persist `source_module` yet.
-    # If the template targets Marki sources (bills/receipt_bills), default to Marki module behavior.
-    if normalized_module in ("", "marki") and normalized_source in ("", "bills", "receipt_bills"):
-        source_types.update({"bills", "receipt_bills"})
+    # If the template targets Marki sources, default to Marki module behavior.
+    if normalized_module in ("", "marki") and normalized_source in ("", "bills", "receipt_bills", "deposit_records"):
+        source_types.update({"bills", "receipt_bills", "deposit_records"})
 
     # Always keep backward compatible behavior based on source_type.
     if normalized_source in ("", "bills"):
@@ -4063,6 +4305,12 @@ def _build_allowed_placeholders(source_type: Optional[str], source_module: Optio
         allowed.update({f"{module_prefix}.receipt_bills.{name}" for name in receipt_fields})
         # Backward compatible module prefix.
         allowed.update({f"marki.receipt_bills.{name}" for name in receipt_fields})
+    if "deposit_records" in source_types:
+        deposit_fields = _build_deposit_records_fields()
+        allowed.update(deposit_fields)
+        allowed.update({f"deposit_records.{name}" for name in deposit_fields})
+        allowed.update({f"{module_prefix}.deposit_records.{name}" for name in deposit_fields})
+        allowed.update({f"marki.deposit_records.{name}" for name in deposit_fields})
     return allowed
 
 
@@ -4159,6 +4407,62 @@ def _validate_dimension_mapping_json(
     return normalized_mapping
 
 
+_TRIGGER_RELATION_RESOLVERS: Dict[str, Dict[str, Any]] = {
+    "receipt_to_bills": {
+        "root_sources": {"receipt_bills"},
+        "target_source": "bills",
+    },
+    "receipt_to_deposit_collect": {
+        "root_sources": {"receipt_bills"},
+        "target_source": "deposit_records",
+    },
+    "receipt_to_deposit_refund": {
+        "root_sources": {"receipt_bills"},
+        "target_source": "deposit_records",
+    },
+}
+
+
+def _build_allowed_source_fields_for_type(source_type: Optional[str], module_prefix: str = "marki") -> Set[str]:
+    normalized_source = (source_type or "").strip().lower()
+    if not normalized_source:
+        normalized_source = "bills"
+
+    base_fields = _build_source_fields(normalized_source)
+    allowed_fields = set(base_fields)
+    allowed_fields.update({f"{normalized_source}.{name}" for name in base_fields})
+    allowed_fields.update({f"{module_prefix}.{normalized_source}.{name}" for name in base_fields})
+    if module_prefix != "marki":
+        allowed_fields.update({f"marki.{normalized_source}.{name}" for name in base_fields})
+    return allowed_fields
+
+
+def _normalize_relation_group(node: Dict[str, Any]) -> Dict[str, Any]:
+    children = node.get("children")
+    if isinstance(children, list):
+        return {
+            "logic": str(node.get("logic", "AND")).upper(),
+            "children": children,
+        }
+
+    where = node.get("where")
+    if isinstance(where, dict):
+        if str(where.get("type", "group")) == "group":
+            return {
+                "logic": str(where.get("logic", "AND")).upper(),
+                "children": where.get("children", []),
+            }
+        return {
+            "logic": "AND",
+            "children": [where],
+        }
+
+    return {
+        "logic": str(node.get("logic", "AND")).upper(),
+        "children": [],
+    }
+
+
 def _validate_trigger_condition(
     trigger_condition: Optional[str],
     source_type: Optional[str],
@@ -4179,10 +4483,10 @@ def _validate_trigger_condition(
         errors.append("trigger_condition must be a JSON object")
         return
 
-    normalized_source = (source_type or "").strip().lower()
-    enforce_field_check = normalized_source in ("", "bills", "receipt_bills")
+    normalized_source = (source_type or "").strip().lower() or "bills"
+    enforce_field_check = normalized_source in ("bills", "receipt_bills", "deposit_records")
 
-    def walk(node: Any, path: str) -> None:
+    def walk(node: Any, path: str, current_source: str, current_fields: Set[str]) -> None:
         if not isinstance(node, dict):
             errors.append(f"{path} must be a JSON object")
             return
@@ -4197,15 +4501,15 @@ def _validate_trigger_condition(
                 errors.append(f"{path}.children must be an array")
                 return
             for idx, child in enumerate(children):
-                walk(child, f"{path}.children[{idx}]")
+                walk(child, f"{path}.children[{idx}]", current_source, current_fields)
             return
 
         if node_type == "rule":
             field_name = str(node.get("field", "")).strip()
             if not field_name:
                 errors.append(f"{path}.field is required")
-            elif enforce_field_check and field_name not in allowed_fields:
-                errors.append(f"{path}.field is not a supported field for source_type={normalized_source or 'bills'}: {field_name}")
+            elif enforce_field_check and field_name not in current_fields:
+                errors.append(f"{path}.field is not a supported field for source_type={current_source}: {field_name}")
 
             raw_operator = node.get("operator", "==")
             operator = _canonicalize_trigger_operator(raw_operator)
@@ -4216,9 +4520,46 @@ def _validate_trigger_condition(
             _validate_unknown_functions(node.get("value", ""), f"{path}.value", errors)
             return
 
-        errors.append(f"{path}.type must be group or rule")
+        if node_type == "relation":
+            resolver = str(node.get("resolver", "")).strip()
+            target_source = str(node.get("target_source", "")).strip().lower()
+            quantifier = str(node.get("quantifier", "EXISTS")).upper()
+            relation_meta = _TRIGGER_RELATION_RESOLVERS.get(resolver)
 
-    walk(root, "trigger_condition")
+            if current_source != "receipt_bills":
+                errors.append(f"{path}.relation is only supported when current source is receipt_bills")
+
+            if quantifier not in {"EXISTS", "NOT_EXISTS"}:
+                errors.append(f"{path}.quantifier must be EXISTS or NOT_EXISTS")
+
+            if not relation_meta:
+                errors.append(f"{path}.resolver is not supported: {resolver or '<empty>'}")
+                expected_target = target_source
+            else:
+                expected_target = str(relation_meta["target_source"])
+                if current_source not in relation_meta["root_sources"]:
+                    errors.append(f"{path}.resolver {resolver} is not supported under source_type={current_source}")
+
+            if not target_source:
+                errors.append(f"{path}.target_source is required")
+            elif expected_target and target_source != expected_target:
+                errors.append(f"{path}.target_source must be {expected_target} for resolver={resolver}")
+
+            relation_group = _normalize_relation_group(node)
+            if relation_group["logic"] not in {"AND", "OR"}:
+                errors.append(f"{path}.logic must be AND or OR")
+            if not isinstance(relation_group["children"], list):
+                errors.append(f"{path}.children must be an array")
+                return
+
+            relation_fields = _build_allowed_source_fields_for_type(expected_target or target_source)
+            for idx, child in enumerate(relation_group["children"]):
+                walk(child, f"{path}.children[{idx}]", expected_target or target_source or current_source, relation_fields)
+            return
+
+        errors.append(f"{path}.type must be group, rule or relation")
+
+    walk(root, "trigger_condition", normalized_source, allowed_fields)
 
 
 def _validate_voucher_template_payload(payload: Dict[str, Any], db: Session) -> None:
@@ -4237,18 +4578,7 @@ def _validate_voucher_template_payload(payload: Dict[str, Any], db: Session) -> 
     source_module = payload.get("source_module")
     allowed_placeholders = _build_allowed_placeholders(source_type, source_module, db)
     normalized_source = (source_type or "").strip().lower()
-    if normalized_source in ("", "bills"):
-        base_fields = _build_bills_fields()
-        allowed_source_fields = set(base_fields)
-        allowed_source_fields.update({f"bills.{name}" for name in base_fields})
-        allowed_source_fields.update({f"marki.bills.{name}" for name in base_fields})
-    elif normalized_source in ("receipt_bills",):
-        base_fields = _build_receipt_bills_fields()
-        allowed_source_fields = set(base_fields)
-        allowed_source_fields.update({f"receipt_bills.{name}" for name in base_fields})
-        allowed_source_fields.update({f"marki.receipt_bills.{name}" for name in base_fields})
-    else:
-        allowed_source_fields = set()
+    allowed_source_fields = _build_allowed_source_fields_for_type(normalized_source or "bills")
 
     _validate_unknown_placeholders(payload.get("book_number_expr"), "book_number_expr", allowed_placeholders, errors)
     _validate_unknown_placeholders(payload.get("vouchertype_number_expr"), "vouchertype_number_expr", allowed_placeholders, errors)
@@ -4508,6 +4838,489 @@ def resolve_voucher_fields(
     enriched = enrich_bill_data(bill_data, db)
     
     return {"enriched_data": enriched}
+
+
+def _build_preview_user_context(
+    current_user: models.User,
+    x_account_book_id: Optional[str],
+    x_account_book_name: Optional[str],
+    x_account_book_number: Optional[str],
+) -> Dict[str, str]:
+    from urllib.parse import unquote
+
+    org_name = current_user.organization.name if current_user.organization else "未分配"
+    return {
+        "current_user_id": str(current_user.id),
+        "current_username": current_user.username,
+        "current_user_realname": current_user.real_name or current_user.username,
+        "current_org_id": str(current_user.org_id) if current_user.org_id else "",
+        "current_org_name": org_name,
+        "current_account_book_id": unquote(x_account_book_id) if x_account_book_id else "",
+        "current_account_book_name": unquote(x_account_book_name) if x_account_book_name else "",
+        "current_account_book_number": unquote(x_account_book_number) if x_account_book_number else "",
+    }
+
+
+def _collect_receipt_source_bills(
+    db: Session,
+    receipt_bill_id: int,
+    community_id: int,
+    account_book_number: Optional[str],
+) -> List[Dict[str, Any]]:
+    related_map = _get_related_bill_refs_for_receipts(
+        db,
+        [{"receipt_bill_id": int(receipt_bill_id), "community_id": int(community_id)}],
+    )
+    refs = related_map.get((int(receipt_bill_id), int(community_id)), [])
+    if not refs:
+        return []
+    source_status_map = _get_bill_push_status_map(
+        db,
+        refs,
+        account_book_number=account_book_number,
+    )
+    return [source_status_map[(ref["bill_id"], ref["community_id"])] for ref in refs]
+
+
+@app.post("/api/vouchers/preview-receipt/{receipt_bill_id}")
+def preview_voucher_for_receipt(
+    receipt_bill_id: int,
+    community_id: int = Query(..., description="Marki community ID"),
+    x_account_book_id: Optional[str] = Header(None, alias="X-Account-Book-Id"),
+    x_account_book_name: Optional[str] = Header(None, alias="X-Account-Book-Name"),
+    x_account_book_number: Optional[str] = Header(None, alias="X-Account-Book-Number"),
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    allowed_community_ids: List[int] = Depends(get_allowed_community_ids),
+):
+    from services.voucher_engine import evaluate_expression
+    from utils.variable_parser import build_variable_map, resolve_variables
+    import json as json_mod
+
+    if allowed_community_ids and int(community_id) not in set(allowed_community_ids):
+        raise HTTPException(status_code=403, detail="Unauthorized community")
+
+    receipt_bill = (
+        db.query(models.ReceiptBill)
+        .options(selectinload(models.ReceiptBill.users))
+        .filter(
+            models.ReceiptBill.id == int(receipt_bill_id),
+            models.ReceiptBill.community_id == int(community_id),
+        )
+        .first()
+    )
+    if not receipt_bill:
+        raise HTTPException(status_code=404, detail="Receipt bill not found")
+
+    normalized_account_book_number = _decode_header_value(x_account_book_number) or None
+    source_bills = _collect_receipt_source_bills(
+        db,
+        receipt_bill_id=int(receipt_bill.id),
+        community_id=int(receipt_bill.community_id),
+        account_book_number=normalized_account_book_number,
+    )
+    source_bill_push_summary = _summarize_bill_push_statuses(source_bills)
+    push_conflicts = _find_bill_push_conflicts(source_bills)
+    push_blocked = len(push_conflicts) > 0
+    push_block_reason = None
+    if push_blocked:
+        conflict_preview = ", ".join(
+            [f"{item['community_id']}:{item['bill_id']}({item['push_status_label']})" for item in push_conflicts[:10]]
+        )
+        push_block_reason = f"Related bills already have voucher push records: {conflict_preview}"
+
+    receipt_data = _serialize_receipt_bill_model(receipt_bill, db)
+    enriched = _enrich_receipt_bill_data(receipt_data)
+
+    user_context = _build_preview_user_context(
+        current_user,
+        x_account_book_id=x_account_book_id,
+        x_account_book_name=x_account_book_name,
+        x_account_book_number=x_account_book_number,
+    )
+    runtime_vars = build_variable_map(db, user_context=user_context)
+
+    templates = db.query(models.VoucherTemplate).filter(
+        models.VoucherTemplate.active == True,
+        models.VoucherTemplate.source_type == "receipt_bills",
+    ).order_by(
+        models.VoucherTemplate.priority.asc(),
+        models.VoucherTemplate.template_id.asc(),
+    ).all()
+
+    matched_template = None
+    matched_selected_records: Dict[str, Dict[str, Any]] = {}
+    all_debug_logs = {}
+
+    conditional_templates = [t for t in templates if t.trigger_condition]
+    fallback_templates = [t for t in templates if not t.trigger_condition]
+
+    for tmpl in conditional_templates:
+        try:
+            conditions = json_mod.loads(tmpl.trigger_condition)
+            debug_logs = []
+            relation_eval_ctx = {
+                "db": db,
+                "receipt_bill": receipt_bill,
+                "cache": {},
+                "selected_records": {},
+            }
+            if _check_trigger_conditions(conditions, enriched, debug_logs, runtime_vars, relation_eval_ctx):
+                matched_template = tmpl
+                matched_selected_records = dict(relation_eval_ctx.get("selected_records") or {})
+                break
+            all_debug_logs[tmpl.template_name] = debug_logs
+        except (json_mod.JSONDecodeError, Exception) as e:
+            all_debug_logs[tmpl.template_name] = [f"JSON Parse Error: {e}"]
+            continue
+
+    if not matched_template and fallback_templates:
+        matched_template = fallback_templates[0]
+
+    if not matched_template:
+        if source_bills:
+            return preview_voucher_for_bills(
+                payload=schemas.BatchVoucherPreviewRequest(
+                    bills=[schemas.BillPreviewRef(bill_id=int(item["bill_id"]), community_id=int(item["community_id"])) for item in source_bills]
+                ),
+                x_account_book_id=x_account_book_id,
+                x_account_book_name=x_account_book_name,
+                x_account_book_number=x_account_book_number,
+                current_user=current_user,
+                db=db,
+                allowed_community_ids=allowed_community_ids,
+            )
+
+        return {
+            "matched": False,
+            "message": "No applicable voucher template matched",
+            "receipt_summary": {
+                "id": receipt_bill.id,
+                "community_id": receipt_bill.community_id,
+                "receipt_id": receipt_bill.receipt_id,
+                "deal_type": receipt_bill.deal_type,
+                "deal_type_label": RECEIPT_BILL_DEAL_TYPE_LABELS.get(receipt_bill.deal_type, "其他"),
+                "income_amount": _json_number(receipt_bill.income_amount),
+                "amount": _json_number(receipt_bill.amount),
+                "asset_name": receipt_bill.asset_name,
+            },
+            "receipt_data": enriched,
+            "templates_checked": len(templates),
+            "debug_logs": all_debug_logs,
+            "selected_bills": source_bills,
+            "selected_bill_push_summary": source_bill_push_summary,
+            "source_bills": source_bills,
+            "source_bill_push_summary": source_bill_push_summary,
+            "push_blocked": push_blocked,
+            "push_block_reason": push_block_reason,
+        }
+
+    expression_context = dict(enriched)
+    for record in matched_selected_records.values():
+        for key, value in (record or {}).items():
+            if isinstance(key, str) and "." in key:
+                expression_context[key] = value
+
+    def resolve_expr(expr: Optional[str]) -> str:
+        resolved_with_globals = resolve_variables(expr or "", db, preloaded_vars=runtime_vars)
+        return evaluate_expression(resolved_with_globals, expression_context)
+
+    now = datetime.now()
+    book_number = resolve_expr(matched_template.book_number_expr or "'BU-35256'")
+    vouchertype_number = resolve_expr(matched_template.vouchertype_number_expr or "'0001'")
+    attachment = resolve_expr(matched_template.attachment_expr or "0")
+    biz_date = resolve_expr(matched_template.bizdate_expr or "{CURRENT_DATE}") or now.strftime("%Y-%m-%d")
+    booked_date = resolve_expr(matched_template.bookeddate_expr or "{CURRENT_DATE}") or biz_date
+    period_number = biz_date[:7].replace("-", "") if len(biz_date) >= 7 else now.strftime("%Y%m")
+
+    accounting_entries = []
+    kingdee_entries = []
+    subject_names_cache = {}
+    subject_type_cache = {}
+
+    for rule in sorted(matched_template.rules, key=lambda r: r.line_no):
+        summary = resolve_expr(rule.summary_expr)
+        account_code = resolve_expr(rule.account_code)
+        amount_str = resolve_expr(rule.amount_expr)
+        currency = resolve_expr(rule.currency_expr or "'CNY'")
+        localrate = resolve_expr(rule.localrate_expr or "1")
+
+        account_display_name = account_code
+        if account_code:
+            if account_code not in subject_names_cache:
+                subj = db.query(models.AccountingSubject).filter(models.AccountingSubject.number == account_code).first()
+                if subj:
+                    subject_names_cache[account_code] = subj.fullname or subj.name
+                    subject_type_cache[account_code] = subj.account_type_number or ""
+                else:
+                    subject_names_cache[account_code] = account_code
+                    subject_type_cache[account_code] = ""
+
+            fullname = subject_names_cache[account_code]
+            if fullname != account_code:
+                account_display_name = f"{account_code} {fullname}"
+
+        amount_val = _try_parse_decimal(amount_str) or Decimal("0")
+        localrate_val = _try_parse_decimal(localrate) or Decimal("1")
+
+        assgrp = {}
+        if rule.aux_items:
+            try:
+                aux_obj = json_mod.loads(rule.aux_items)
+                for dim_key, dim_config in aux_obj.items():
+                    assgrp[dim_key] = {}
+                    for prop, expr in dim_config.items():
+                        assgrp[dim_key][prop] = resolve_expr(str(expr))
+            except (json_mod.JSONDecodeError, Exception):
+                pass
+
+        maincfassgrp = {}
+        if rule.main_cf_assgrp:
+            try:
+                mcf_obj = json_mod.loads(rule.main_cf_assgrp)
+                for dim_key, dim_config in mcf_obj.items():
+                    maincfassgrp[dim_key] = {}
+                    for prop, expr in dim_config.items():
+                        maincfassgrp[dim_key][prop] = resolve_expr(str(expr))
+            except (json_mod.JSONDecodeError, Exception):
+                pass
+
+        accounting_entries.append({
+            "line_no": rule.line_no,
+            "summary": summary,
+            "account_code": account_code,
+            "account_name": subject_names_cache.get(account_code, ""),
+            "account_type_number": subject_type_cache.get(account_code, ""),
+            "account_display": account_display_name,
+            "dr_cr": rule.dr_cr,
+            "debit": _json_number(amount_val) if rule.dr_cr == "D" else 0.0,
+            "credit": _json_number(amount_val) if rule.dr_cr == "C" else 0.0,
+            "currency": currency,
+            "localrate": _json_number(localrate_val),
+            "assgrp": assgrp if assgrp else None,
+            "maincfassgrp": maincfassgrp if maincfassgrp else None,
+        })
+
+        kd_entry = {
+            "seq": rule.line_no,
+            "edescription": summary,
+            "account_number": account_code,
+            "currency_number": currency,
+            "localrate": _json_number(localrate_val),
+            "debitori": _json_number(amount_val) if rule.dr_cr == "D" else 0.0,
+            "creditori": 0.0 if rule.dr_cr == "D" else _json_number(amount_val),
+            "debitlocal": _json_number(amount_val) if rule.dr_cr == "D" else 0.0,
+            "creditlocal": 0.0 if rule.dr_cr == "D" else _json_number(amount_val),
+        }
+        if assgrp:
+            kd_entry["assgrp"] = assgrp
+        if maincfassgrp:
+            kd_entry["maincfassgrp"] = maincfassgrp
+        kingdee_entries.append(kd_entry)
+
+    total_debit = sum((_try_parse_decimal(e.get("debit")) or Decimal("0")) for e in accounting_entries)
+    total_credit = sum((_try_parse_decimal(e.get("credit")) or Decimal("0")) for e in accounting_entries)
+
+    kingdee_json = {
+        "data": [{
+            "book_number": book_number,
+            "bizdate": biz_date,
+            "bookeddate": booked_date,
+            "period_number": period_number,
+            "vouchertype_number": vouchertype_number,
+            "description": (matched_template.template_name or matched_template.template_id or "UnnamedTemplate"),
+            "attachment": parse_attachment_count(attachment),
+            "entries": kingdee_entries,
+        }]
+    }
+
+    return {
+        "matched": True,
+        "template_id": matched_template.template_id,
+        "template_name": matched_template.template_name,
+        "receipt_summary": {
+            "id": receipt_bill.id,
+            "community_id": receipt_bill.community_id,
+            "receipt_id": receipt_bill.receipt_id,
+            "deal_type": receipt_bill.deal_type,
+            "deal_type_label": RECEIPT_BILL_DEAL_TYPE_LABELS.get(receipt_bill.deal_type, "其他"),
+            "income_amount": _json_number(receipt_bill.income_amount),
+            "amount": _json_number(receipt_bill.amount),
+            "asset_name": receipt_bill.asset_name,
+        },
+        "matched_relation_sources": sorted(matched_selected_records.keys()),
+        "accounting_view": {
+            "entries": accounting_entries,
+            "total_debit": _json_number(total_debit),
+            "total_credit": _json_number(total_credit),
+            "is_balanced": abs(total_debit - total_credit) < Decimal("0.01"),
+        },
+        "kingdee_json": kingdee_json,
+        "selected_bills": source_bills,
+        "selected_bill_push_summary": source_bill_push_summary,
+        "source_bills": source_bills,
+        "source_bill_push_summary": source_bill_push_summary,
+        "push_blocked": push_blocked,
+        "push_block_reason": push_block_reason,
+    }
+
+
+@app.post("/api/vouchers/preview-receipts")
+def preview_voucher_for_receipts(
+    payload: schemas.BatchReceiptVoucherPreviewRequest,
+    x_account_book_id: Optional[str] = Header(None, alias="X-Account-Book-Id"),
+    x_account_book_name: Optional[str] = Header(None, alias="X-Account-Book-Name"),
+    x_account_book_number: Optional[str] = Header(None, alias="X-Account-Book-Number"),
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    allowed_community_ids: List[int] = Depends(get_allowed_community_ids),
+):
+    if not payload.receipts:
+        raise HTTPException(status_code=400, detail="No receipts selected")
+
+    unique_refs = _normalize_receipt_refs(payload.receipts)
+    if not allowed_community_ids:
+        raise HTTPException(status_code=403, detail="No authorized communities for this account book")
+
+    allowed_set = set(allowed_community_ids)
+    unauthorized = [r for r in unique_refs if int(r["community_id"]) not in allowed_set]
+    if unauthorized:
+        bad = ", ".join([f"{r['community_id']}:{r['receipt_bill_id']}" for r in unauthorized[:10]])
+        raise HTTPException(status_code=403, detail=f"Unauthorized receipt communities: {bad}")
+
+    previews: List[Dict[str, Any]] = []
+    skipped_bills: List[Dict[str, Any]] = []
+
+    for ref in unique_refs:
+        try:
+            result = preview_voucher_for_receipt(
+                receipt_bill_id=int(ref["receipt_bill_id"]),
+                community_id=int(ref["community_id"]),
+                x_account_book_id=x_account_book_id,
+                x_account_book_name=x_account_book_name,
+                x_account_book_number=x_account_book_number,
+                current_user=current_user,
+                db=db,
+                allowed_community_ids=allowed_community_ids,
+            )
+            if not result.get("matched"):
+                skipped_bills.append({
+                    "bill_id": int(ref["receipt_bill_id"]),
+                    "community_id": int(ref["community_id"]),
+                    "reason": "template not matched",
+                })
+                continue
+            previews.append(result)
+        except HTTPException as exc:
+            skipped_bills.append({
+                "bill_id": int(ref["receipt_bill_id"]),
+                "community_id": int(ref["community_id"]),
+                "reason": exc.detail if isinstance(exc.detail, str) else str(exc.detail),
+            })
+
+    if not previews:
+        details = "; ".join([f"{b['community_id']}:{b['bill_id']} -> {b['reason']}" for b in skipped_bills[:20]])
+        raise HTTPException(
+            status_code=400,
+            detail=("No vouchers could be generated" + (f": {details}" if details else "")),
+        )
+
+    first_preview = previews[0]
+    first_header = ((first_preview.get("kingdee_json") or {}).get("data") or [{}])[0]
+    header_keys = ["book_number", "bookeddate", "period_number", "vouchertype_number"]
+    merged_bizdates = [str(first_header.get("bizdate") or "").strip()]
+
+    header_compatible_previews: List[Dict[str, Any]] = [first_preview]
+    for preview in previews[1:]:
+        header = ((preview.get("kingdee_json") or {}).get("data") or [{}])[0]
+        incompatible_keys = [k for k in header_keys if first_header.get(k) != header.get(k)]
+        if incompatible_keys:
+            summary = preview.get("receipt_summary") or {}
+            skipped_bills.append({
+                "bill_id": int(summary.get("id") or 0),
+                "community_id": int(summary.get("community_id") or 0),
+                "reason": f"inconsistent voucher header ({', '.join(incompatible_keys)}); skipped from merge",
+            })
+            continue
+        merged_bizdates.append(str(header.get("bizdate") or "").strip())
+        header_compatible_previews.append(preview)
+
+    previews = header_compatible_previews
+    merged_bizdate = max([d for d in merged_bizdates if d], default=str(first_header.get("bizdate") or ""))
+
+    source_bills: List[Dict[str, Any]] = []
+    seen_source_keys = set()
+    for preview in previews:
+        for source_bill in preview.get("source_bills") or []:
+            key = (int(source_bill.get("bill_id") or 0), int(source_bill.get("community_id") or 0))
+            if key in seen_source_keys:
+                continue
+            seen_source_keys.add(key)
+            source_bills.append(source_bill)
+
+    source_bill_push_summary = _summarize_bill_push_statuses(source_bills)
+    push_conflicts = _find_bill_push_conflicts(source_bills)
+    push_blocked = len(push_conflicts) > 0
+    push_block_reason = None
+    if push_blocked:
+        conflict_preview = ", ".join(
+            [f"{item['community_id']}:{item['bill_id']}({item['push_status_label']})" for item in push_conflicts[:10]]
+        )
+        push_block_reason = f"Selected source bills already have pushed or pushing voucher records: {conflict_preview}"
+
+    merged_entries: List[Dict[str, Any]] = []
+    merged_accounting_entries: List[Dict[str, Any]] = []
+    seq = 1
+    for preview in previews:
+        kd_header = ((preview.get("kingdee_json") or {}).get("data") or [{}])[0]
+        for entry in kd_header.get("entries") or []:
+            item = dict(entry)
+            item["seq"] = seq
+            merged_entries.append(item)
+            seq += 1
+
+        for entry in (preview.get("accounting_view") or {}).get("entries") or []:
+            item = dict(entry)
+            item["line_no"] = len(merged_accounting_entries) + 1
+            merged_accounting_entries.append(item)
+
+    total_debit = sum((_try_parse_decimal(e.get("debit")) or Decimal("0")) for e in merged_accounting_entries)
+    total_credit = sum((_try_parse_decimal(e.get("credit")) or Decimal("0")) for e in merged_accounting_entries)
+    merged_template_ids = sorted({str(p.get("template_id") or "") for p in previews if p.get("template_id")})
+    template_name = first_preview.get("template_name") or first_preview.get("template_id") or "BatchMerged"
+    merged_kingdee_json = {
+        "data": [{
+            "book_number": first_header.get("book_number"),
+            "bizdate": merged_bizdate,
+            "bookeddate": first_header.get("bookeddate"),
+            "period_number": first_header.get("period_number"),
+            "vouchertype_number": first_header.get("vouchertype_number"),
+            "description": template_name,
+            "attachment": first_header.get("attachment", 0),
+            "entries": merged_entries,
+        }]
+    }
+
+    return {
+        "matched": True,
+        "partial_matched": len(skipped_bills) > 0,
+        "matched_bills": len(previews),
+        "skipped_bills": skipped_bills,
+        "template_id": first_preview.get("template_id"),
+        "template_name": first_preview.get("template_name"),
+        "template_ids": merged_template_ids,
+        "source_bills": source_bills,
+        "source_bill_push_summary": source_bill_push_summary,
+        "push_blocked": push_blocked,
+        "push_block_reason": push_block_reason,
+        "accounting_view": {
+            "entries": merged_accounting_entries,
+            "total_debit": _json_number(total_debit),
+            "total_credit": _json_number(total_credit),
+            "is_balanced": abs(total_debit - total_credit) < Decimal("0.01"),
+        },
+        "kingdee_json": merged_kingdee_json,
+    }
 
 
 @app.post("/api/vouchers/preview-bill/{bill_id}")
@@ -5312,10 +6125,10 @@ def _check_trigger_conditions(
     node: dict,
     data: dict,
     debug_logs: list = None,
-    global_context: Optional[dict] = None
+    global_context: Optional[dict] = None,
+    relation_context: Optional[dict] = None,
 ) -> bool:
     """闁帒缍婂Λ鈧弻銉ㄐ曢崣鎴炴蒋娴犲墎绮ㄩ弸?"""
-    import re
     if debug_logs is None:
         debug_logs = []
     
@@ -5332,18 +6145,74 @@ def _check_trigger_conditions(
     try:
         node_type = node.get("type", "group")
         
-        if node_type == "group":
-            logic = node.get("logic", "AND")
+        if node_type in {"group", "relation"}:
+            if node_type == "relation":
+                resolver = str(node.get("resolver", "")).strip()
+                quantifier = str(node.get("quantifier", "EXISTS")).upper()
+                receipt_bill = (relation_context or {}).get("receipt_bill")
+                db = (relation_context or {}).get("db")
+                relation_cache = (relation_context or {}).setdefault("cache", {})
+                selected_records = (relation_context or {}).setdefault("selected_records", {})
+                relation_group = _normalize_relation_group(node)
+                logic = relation_group["logic"]
+                children = relation_group["children"]
+
+                if not db or receipt_bill is None:
+                    debug_logs.append(f"Relation resolver '{resolver}' is unavailable in current context")
+                    return False
+
+                cache_key = (
+                    resolver,
+                    int(getattr(receipt_bill, "id", 0) or 0),
+                    int(getattr(receipt_bill, "community_id", 0) or 0),
+                )
+                if cache_key not in relation_cache:
+                    relation_cache[cache_key] = _load_relation_records_for_receipt(db, receipt_bill, resolver)
+                records = relation_cache.get(cache_key, [])
+                matched_record = None
+
+                for idx, record in enumerate(records):
+                    nested_logs: List[str] = []
+                    record_globals = dict(global_context or {})
+                    record_globals.update(data)
+                    candidate = _check_trigger_conditions(
+                        {
+                            "type": "group",
+                            "logic": logic,
+                            "children": children,
+                        },
+                        record,
+                        nested_logs,
+                        record_globals,
+                        relation_context,
+                    )
+                    debug_logs.append(
+                        f"Relation resolver={resolver}, quantifier={quantifier}, candidate={idx + 1}/{len(records)}, match={candidate}"
+                    )
+                    debug_logs.extend([f"  {line}" for line in nested_logs])
+                    if candidate:
+                        matched_record = record
+                        break
+
+                matched = matched_record is not None
+                if matched and resolver in _TRIGGER_RELATION_RESOLVERS:
+                    selected_records[_TRIGGER_RELATION_RESOLVERS[resolver]["target_source"]] = matched_record
+
+                if quantifier == "NOT_EXISTS":
+                    return not matched
+                return matched
+
+            logic = str(node.get("logic", "AND")).upper()
             children = node.get("children", [])
             if not children:
                 return True
-            
+
             results = [
-                _check_trigger_conditions(c, data, debug_logs, global_context)
+                _check_trigger_conditions(c, data, debug_logs, global_context, relation_context)
                 for c in children
             ]
             return all(results) if logic == "AND" else any(results)
-            
+
         elif node_type == "rule":
             field = node.get("field", "")
             raw_operator = node.get("operator", "==")
