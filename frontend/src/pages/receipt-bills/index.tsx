@@ -412,6 +412,7 @@ const ReceiptDrilldownModal = ({
                                         columns={getDrilldownColumns(section) as any}
                                         data={(section.items || []) as any[]}
                                         loading={false}
+                                        tableId={`receipt-drilldown-${section.relation_key}`}
                                     />
                                 </div>
                             ))}
@@ -1593,7 +1594,7 @@ const ReceiptBills = () => {
             </div>
 
             <div className="table-area-wrapper">
-                <DataTable columns={columns} data={items} loading={isLoading} />
+                <DataTable columns={columns} data={items} loading={isLoading} tableId="receipt-bills-list" />
 
                 <div className="pagination-footer">
                     <div className="pagination-info" style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>

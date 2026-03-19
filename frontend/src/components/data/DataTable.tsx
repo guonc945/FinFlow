@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { ArrowUpDown, ArrowUp, ArrowDown, Settings2, GripVertical, Eye, EyeOff, ChevronUp, ChevronDown, RotateCcw } from 'lucide-react';
 import classNames from 'classnames';
+import { getMyTableColumnPreference, updateMyTableColumnPreference } from '../../services/api';
 import './DataTable.css';
 
 interface Column<T> {
@@ -11,6 +12,10 @@ interface Column<T> {
     width?: number | string;
     fixed?: 'left' | 'right';
     className?: string;
+    sortable?: boolean;
+    hideable?: boolean;
+    reorderable?: boolean;
+    displayLabel?: string;
 }
 
 interface DataTableProps<T> {
@@ -22,7 +27,56 @@ interface DataTableProps<T> {
     hoverable?: boolean;
     loading?: boolean;
     onRowClick?: (record: T) => void;
+    tableId?: string;
+    enableColumnSettings?: boolean;
 }
+
+interface StoredColumnSettings {
+    order: string[];
+    hidden: string[];
+}
+
+interface ManagedColumn<T> extends Column<T> {
+    normalizedKey: string;
+    label: string;
+    hideableResolved: boolean;
+    reorderableResolved: boolean;
+}
+
+const TABLE_COLUMN_SETTINGS_PREFIX = 'finflow:table-columns:';
+const DEFAULT_COLUMN_SETTINGS: StoredColumnSettings = { order: [], hidden: [] };
+
+const normalizeStoredSettings = (settings?: Partial<StoredColumnSettings> | null): StoredColumnSettings => ({
+    order: Array.isArray(settings?.order) ? Array.from(new Set(settings.order.map(String))) : [],
+    hidden: Array.isArray(settings?.hidden) ? Array.from(new Set(settings.hidden.map(String))) : [],
+});
+
+const hasStoredSettings = (settings: StoredColumnSettings) => settings.order.length > 0 || settings.hidden.length > 0;
+
+const readLocalSettings = (tableId: string): StoredColumnSettings => {
+    if (typeof window === 'undefined') return DEFAULT_COLUMN_SETTINGS;
+
+    try {
+        const raw = window.localStorage.getItem(`${TABLE_COLUMN_SETTINGS_PREFIX}${tableId}`);
+        if (!raw) {
+            return DEFAULT_COLUMN_SETTINGS;
+        }
+
+        return normalizeStoredSettings(JSON.parse(raw) as Partial<StoredColumnSettings>);
+    } catch {
+        return DEFAULT_COLUMN_SETTINGS;
+    }
+};
+
+const writeLocalSettings = (tableId: string, settings: StoredColumnSettings) => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(`${TABLE_COLUMN_SETTINGS_PREFIX}${tableId}`, JSON.stringify(settings));
+};
+
+const removeLocalSettings = (tableId: string) => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.removeItem(`${TABLE_COLUMN_SETTINGS_PREFIX}${tableId}`);
+};
 
 const DataTable = <T extends Record<string, any>>({
     columns,
@@ -32,11 +86,263 @@ const DataTable = <T extends Record<string, any>>({
     striped = true,
     hoverable = true,
     loading = false,
-    onRowClick
+    onRowClick,
+    tableId,
+    enableColumnSettings,
 }: DataTableProps<T>) => {
-    const [sortConfig, setSortConfig] = useState<{ key: keyof T; direction: 'asc' | 'desc' } | null>(null);
+    const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const [storedSettings, setStoredSettings] = useState<StoredColumnSettings>({ order: [], hidden: [] });
+    const [draggingColumnKey, setDraggingColumnKey] = useState<string | null>(null);
+    const [dragOverColumnKey, setDragOverColumnKey] = useState<string | null>(null);
+    const settingsRef = useRef<HTMLDivElement>(null);
+    const hasLocalSettingsChangeRef = useRef(false);
+    const settingsEnabled = (enableColumnSettings ?? Boolean(tableId)) && Boolean(tableId);
 
-    const handleSort = (key: keyof T) => {
+    const managedColumns = useMemo<ManagedColumn<T>[]>(() => columns.map((column) => {
+        const normalizedKey = String(column.key);
+        const isSelectionColumn = normalizedKey === '_selection';
+        const isActionColumn = normalizedKey === 'actions';
+        const isLocked = isSelectionColumn || isActionColumn;
+
+        return {
+            ...column,
+            normalizedKey,
+            label: column.displayLabel || (typeof column.title === 'string' ? column.title : normalizedKey),
+            sortable: column.sortable ?? !isLocked,
+            hideableResolved: column.hideable ?? !isLocked,
+            reorderableResolved: column.reorderable ?? !(isLocked || Boolean(column.fixed)),
+        };
+    }), [columns]);
+
+    const configurableColumns = useMemo(
+        () => managedColumns.filter((column) => column.hideableResolved || column.reorderableResolved),
+        [managedColumns]
+    );
+
+    useEffect(() => {
+        if (!settingsEnabled || !tableId || typeof window === 'undefined') {
+            setStoredSettings(DEFAULT_COLUMN_SETTINGS);
+            return;
+        }
+
+        const localSettings = readLocalSettings(tableId);
+        hasLocalSettingsChangeRef.current = false;
+        setStoredSettings(localSettings);
+
+        const token = window.localStorage.getItem('token');
+        if (!token) {
+            return;
+        }
+
+        let cancelled = false;
+
+        void getMyTableColumnPreference(tableId)
+            .then((serverPreference) => {
+                if (cancelled) return;
+                if (hasLocalSettingsChangeRef.current) return;
+
+                const serverSettings = normalizeStoredSettings(serverPreference);
+                const hasPersistedServerSettings = Boolean(serverPreference.updated_at);
+
+                if (hasPersistedServerSettings) {
+                    setStoredSettings(serverSettings);
+                    writeLocalSettings(tableId, serverSettings);
+                    return;
+                }
+
+                if (hasStoredSettings(localSettings)) {
+                    void updateMyTableColumnPreference(tableId, localSettings).catch(() => {
+                        console.warn(`Failed to migrate local table settings for ${tableId}`);
+                    });
+                }
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setStoredSettings(localSettings);
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [settingsEnabled, tableId]);
+
+    useEffect(() => {
+        if (!settingsOpen) return;
+
+        const handleOutsideClick = (event: MouseEvent) => {
+            if (!settingsRef.current?.contains(event.target as Node)) {
+                setSettingsOpen(false);
+            }
+        };
+
+        document.addEventListener('mousedown', handleOutsideClick);
+        return () => document.removeEventListener('mousedown', handleOutsideClick);
+    }, [settingsOpen]);
+
+    const persistSettings = (nextSettings: StoredColumnSettings) => {
+        const normalizedSettings = normalizeStoredSettings(nextSettings);
+        hasLocalSettingsChangeRef.current = true;
+        setStoredSettings(normalizedSettings);
+        if (!settingsEnabled || !tableId || typeof window === 'undefined') return;
+
+        writeLocalSettings(tableId, normalizedSettings);
+
+        const token = window.localStorage.getItem('token');
+        if (!token) return;
+
+        void updateMyTableColumnPreference(tableId, normalizedSettings).catch(() => {
+            console.warn(`Failed to save table settings for ${tableId}`);
+        });
+    };
+
+    const resetColumnSettings = () => {
+        const nextSettings = DEFAULT_COLUMN_SETTINGS;
+        hasLocalSettingsChangeRef.current = true;
+        setStoredSettings(nextSettings);
+        if (!settingsEnabled || !tableId || typeof window === 'undefined') return;
+
+        removeLocalSettings(tableId);
+
+        const token = window.localStorage.getItem('token');
+        if (!token) return;
+
+        void updateMyTableColumnPreference(tableId, nextSettings).catch(() => {
+            console.warn(`Failed to reset table settings for ${tableId}`);
+        });
+    };
+
+    const handleToggleColumn = (columnKey: string) => {
+        const hidden = new Set(storedSettings.hidden);
+        if (hidden.has(columnKey)) {
+            hidden.delete(columnKey);
+        } else {
+            hidden.add(columnKey);
+        }
+        persistSettings({ ...storedSettings, hidden: Array.from(hidden) });
+    };
+
+    const handleMoveColumn = (columnKey: string, direction: 'up' | 'down') => {
+        const reorderableKeys = managedColumns
+            .filter((column) => column.reorderableResolved)
+            .map((column) => column.normalizedKey);
+        const currentOrder = storedSettings.order.length
+            ? storedSettings.order.filter((key) => reorderableKeys.includes(key))
+            : reorderableKeys;
+        const completeOrder = [
+            ...currentOrder,
+            ...reorderableKeys.filter((key) => !currentOrder.includes(key)),
+        ];
+        const index = completeOrder.indexOf(columnKey);
+        if (index === -1) return;
+
+        const targetIndex = direction === 'up' ? index - 1 : index + 1;
+        if (targetIndex < 0 || targetIndex >= completeOrder.length) return;
+
+        const nextOrder = [...completeOrder];
+        [nextOrder[index], nextOrder[targetIndex]] = [nextOrder[targetIndex], nextOrder[index]];
+        persistSettings({ ...storedSettings, order: nextOrder });
+    };
+
+    const handleReorderColumn = (sourceKey: string, targetKey: string) => {
+        if (sourceKey === targetKey) return;
+
+        const reorderableKeys = managedColumns
+            .filter((column) => column.reorderableResolved)
+            .map((column) => column.normalizedKey);
+        const currentOrder = storedSettings.order.length
+            ? storedSettings.order.filter((key) => reorderableKeys.includes(key))
+            : reorderableKeys;
+        const completeOrder = [
+            ...currentOrder,
+            ...reorderableKeys.filter((key) => !currentOrder.includes(key)),
+        ];
+        const sourceIndex = completeOrder.indexOf(sourceKey);
+        const targetIndex = completeOrder.indexOf(targetKey);
+
+        if (sourceIndex === -1 || targetIndex === -1) return;
+
+        const nextOrder = [...completeOrder];
+        const [movedKey] = nextOrder.splice(sourceIndex, 1);
+        const insertIndex = sourceIndex < targetIndex ? targetIndex : targetIndex;
+        nextOrder.splice(insertIndex, 0, movedKey);
+        persistSettings({ ...storedSettings, order: nextOrder });
+    };
+
+    const handleDragStart = (columnKey: string) => {
+        setDraggingColumnKey(columnKey);
+        setDragOverColumnKey(columnKey);
+    };
+
+    const handleDragEnter = (columnKey: string) => {
+        if (!draggingColumnKey || draggingColumnKey === columnKey) return;
+        setDragOverColumnKey(columnKey);
+    };
+
+    const handleDragEnd = () => {
+        setDraggingColumnKey(null);
+        setDragOverColumnKey(null);
+    };
+
+    const handleDropColumn = (targetKey: string) => {
+        if (!draggingColumnKey) return;
+        handleReorderColumn(draggingColumnKey, targetKey);
+        setDraggingColumnKey(null);
+        setDragOverColumnKey(null);
+    };
+
+    const effectiveColumns = useMemo(() => {
+        const leftColumns = managedColumns.filter((column) => column.fixed === 'left' || column.normalizedKey === '_selection');
+        const rightColumns = managedColumns.filter((column) => column.fixed === 'right' || column.normalizedKey === 'actions');
+        const middleColumns = managedColumns.filter((column) => !leftColumns.includes(column) && !rightColumns.includes(column));
+
+        const reorderableKeys = middleColumns
+            .filter((column) => column.reorderableResolved)
+            .map((column) => column.normalizedKey);
+        const savedOrder = storedSettings.order.filter((key) => reorderableKeys.includes(key));
+        const finalOrder = [
+            ...savedOrder,
+            ...reorderableKeys.filter((key) => !savedOrder.includes(key)),
+        ];
+        const orderMap = new Map(finalOrder.map((key, index) => [key, index]));
+        const hiddenKeys = new Set(storedSettings.hidden);
+
+        const orderedMiddleColumns = [...middleColumns].sort((a, b) => {
+            const aOrder = orderMap.get(a.normalizedKey);
+            const bOrder = orderMap.get(b.normalizedKey);
+            if (aOrder == null && bOrder == null) return 0;
+            if (aOrder == null) return 1;
+            if (bOrder == null) return -1;
+            return aOrder - bOrder;
+        });
+
+        const visibleMiddleColumns = orderedMiddleColumns.filter((column) => !column.hideableResolved || !hiddenKeys.has(column.normalizedKey));
+        return [...leftColumns, ...visibleMiddleColumns, ...rightColumns];
+    }, [managedColumns, storedSettings.hidden, storedSettings.order]);
+
+    const orderedConfigurableColumns = useMemo(() => {
+        const reorderableKeys = configurableColumns
+            .filter((column) => column.reorderableResolved)
+            .map((column) => column.normalizedKey);
+        const savedOrder = storedSettings.order.filter((key) => reorderableKeys.includes(key));
+        const finalOrder = [
+            ...savedOrder,
+            ...reorderableKeys.filter((key) => !savedOrder.includes(key)),
+        ];
+        const orderMap = new Map(finalOrder.map((key, index) => [key, index]));
+
+        return [...configurableColumns].sort((a, b) => {
+            const aOrder = orderMap.get(a.normalizedKey);
+            const bOrder = orderMap.get(b.normalizedKey);
+            if (aOrder == null && bOrder == null) return 0;
+            if (aOrder == null) return 1;
+            if (bOrder == null) return -1;
+            return aOrder - bOrder;
+        });
+    }, [configurableColumns, storedSettings.order]);
+
+    const handleSort = (key: string) => {
         let direction: 'asc' | 'desc' = 'asc';
         if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') {
             direction = 'desc';
@@ -48,18 +354,21 @@ const DataTable = <T extends Record<string, any>>({
         if (!sortConfig) return data;
 
         return [...data].sort((a, b) => {
-            if (a[sortConfig.key] < b[sortConfig.key]) {
+            const aValue = a[sortConfig.key as keyof T];
+            const bValue = b[sortConfig.key as keyof T];
+            if (aValue < bValue) {
                 return sortConfig.direction === 'asc' ? -1 : 1;
             }
-            if (a[sortConfig.key] > b[sortConfig.key]) {
+            if (aValue > bValue) {
                 return sortConfig.direction === 'asc' ? 1 : -1;
             }
             return 0;
         });
     }, [data, sortConfig]);
 
-    const getSortIcon = (columnKey: keyof T) => {
-        if (!sortConfig || sortConfig.key !== columnKey) {
+    const getSortIcon = (column: ManagedColumn<T>) => {
+        if (column.sortable === false) return null;
+        if (!sortConfig || sortConfig.key !== column.normalizedKey) {
             return <ArrowUpDown size={14} className="sort-icon inactive" />;
         }
         return sortConfig.direction === 'asc'
@@ -73,21 +382,121 @@ const DataTable = <T extends Record<string, any>>({
 
     return (
         <div className="data-table-wrapper glass">
-            {title && <div className="table-header"><h3>{title}</h3></div>}
+            {(title || (settingsEnabled && configurableColumns.length > 0)) && (
+                <div className="table-toolbar">
+                    {title ? <div className="table-header"><h3>{title}</h3></div> : <div />}
+                    {settingsEnabled && configurableColumns.length > 0 && (
+                        <div className="table-settings" ref={settingsRef}>
+                            <button
+                                type="button"
+                                className={classNames('table-settings-btn', { active: settingsOpen })}
+                                onClick={() => setSettingsOpen((open) => !open)}
+                            >
+                                <Settings2 size={15} />
+                                <span>列设置</span>
+                            </button>
+                            {settingsOpen && (
+                                <div className="table-settings-panel">
+                                    <div className="table-settings-panel-header">
+                                        <div>
+                                            <strong>表格列配置</strong>
+                                            <div className="table-settings-subtitle">勾选控制显示，使用上下按钮调整顺序</div>
+                                        </div>
+                                        <button type="button" className="table-settings-reset" onClick={resetColumnSettings}>
+                                            <RotateCcw size={14} />
+                                            <span>重置</span>
+                                        </button>
+                                    </div>
+                                    <div className="table-settings-list">
+                                        {orderedConfigurableColumns.map((column, index) => {
+                                            const isHidden = storedSettings.hidden.includes(column.normalizedKey);
+                                            const canMoveUp = column.reorderableResolved && index > 0;
+                                            const canMoveDown = column.reorderableResolved && index < orderedConfigurableColumns.length - 1;
+
+                                            return (
+                                                <div
+                                                    key={column.normalizedKey}
+                                                    className={classNames('table-settings-item', {
+                                                        'is-dragging': draggingColumnKey === column.normalizedKey,
+                                                        'is-drag-over': dragOverColumnKey === column.normalizedKey && draggingColumnKey !== column.normalizedKey,
+                                                        'is-reorderable': column.reorderableResolved,
+                                                    })}
+                                                    onDragOver={(event) => {
+                                                        if (!column.reorderableResolved || !draggingColumnKey) return;
+                                                        event.preventDefault();
+                                                        event.dataTransfer.dropEffect = 'move';
+                                                    }}
+                                                    onDragEnter={() => column.reorderableResolved && handleDragEnter(column.normalizedKey)}
+                                                    onDrop={(event) => {
+                                                        if (!column.reorderableResolved) return;
+                                                        event.preventDefault();
+                                                        handleDropColumn(column.normalizedKey);
+                                                    }}
+                                                >
+                                                    <button
+                                                        type="button"
+                                                        className={classNames('table-settings-visibility', { active: !isHidden, disabled: !column.hideableResolved })}
+                                                        onClick={() => column.hideableResolved && handleToggleColumn(column.normalizedKey)}
+                                                        disabled={!column.hideableResolved}
+                                                        title={column.hideableResolved ? (isHidden ? '显示列' : '隐藏列') : '该列不可隐藏'}
+                                                    >
+                                                        {isHidden ? <EyeOff size={14} /> : <Eye size={14} />}
+                                                    </button>
+                                                    <div
+                                                        className={classNames('table-settings-item-label', { draggable: column.reorderableResolved })}
+                                                        draggable={column.reorderableResolved}
+                                                        onDragStart={() => column.reorderableResolved && handleDragStart(column.normalizedKey)}
+                                                        onDragEnd={handleDragEnd}
+                                                        title={column.reorderableResolved ? '拖动调整顺序' : undefined}
+                                                    >
+                                                        <GripVertical size={14} className="table-settings-grip" />
+                                                        <span>{column.label}</span>
+                                                    </div>
+                                                    <div className="table-settings-order">
+                                                        <button
+                                                            type="button"
+                                                            className="table-settings-order-btn"
+                                                            onClick={() => handleMoveColumn(column.normalizedKey, 'up')}
+                                                            disabled={!canMoveUp}
+                                                            title="上移"
+                                                        >
+                                                            <ChevronUp size={14} />
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            className="table-settings-order-btn"
+                                                            onClick={() => handleMoveColumn(column.normalizedKey, 'down')}
+                                                            disabled={!canMoveDown}
+                                                            title="下移"
+                                                        >
+                                                            <ChevronDown size={14} />
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
             <div className="table-container">
                 <table className={classNames('modern-table', { 'table-striped': striped, 'table-hover': hoverable })}>
                     {showHeader && (
                         <thead>
                             <tr>
-                                {columns.map((column) => (
+                                {effectiveColumns.map((column) => (
                                     <th
-                                        key={String(column.key)}
-                                        onClick={() => handleSort(column.key)}
+                                        key={column.normalizedKey}
+                                        onClick={() => column.sortable !== false && handleSort(column.normalizedKey)}
                                         style={{ width: column.width }}
                                         className={classNames(
                                             'sortable-header',
                                             column.className,
                                             {
+                                                'is-not-sortable': column.sortable === false,
                                                 'dt-sticky-left': column.fixed === 'left',
                                                 'dt-sticky-right': column.fixed === 'right',
                                             }
@@ -95,7 +504,7 @@ const DataTable = <T extends Record<string, any>>({
                                     >
                                         <div className="th-content">
                                             {column.title}
-                                            {getSortIcon(column.key)}
+                                            {getSortIcon(column)}
                                         </div>
                                     </th>
                                 ))}
@@ -110,9 +519,9 @@ const DataTable = <T extends Record<string, any>>({
                                     onClick={() => onRowClick && onRowClick(row)}
                                     className={classNames({ 'clickable-row': !!onRowClick })}
                                 >
-                                    {columns.map((column) => (
+                                    {effectiveColumns.map((column) => (
                                         <td
-                                            key={String(column.key)}
+                                            key={column.normalizedKey}
                                             className={classNames(
                                                 column.className,
                                                 {
@@ -122,8 +531,8 @@ const DataTable = <T extends Record<string, any>>({
                                             )}
                                         >
                                             {column.render
-                                                ? column.render(row[column.key], row, rowIndex)
-                                                : String(row[column.key] || '-')
+                                                ? column.render(row[column.key as keyof T], row, rowIndex)
+                                                : String(row[column.key as keyof T] ?? '-')
                                             }
                                         </td>
                                     ))}
@@ -131,7 +540,7 @@ const DataTable = <T extends Record<string, any>>({
                             ))
                         ) : (
                             <tr>
-                                <td colSpan={columns.length} className="empty-state">No Data Available</td>
+                                <td colSpan={effectiveColumns.length || 1} className="empty-state">No Data Available</td>
                             </tr>
                         )}
                     </tbody>

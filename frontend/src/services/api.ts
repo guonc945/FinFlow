@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { CashJournal, DepositRecord, PrepaymentRecord, PushResult, VoucherPreview, ChargeItem, House, Project, ReceiptBillDetail, Resident, BillVoucherPushStatus, ReceiptBill, VoucherSourceMetadataResponse } from '../types';
+import type { CashJournal, DepositRecord, PrepaymentRecord, PushResult, VoucherPreview, ChargeItem, House, Project, ReceiptBillDetail, Resident, BillVoucherPushStatus, ReceiptBill, VoucherSourceMetadataResponse, TableColumnPreference } from '../types';
 
 import { API_BASE_URL } from './apiBase';
 
@@ -138,6 +138,22 @@ export const getMe = async () => {
 
 export const getUserById = async (userId: number) => {
     const response = await axios.get(`${API_BASE_URL}/users/${userId}`);
+    return response.data;
+};
+
+export const getMyTableColumnPreference = async (tableId: string): Promise<TableColumnPreference> => {
+    const response = await axios.get<TableColumnPreference>(`${API_BASE_URL}/users/me/table-column-preferences/${encodeURIComponent(tableId)}`);
+    return response.data;
+};
+
+export const updateMyTableColumnPreference = async (
+    tableId: string,
+    data: { hidden: string[]; order: string[] }
+): Promise<TableColumnPreference> => {
+    const response = await axios.put<TableColumnPreference>(
+        `${API_BASE_URL}/users/me/table-column-preferences/${encodeURIComponent(tableId)}`,
+        data
+    );
     return response.data;
 };
 

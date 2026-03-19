@@ -838,7 +838,7 @@ const Bills = () => {
 
             {/* Table Area with Pagination */}
             <div className="table-area-wrapper">
-                <DataTable columns={columns} data={filteredBills} loading={isLoading} />
+                <DataTable columns={columns} data={filteredBills} loading={isLoading} tableId="bills-main-list" />
 
                 <div className="pagination-footer">
                     <div className="pagination-info" style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>

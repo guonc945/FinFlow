@@ -1119,7 +1119,7 @@ export default function Reports() {
                                 </div>
                                 <ReportChart rows={reportResult?.rows || []} chart={activeReportConfig.chart} />
                                 {reportResult ? (
-                                    <DataTable columns={dynamicColumns} data={reportResult.rows} />
+                                    <DataTable columns={dynamicColumns} data={reportResult.rows} tableId="reports-result-table" />
                                 ) : (
                                     <div className="empty-box">点击“运行报表”后，这里会展示图表和明细结果。</div>
                                 )}
@@ -1279,7 +1279,7 @@ export default function Reports() {
                         ) : datasetPreviewLoading ? (
                             <div className="preview-status loading">正在执行只读预览查询，请稍候...</div>
                         ) : datasetResult ? (
-                            <DataTable columns={dynamicColumns} data={datasetResult.rows} />
+                            <DataTable columns={dynamicColumns} data={datasetResult.rows} tableId="reports-dataset-preview-table" />
                         ) : (
                             <div className="empty-box">选择连接并编写 SQL 后，这里会自动显示预览结果。</div>
                         )}

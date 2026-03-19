@@ -254,6 +254,7 @@ const ChargeItems = () => {
                     columns={columns}
                     data={pagedItems}
                     loading={isLoading}
+                    tableId="charge-items-list"
                     title={
                         <div className="flex items-center justify-between w-full">
                             <span>收费项目列表</span>

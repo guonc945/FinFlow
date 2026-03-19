@@ -174,6 +174,7 @@ const Users = () => {
                 columns={columns}
                 data={users}
                 loading={isLoading}
+                tableId="users-list"
                 title="用户列表"
             />
 

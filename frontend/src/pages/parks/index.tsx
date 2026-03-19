@@ -457,6 +457,7 @@ const Parks = () => {
                     columns={columns}
                     data={filteredParks}
                     loading={isLoading}
+                    tableId="parks-list"
                     title={
                         <div className="flex items-center gap-2">
                             <Car size={18} className="text-primary" />

@@ -498,6 +498,7 @@ const Residents = () => {
                     columns={columns}
                     data={filteredResidents}
                     loading={isLoading}
+                    tableId="residents-list"
                     title={
                         <div className="flex items-center gap-2">
                             <Users size={18} className="text-primary" />

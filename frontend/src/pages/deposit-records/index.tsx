@@ -480,7 +480,7 @@ const DepositRecords = () => {
             </div>
 
             <div className="table-area-wrapper">
-                <DataTable columns={columns as any} data={items} loading={isLoading} />
+                <DataTable columns={columns as any} data={items} loading={isLoading} tableId="deposit-records-list" />
 
                 <div className="pagination-footer">
                     <div className="pagination-info" style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>

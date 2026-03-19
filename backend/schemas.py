@@ -134,6 +134,21 @@ class UserResponse(UserBase):
         from_attributes = True
 
 
+class UserTableColumnPreferenceUpdate(BaseModel):
+    hidden: List[str] = Field(default_factory=list)
+    order: List[str] = Field(default_factory=list)
+
+
+class UserTableColumnPreferenceResponse(BaseModel):
+    table_id: str
+    hidden: List[str] = Field(default_factory=list)
+    order: List[str] = Field(default_factory=list)
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
 # Bill Sync Request Schema
 class BillSyncRequest(BaseModel):
     community_ids: Optional[List[int]] = None

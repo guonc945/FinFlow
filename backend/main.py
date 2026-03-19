@@ -1499,6 +1499,39 @@ def get_current_user(request: Request, db: Session = Depends(get_db)):
     return user
 
 
+def _normalize_column_preference_items(values: Any) -> List[str]:
+    if not isinstance(values, list):
+        return []
+
+    normalized: List[str] = []
+    seen: Set[str] = set()
+    for value in values:
+        if value is None:
+            continue
+        key = str(value).strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        normalized.append(key)
+    return normalized
+
+
+def _deserialize_column_preference(raw_value: Optional[str]) -> List[str]:
+    if not raw_value:
+        return []
+
+    try:
+        parsed = json.loads(raw_value)
+    except (TypeError, ValueError):
+        return []
+
+    return _normalize_column_preference_items(parsed)
+
+
+def _serialize_column_preference(values: Any) -> str:
+    return json.dumps(_normalize_column_preference_items(values), ensure_ascii=False)
+
+
 def get_user_context(
     x_account_book_number: Optional[str] = Header(None, alias="X-Account-Book-Number"),
     x_account_book_name: Optional[str] = Header(None, alias="X-Account-Book-Name"),
@@ -3904,6 +3937,90 @@ def get_me(current_user: models.User = Depends(get_current_user)):
         "role": user.role,
         "account_books": account_books
     }
+
+
+@app.get(
+    "/api/users/me/table-column-preferences/{table_id}",
+    response_model=schemas.UserTableColumnPreferenceResponse,
+)
+def get_my_table_column_preference(
+    table_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    normalized_table_id = table_id.strip()
+    if not normalized_table_id:
+        raise HTTPException(status_code=400, detail="table_id is required")
+
+    preference = (
+        db.query(models.UserTableColumnPreference)
+        .filter(
+            models.UserTableColumnPreference.user_id == current_user.id,
+            models.UserTableColumnPreference.table_id == normalized_table_id,
+        )
+        .first()
+    )
+
+    if not preference:
+        return schemas.UserTableColumnPreferenceResponse(
+            table_id=normalized_table_id,
+            hidden=[],
+            order=[],
+            updated_at=None,
+        )
+
+    return schemas.UserTableColumnPreferenceResponse(
+        table_id=normalized_table_id,
+        hidden=_deserialize_column_preference(preference.hidden_columns),
+        order=_deserialize_column_preference(preference.column_order),
+        updated_at=preference.updated_at,
+    )
+
+
+@app.put(
+    "/api/users/me/table-column-preferences/{table_id}",
+    response_model=schemas.UserTableColumnPreferenceResponse,
+)
+def save_my_table_column_preference(
+    table_id: str,
+    payload: schemas.UserTableColumnPreferenceUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    normalized_table_id = table_id.strip()
+    if not normalized_table_id:
+        raise HTTPException(status_code=400, detail="table_id is required")
+
+    hidden = _normalize_column_preference_items(payload.hidden)
+    order = _normalize_column_preference_items(payload.order)
+
+    preference = (
+        db.query(models.UserTableColumnPreference)
+        .filter(
+            models.UserTableColumnPreference.user_id == current_user.id,
+            models.UserTableColumnPreference.table_id == normalized_table_id,
+        )
+        .first()
+    )
+
+    if not preference:
+        preference = models.UserTableColumnPreference(
+            user_id=current_user.id,
+            table_id=normalized_table_id,
+        )
+        db.add(preference)
+
+    preference.hidden_columns = _serialize_column_preference(hidden)
+    preference.column_order = _serialize_column_preference(order)
+    db.commit()
+    db.refresh(preference)
+
+    return schemas.UserTableColumnPreferenceResponse(
+        table_id=normalized_table_id,
+        hidden=hidden,
+        order=order,
+        updated_at=preference.updated_at,
+    )
 
 
 @app.get("/api/users")

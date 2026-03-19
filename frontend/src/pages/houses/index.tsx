@@ -493,6 +493,7 @@ const Houses = () => {
                     columns={columns}
                     data={pagedHouses}
                     loading={isLoading}
+                    tableId="houses-list"
                     title={
                         <div className="flex items-center gap-2">
                             <Home size={18} className="text-primary" />

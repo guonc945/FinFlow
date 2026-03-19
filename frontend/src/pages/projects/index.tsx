@@ -199,6 +199,7 @@ const Projects = () => {
                     columns={columns}
                     data={projects}
                     loading={isLoading}
+                    tableId="projects-list"
                     title={
                         <div className="flex items-center gap-2">
                             <span>园区档案列表</span>

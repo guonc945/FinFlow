@@ -115,6 +115,13 @@ export interface PushStatusSummary {
     failed: number;
 }
 
+export interface TableColumnPreference {
+    table_id: string;
+    hidden: string[];
+    order: string[];
+    updated_at?: string | null;
+}
+
 export interface ReceiptBillDrilldownSection {
     relation_key: string;
     source_type: 'bills' | 'deposit_records' | 'prepayment_records' | string;

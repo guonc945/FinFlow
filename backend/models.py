@@ -687,6 +687,23 @@ class User(Base):
     account_books = relationship("KingdeeAccountBook", secondary=user_account_books, backref="users")
 
 
+class UserTableColumnPreference(Base):
+    __tablename__ = "user_table_column_preferences"
+    __table_args__ = (
+        Index("ux_user_table_column_preferences_user_table", "user_id", "table_id", unique=True),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    table_id = Column(String(100), nullable=False)
+    hidden_columns = Column(Text, nullable=False, default="[]")
+    column_order = Column(Text, nullable=False, default="[]")
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    user = relationship("User")
+
+
 class ExternalService(Base):
     __tablename__ = "external_services"
 
