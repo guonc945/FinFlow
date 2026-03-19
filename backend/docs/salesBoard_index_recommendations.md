@@ -4,6 +4,26 @@
 
 这份建议用于支撑 `dbo.salesBoard` 视图查询，不直接执行 DDL，先供 DBA 或实施人员评估。
 
+## 实库核验结论
+
+- 当前连接库为 `hyoa`，版本为 SQL Server 2016 Standard SP2。
+- 库内目前不存在 `dbo.salesBoard` 视图。
+- 关键源表行数：
+  - `uf_fxxxb`: 13155
+  - `uf_rgxytz`: 10086
+  - `uf_qysptz`: 9538
+  - `uf_skjltz`: 18753
+  - `uf_skjltz_dt1`: 19024
+  - `uf_rgxytz_dt3`: 152
+  - `uf_tkjltz`: 784
+- `uf_rgxytz.fwbh` 的有效数据可全部映射到 `uf_fxxxb.id`，应按 `CONVERT(varchar(1000), fyxxb.id) = uf_rgxytz.fwbh` 关联。
+- `uf_qysptz.rgxybm` 与 `uf_rgxytz.id` 基本匹配，应按 `CONVERT(varchar(1000), uf_rgxytz.id) = uf_qysptz.rgxybm` 关联。
+- `uf_rgxytz.ytjehj` 在有效数据中仅出现正数和零，没有负数，说明退款字段更符合“正数退款额”语义。
+- 有效数据里存在重复业务键：
+  - `uf_rgxytz` 按 `fwbh` 重复 50 组
+  - `uf_qysptz` 按 `rgxybm` 重复 4 组
+- `uf_rgxytz`、`uf_qysptz` 没有原生 `datetime` 类型业务时间字段，当前用 `id DESC` 作为“最新记录”代理是可行的技术方案，但最好结合业务再确认。
+
 ## 优先级最高的索引方向
 
 1. `dbo.uf_rgxytz`

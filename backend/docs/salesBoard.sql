@@ -132,9 +132,9 @@ house_data AS (
         END AS wskje
     FROM dbo.uf_fxxxb AS fyxxb
     LEFT JOIN rgtz
-        ON fyxxb.id = rgtz.fwbh
+        ON CONVERT(varchar(1000), fyxxb.id) = rgtz.fwbh
     LEFT JOIN qytz
-        ON rgtz.id = qytz.rgxybm
+        ON CONVERT(varchar(1000), rgtz.id) = qytz.rgxybm
 ),
 base_data AS (
     SELECT
