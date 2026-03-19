@@ -5,14 +5,14 @@ import ConfirmModal from '../../components/common/ConfirmModal';
 import {
     Layers, FileText, Settings, Hash, Info, X, Sliders, ArrowUp, ArrowDown, AlertTriangle,
     Plus, Save, Trash2, ChevronLeft, Database, Copy, ChevronRight, ChevronDown, Search, LayoutGrid, List,
-    CheckSquare, Square, ToggleLeft, ToggleRight, Maximize2
+    CheckSquare, Square, ToggleLeft, ToggleRight
 } from 'lucide-react';
 import axios from 'axios';
 import ConditionBuilder from './ConditionBuilder';
 import AccountSelector from './AccountSelector';
 import type { AccountingSubject, VoucherFieldModule, VoucherRelationOption, VoucherSourceFieldOption } from '../../types';
 import SourceFieldPickerModal from './SourceFieldPickerModal';
-import ExpressionEditorModal from './ExpressionEditorModal';
+import ExpressionInputWithActions from './ExpressionInputWithActions';
 import './VoucherTemplates.css';
 
 import { API_BASE_URL } from '../../services/apiBase';
@@ -169,59 +169,6 @@ const normalizeSourceFields = (raw: any): SourceFieldOption[] => {
 };
 
 
-
-const ExpressionInputWithActions = ({
-    value,
-    onChange,
-    fieldModules,
-    useBraces = true,
-    size = 'normal',
-    placeholder,
-    className,
-    editorTitle = '编辑公式'
-}: {
-    value: string,
-    onChange: (val: string) => void,
-    fieldModules?: VoucherFieldModule[] | null,
-    useBraces?: boolean,
-    size?: 'normal' | 'mini',
-    placeholder?: string,
-    className?: string,
-    editorTitle?: string
-}) => {
-    const [editorOpen, setEditorOpen] = useState(false);
-
-    return (
-        <>
-            <div className={`expression-input-group ${size === 'mini' ? 'mini' : ''}`}>
-                <div className={`input-with-action ${size === 'mini' ? 'mini' : ''}`}>
-                    <input
-                        type="text"
-                        value={value}
-                        readOnly
-                        onClick={() => setEditorOpen(true)}
-                        placeholder={placeholder}
-                        className={`${className || ''} expression-preview-input`.trim()}
-                        title="打开公式编辑器"
-                    />
-                    <button type="button" onClick={() => setEditorOpen(true)} title="打开公式编辑器">
-                        <Maximize2 size={size === 'mini' ? 12 : 14} />
-                    </button>
-                </div>
-            </div>
-            <ExpressionEditorModal
-                open={editorOpen}
-                title={editorTitle}
-                value={value}
-                onClose={() => setEditorOpen(false)}
-                onSave={onChange}
-                fieldModules={fieldModules}
-                useBraces={useBraces}
-                placeholder={placeholder}
-            />
-        </>
-    );
-};
 
 const DimensionFormEditor = ({
     value,

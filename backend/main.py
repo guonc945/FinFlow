@@ -7739,7 +7739,7 @@ def save_archive_types(types: List[dict], db: Session = Depends(get_db)):
         var = models.GlobalVariable(
             key="ARCHIVE_TYPE_REGISTRY", 
             value=val, 
-            description="Registry of archive types for API management",
+            description="归档类型注册表，用于维护归档接口管理中的归档类型清单",
             category="system"
         )
         db.add(var)
@@ -7779,10 +7779,11 @@ def save_archive_config(archive_key: str, config: dict, db: Session = Depends(ge
     if var:
         var.value = val
     else:
+        config_description = "会计科目同步配置，用于维护会计科目归档与同步所需的接口参数" if archive_key == "accounting-subjects" else "归档数据拉取配置"
         var = models.GlobalVariable(
             key=storage_key, 
             value=val, 
-            description=f"Configuration for fetching {archive_key} archives",
+            description=config_description,
             category="api_config"
         )
         db.add(var)

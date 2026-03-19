@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Building2, CheckSquare, Edit2, Eye, EyeOff, Hash, Plus, Save, Search, Square, Tag, Trash2, X } from 'lucide-react';
 import axios from 'axios';
 import { API_BASE_URL } from '../../services/apiBase';
+import { localizeVariableItem } from './variablePresentation';
 
 const COMMUNITY_VAR_KEY = 'MARKI_COMMUNITY_IDS';
 const DEAL_TIME_RANGE_VAR_KEY = 'MARKI_DEAL_TIME_RANGE';
@@ -41,7 +42,7 @@ const VariableManager = () => {
 
     const fetchVariables = async () => {
         const res = await axios.get(`${API_BASE_URL}/settings/variables`);
-        setVariables(res.data);
+        setVariables((res.data || []).map(localizeVariableItem));
     };
 
     const fetchProjects = async () => {

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import {
     Activity,
@@ -14,6 +15,7 @@ import {
 } from 'lucide-react';
 import axios from 'axios';
 import { API_BASE_URL } from '../../services/apiBase';
+import { localizeVariableItem } from './variablePresentation';
 import './VariablePicker.css';
 
 interface PickerItem {
@@ -34,31 +36,31 @@ interface VariablePickerProps {
 }
 
 const BUILT_IN_VARS: PickerItem[] = [
-    { id: 'b1', key: 'CURRENT_DATE', description: 'Current date (YYYY-MM-DD)', category: 'datetime' },
-    { id: 'b2', key: 'CURRENT_DATETIME', description: 'Current datetime (YYYY-MM-DD HH:mm:ss)', category: 'datetime' },
-    { id: 'b3', key: 'CURRENT_TIME', description: 'Current time (HH:mm:ss)', category: 'datetime' },
-    { id: 'b4', key: 'YESTERDAY', description: 'Yesterday', category: 'datetime' },
-    { id: 'b5', key: 'TOMORROW', description: 'Tomorrow', category: 'datetime' },
-    { id: 'b6', key: 'TIMESTAMP', description: 'Unix timestamp', category: 'datetime' },
-    { id: 'b7', key: 'YEAR', description: 'Current year', category: 'datetime' },
-    { id: 'b8', key: 'MONTH', description: 'Current month', category: 'datetime' },
-    { id: 'b9', key: 'DAY', description: 'Current day', category: 'datetime' },
-    { id: 'b10', key: 'YEAR_MONTH', description: 'Current year and month', category: 'datetime' },
-    { id: 's1', key: 'SYSTEM_VERSION', description: 'System version', category: 'system' },
-    { id: 's2', key: 'APP_ENV', description: 'Application environment', category: 'system' },
-    { id: 's3', key: 'BASE_PATH', description: 'Base API path', category: 'system' },
-    { id: 'r1', key: 'UUID', description: 'Random UUID v4', category: 'random' },
-    { id: 'r2', key: 'RANDOM_6', description: 'Random 6-digit number', category: 'random' },
-    { id: 'r3', key: 'NONCE', description: 'Random nonce string', category: 'random' },
-    { id: 'f1', key: 'CURRENCY', description: 'Default currency code', category: 'finance' },
-    { id: 'f2', key: 'DEFAULT_TAX', description: 'Default tax rate', category: 'finance' },
-    { id: 'u1', key: 'CURRENT_ACCOUNT_BOOK_NUMBER', description: 'Current account book number', category: 'user' },
-    { id: 'u2', key: 'CURRENT_ACCOUNT_BOOK_NAME', description: 'Current account book name', category: 'user' },
-    { id: 'u3', key: 'CURRENT_USER_REALNAME', description: 'Current user real name', category: 'user' },
-    { id: 'u4', key: 'CURRENT_USERNAME', description: 'Current username', category: 'user' },
-    { id: 'u5', key: 'CURRENT_USER_ID', description: 'Current user ID', category: 'user' },
-    { id: 'u6', key: 'CURRENT_ORG_ID', description: 'Current organization ID', category: 'user' },
-    { id: 'u7', key: 'CURRENT_ORG_NAME', description: 'Current organization name', category: 'user' },
+    { id: 'b1', key: 'CURRENT_DATE', description: '当前日期，格式为 YYYY-MM-DD', category: 'datetime' },
+    { id: 'b2', key: 'CURRENT_DATETIME', description: '当前日期时间，格式为 YYYY-MM-DD HH:mm:ss', category: 'datetime' },
+    { id: 'b3', key: 'CURRENT_TIME', description: '当前时间，格式为 HH:mm:ss', category: 'datetime' },
+    { id: 'b4', key: 'YESTERDAY', description: '昨天的日期', category: 'datetime' },
+    { id: 'b5', key: 'TOMORROW', description: '明天的日期', category: 'datetime' },
+    { id: 'b6', key: 'TIMESTAMP', description: '当前 Unix 时间戳', category: 'datetime' },
+    { id: 'b7', key: 'YEAR', description: '当前年份', category: 'datetime' },
+    { id: 'b8', key: 'MONTH', description: '当前月份', category: 'datetime' },
+    { id: 'b9', key: 'DAY', description: '当前日期中的日', category: 'datetime' },
+    { id: 'b10', key: 'YEAR_MONTH', description: '当前年月', category: 'datetime' },
+    { id: 's1', key: 'SYSTEM_VERSION', description: '系统版本号', category: 'system' },
+    { id: 's2', key: 'APP_ENV', description: '应用运行环境', category: 'system' },
+    { id: 's3', key: 'BASE_PATH', description: '系统 API 基础路径', category: 'system' },
+    { id: 'r1', key: 'UUID', description: '随机生成的 UUID v4', category: 'random' },
+    { id: 'r2', key: 'RANDOM_6', description: '随机 6 位数字', category: 'random' },
+    { id: 'r3', key: 'NONCE', description: '随机 nonce 字符串', category: 'random' },
+    { id: 'f1', key: 'CURRENCY', description: '默认币别代码', category: 'finance' },
+    { id: 'f2', key: 'DEFAULT_TAX', description: '默认税率', category: 'finance' },
+    { id: 'u1', key: 'CURRENT_ACCOUNT_BOOK_NUMBER', description: '当前账套编号', category: 'user' },
+    { id: 'u2', key: 'CURRENT_ACCOUNT_BOOK_NAME', description: '当前账套名称', category: 'user' },
+    { id: 'u3', key: 'CURRENT_USER_REALNAME', description: '当前用户姓名', category: 'user' },
+    { id: 'u4', key: 'CURRENT_USERNAME', description: '当前用户名', category: 'user' },
+    { id: 'u5', key: 'CURRENT_USER_ID', description: '当前用户 ID', category: 'user' },
+    { id: 'u6', key: 'CURRENT_ORG_ID', description: '当前组织 ID', category: 'user' },
+    { id: 'u7', key: 'CURRENT_ORG_NAME', description: '当前组织名称', category: 'user' },
 ];
 
 type TabType = 'custom' | 'datetime' | 'system' | 'random' | 'finance' | 'user' | 'functions';
@@ -87,7 +89,7 @@ const VariablePicker = ({
 
         Promise.all(requests)
             .then(([varsRes, functionsRes]) => {
-                setDbVariables(varsRes.data || []);
+                setDbVariables((varsRes.data || []).map(localizeVariableItem));
                 setFunctions(includeFunctions ? (functionsRes?.data || []) : []);
             })
             .catch((err) => {
@@ -130,18 +132,32 @@ const VariablePicker = ({
         return () => document.removeEventListener('keydown', handleEsc);
     }, [isOpen, onClose]);
 
+    useEffect(() => {
+        if (!isOpen || typeof document === 'undefined') {
+            return;
+        }
+
+        const { body } = document;
+        const previousOverflow = body.style.overflow;
+        body.style.overflow = 'hidden';
+
+        return () => {
+            body.style.overflow = previousOverflow;
+        };
+    }, [isOpen]);
+
     const tabs = useMemo(() => {
         const baseTabs = [
-            { id: 'custom', label: 'Custom', icon: <Activity size={14} />, color: 'blue' },
-            { id: 'datetime', label: 'DateTime', icon: <Clock size={14} />, color: 'amber' },
-            { id: 'user', label: 'User', icon: <User size={14} />, color: 'violet' },
-            { id: 'system', label: 'System', icon: <ShieldCheck size={14} />, color: 'cyan' },
-            { id: 'random', label: 'Utility', icon: <Zap size={14} />, color: 'rose' },
-            { id: 'finance', label: 'Finance', icon: <Coins size={14} />, color: 'emerald' },
+            { id: 'custom', label: '自定义', icon: <Activity size={14} />, color: 'blue' },
+            { id: 'datetime', label: '日期时间', icon: <Clock size={14} />, color: 'amber' },
+            { id: 'user', label: '用户', icon: <User size={14} />, color: 'violet' },
+            { id: 'system', label: '系统', icon: <ShieldCheck size={14} />, color: 'cyan' },
+            { id: 'random', label: '工具', icon: <Zap size={14} />, color: 'rose' },
+            { id: 'finance', label: '财务', icon: <Coins size={14} />, color: 'emerald' },
         ] as Array<{ id: TabType; label: string; icon: ReactNode; color: string }>;
 
         if (includeFunctions) {
-            baseTabs.splice(1, 0, { id: 'functions', label: 'Functions', icon: <FunctionSquare size={14} />, color: 'indigo' });
+            baseTabs.splice(1, 0, { id: 'functions', label: '函数', icon: <FunctionSquare size={14} />, color: 'indigo' });
         }
 
         return baseTabs;
@@ -174,13 +190,17 @@ const VariablePicker = ({
         return null;
     }
 
-    return (
+    if (typeof document === 'undefined') {
+        return null;
+    }
+
+    return createPortal(
         <div className="ff-picker-overlay">
             <div ref={modalRef} className="ff-picker-modal glass-effect">
                 <aside className="ff-picker-sidebar">
                     <div className="sidebar-logo">
                         <Activity size={24} className="text-blue-500 animate-pulse" />
-                        <span>{includeFunctions ? 'Variables / Functions' : 'Variables'}</span>
+                        <span>{includeFunctions ? '变量 / 函数' : '变量'}</span>
                     </div>
 
                     <div className="sidebar-tabs">
@@ -205,11 +225,11 @@ const VariablePicker = ({
                 <main className="ff-picker-main">
                     <header className="ff-picker-header">
                         <div className="header-info">
-                            <h3 className="picker-title">{tabs.find(tab => tab.id === activeTab)?.label} Library</h3>
+                            <h3 className="picker-title">{tabs.find(tab => tab.id === activeTab)?.label}</h3>
                             <p className="picker-desc">
                                 {activeTab === 'functions'
-                                    ? 'Insert a built-in function template into the current editor.'
-                                    : 'Choose a variable and insert it into the current editor.'}
+                                    ? '选择一个内置函数模板并插入到当前编辑内容中。'
+                                    : '选择一个变量并插入到当前编辑内容中。'}
                             </p>
                         </div>
                         <button className="close-x-btn" onClick={onClose}>
@@ -222,7 +242,7 @@ const VariablePicker = ({
                             <Search size={18} className="search-glass" />
                             <input
                                 autoFocus
-                                placeholder={activeTab === 'functions' ? 'Search functions...' : 'Search variables...'}
+                                placeholder={activeTab === 'functions' ? '搜索函数...' : '搜索变量...'}
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
                             />
@@ -251,7 +271,7 @@ const VariablePicker = ({
                                                 <p className="var-pro-desc"><code>{item.syntax}</code></p>
                                             )}
                                             {activeTab === 'functions' && item.example && (
-                                                <p className="var-pro-desc">Example: <code>{item.example}</code></p>
+                                                <p className="var-pro-desc">示例：<code>{item.example}</code></p>
                                             )}
                                         </div>
                                         <div className="var-pro-arrow">
@@ -262,7 +282,7 @@ const VariablePicker = ({
                             ) : (
                                 <div className="no-data-state">
                                     <div className="no-data-icon"><Search size={40} /></div>
-                                    <p>No matching items found.</p>
+                                    <p>未找到匹配项。</p>
                                 </div>
                             )}
                         </div>
@@ -273,14 +293,15 @@ const VariablePicker = ({
                             <ShieldCheck size={14} className="text-emerald-500" />
                             <span>
                                 {activeTab === 'functions'
-                                    ? <>Functions are inserted as templates so you can keep editing parameters right away.</>
-                                    : <>Variables are inserted as <b>{`{key}`}</b> and will be resolved at runtime.</>}
+                                    ? <>函数会以模板形式插入，方便你继续补充或调整参数。</>
+                                    : <>变量会以 <b>{`{key}`}</b> 的形式插入，并在运行时解析。</>}
                             </span>
                         </div>
                     </footer>
                 </main>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 };
 

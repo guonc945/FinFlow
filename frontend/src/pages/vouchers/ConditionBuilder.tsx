@@ -5,7 +5,6 @@ import {
     ChevronRight,
     Database,
     GripVertical,
-    Hash,
     Layers,
     Plus,
     Redo2,
@@ -14,9 +13,9 @@ import {
     Undo2,
     X,
 } from 'lucide-react';
-import VariablePicker from '../settings/VariablePicker';
 import SourceFieldPickerModal from './SourceFieldPickerModal';
 import type { VoucherFieldModule, VoucherRelationOption, VoucherSourceFieldOption } from '../../types';
+import ExpressionInputWithActions from './ExpressionInputWithActions';
 import './ConditionBuilder.css';
 
 type ExpressionFunctionOption = {
@@ -142,8 +141,6 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({
         logic: 'AND',
         children: [],
     });
-    const [variablePickerOpen, setVariablePickerOpen] = useState(false);
-    const [targetConditionId, setTargetConditionId] = useState<string | null>(null);
     const [dragState, setDragState] = useState<DragState | null>(null);
     const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
     const [collapsedGroupIds, setCollapsedGroupIds] = useState<string[]>([]);
@@ -965,40 +962,14 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({
                         ))}
                     </select>
                     <div className="rule-value-group">
-                        <div className="input-with-action mini">
-                            <input
-                                type="text"
-                                value={node.value}
-                                onChange={(event) => updateNode(node.id, { value: event.target.value })}
-                                placeholder="值（支持变量和数据源字段）"
-                                className="rule-value"
-                            />
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setTargetConditionId(node.id);
-                                    setVariablePickerOpen(true);
-                                }}
-                                title="插入变量"
-                            >
-                                <Hash size={12} />
-                            </button>
-                            {fieldModules && fieldModules.length > 0 && (
-                                <div className="cb-field-combo" title="选择数据源字段">
-                                    <button
-                                        type="button"
-                                        className="cb-field-trigger"
-                                        onClick={() => {
-                                            setSourceFieldPickerTarget({ mode: 'value', nodeId: node.id, sourceType: activeSourceType });
-                                            setSourceFieldPickerOpen(true);
-                                        }}
-                                        title="选择数据源字段"
-                                    >
-                                        <Database size={12} />
-                                    </button>
-                                </div>
-                            )}
-                        </div>
+                        <ExpressionInputWithActions
+                            size="mini"
+                            value={node.value}
+                            onChange={(val) => updateNode(node.id, { value: val })}
+                            fieldModules={filterModulesForSourceType(activeSourceType)}
+                            placeholder="值（支持变量、函数和数据源字段）"
+                            editorTitle="编辑触发条件值"
+                        />
                     </div>
                 </div>
                 <button onClick={() => removeNode(node.id)} className="action-btn remove-rule" type="button">
@@ -1011,19 +982,6 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({
     return (
         <div ref={builderRef} className={`condition-builder ${dragState ? 'drag-active' : ''}`}>
             {renderNode(root)}
-            <VariablePicker
-                isOpen={variablePickerOpen}
-                onClose={() => setVariablePickerOpen(false)}
-                includeFunctions
-                onSelect={(variable) => {
-                    if (!targetConditionId) return;
-                    const node = findNode(root, targetConditionId);
-                    const prevValue = node && node.type === 'rule' ? (node.value || '') : '';
-                    const insertText = variable?.insert_text || (variable?.key ? `{${variable.key}}` : String(variable || ''));
-                    updateNode(targetConditionId, { value: prevValue + insertText });
-                    setTargetConditionId(null);
-                }}
-            />
             {fieldModules && fieldModules.length > 0 && (
                 <SourceFieldPickerModal
                     open={sourceFieldPickerOpen}

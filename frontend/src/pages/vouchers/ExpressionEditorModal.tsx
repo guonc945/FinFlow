@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Database, Hash, Maximize2, Save, X } from 'lucide-react';
 import VariablePicker from '../settings/VariablePicker';
 import SourceFieldPickerModal from './SourceFieldPickerModal';
@@ -36,6 +37,20 @@ const ExpressionEditorModal = ({
         }
     }, [open, value]);
 
+    useEffect(() => {
+        if (!open || typeof document === 'undefined') {
+            return;
+        }
+
+        const { body } = document;
+        const previousOverflow = body.style.overflow;
+        body.style.overflow = 'hidden';
+
+        return () => {
+            body.style.overflow = previousOverflow;
+        };
+    }, [open]);
+
     const insertAtCursor = (insertText: string) => {
         const textarea = textareaRef.current;
         const currentText = draft || '';
@@ -61,7 +76,11 @@ const ExpressionEditorModal = ({
         return null;
     }
 
-    return (
+    if (typeof document === 'undefined') {
+        return null;
+    }
+
+    return createPortal(
         <>
             <div className="expression-editor-overlay" onClick={onClose}>
                 <div className="expression-editor-modal" onClick={e => e.stopPropagation()}>
@@ -142,6 +161,8 @@ const ExpressionEditorModal = ({
                 }}
             />
         </>
+        ,
+        document.body
     );
 };
 
