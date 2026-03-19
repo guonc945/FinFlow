@@ -549,6 +549,41 @@ class PrepaymentRecord(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
+class ReceiptBillDepositRefundLink(Base):
+    __tablename__ = "receipt_bill_deposit_refund_links"
+
+    id = Column(Integer, primary_key=True, index=True)
+    receipt_bill_id = Column(BigInteger, nullable=False, index=True)
+    community_id = Column(Integer, nullable=False, index=True)
+    deposit_record_id = Column(BigInteger, nullable=False, index=True)
+    prepayment_record_id = Column(BigInteger, index=True)
+    link_type = Column(String(50), nullable=False, index=True)
+    match_rule = Column(String(100))
+    match_confidence = Column(Float, default=0)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["receipt_bill_id", "community_id"],
+            ["receipt_bills.id", "receipt_bills.community_id"],
+            ondelete="CASCADE",
+        ),
+        Index(
+            "udx_receipt_bill_deposit_refund_links_receipt",
+            "receipt_bill_id",
+            "community_id",
+            unique=True,
+        ),
+        Index(
+            "ix_receipt_bill_deposit_refund_links_lookup",
+            "community_id",
+            "link_type",
+            "deposit_record_id",
+        ),
+    )
+
+
 class BillVoucherPushRecord(Base):
     __tablename__ = "bill_voucher_push_records"
 

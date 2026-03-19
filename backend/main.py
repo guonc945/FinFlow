@@ -642,6 +642,151 @@ def _enrich_prepayment_record_data(record_data: Dict[str, Any]) -> Dict[str, Any
     return mapping_enrich_source_data("prepayment_records", record_data)
 
 
+RECEIPT_DEPOSIT_REFUND_LINK_TYPE_LABELS = {
+    "actual_refund": "实际退款",
+    "transfer_to_prepayment": "转预存",
+    "mixed": "混合",
+    "unmatched": "未匹配",
+}
+
+
+def _load_receipt_deposit_refund_links(
+    db: Session,
+    receipt_bill: models.ReceiptBill,
+) -> List[models.ReceiptBillDepositRefundLink]:
+    return (
+        db.query(models.ReceiptBillDepositRefundLink)
+        .filter(
+            models.ReceiptBillDepositRefundLink.receipt_bill_id == int(receipt_bill.id),
+            models.ReceiptBillDepositRefundLink.community_id == int(receipt_bill.community_id),
+        )
+        .order_by(models.ReceiptBillDepositRefundLink.id.asc())
+        .all()
+    )
+
+
+def _serialize_receipt_deposit_refund_link_model(
+    link: models.ReceiptBillDepositRefundLink,
+) -> Dict[str, Any]:
+    data = {
+        "id": link.id,
+        "receipt_bill_id": link.receipt_bill_id,
+        "community_id": link.community_id,
+        "deposit_record_id": link.deposit_record_id,
+        "prepayment_record_id": link.prepayment_record_id,
+        "link_type": link.link_type,
+        "link_type_label": RECEIPT_DEPOSIT_REFUND_LINK_TYPE_LABELS.get(link.link_type, "其他"),
+        "match_rule": link.match_rule,
+        "match_confidence": link.match_confidence,
+        "created_at": link.created_at,
+        "updated_at": link.updated_at,
+    }
+    return {key: _jsonify_scalar(value) for key, value in data.items()}
+
+
+def _build_receipt_deposit_refund_link_summary(
+    links: List[models.ReceiptBillDepositRefundLink],
+) -> Dict[str, Any]:
+    if not links:
+        return {
+            "matched": False,
+            "link_count": 0,
+            "link_type": "unmatched",
+            "link_type_label": RECEIPT_DEPOSIT_REFUND_LINK_TYPE_LABELS["unmatched"],
+            "match_rule": None,
+            "match_confidence": None,
+        }
+
+    unique_types = {str(link.link_type or "").strip() for link in links if link.link_type}
+    if len(unique_types) == 1:
+        link_type = next(iter(unique_types))
+    else:
+        link_type = "mixed"
+
+    confidences = [float(link.match_confidence) for link in links if link.match_confidence is not None]
+    summary_rule = links[0].match_rule if len({link.match_rule for link in links}) == 1 else "multiple_rules"
+
+    return {
+        "matched": True,
+        "link_count": len(links),
+        "link_type": link_type,
+        "link_type_label": RECEIPT_DEPOSIT_REFUND_LINK_TYPE_LABELS.get(link_type, "其他"),
+        "match_rule": summary_rule,
+        "match_confidence": round(max(confidences), 4) if confidences else None,
+    }
+
+
+def _load_deposit_records_by_link_ids(
+    db: Session,
+    links: List[models.ReceiptBillDepositRefundLink],
+) -> List[models.DepositRecord]:
+    deposit_ids = [int(link.deposit_record_id) for link in links if link.deposit_record_id is not None]
+    if not deposit_ids:
+        return []
+
+    rows = db.query(models.DepositRecord).filter(models.DepositRecord.id.in_(deposit_ids)).all()
+    by_id = {int(row.id): row for row in rows}
+    return [by_id[deposit_id] for deposit_id in deposit_ids if deposit_id in by_id]
+
+
+def _load_prepayment_records_by_link_ids(
+    db: Session,
+    links: List[models.ReceiptBillDepositRefundLink],
+) -> List[models.PrepaymentRecord]:
+    prepayment_ids = [int(link.prepayment_record_id) for link in links if link.prepayment_record_id is not None]
+    if not prepayment_ids:
+        return []
+
+    rows = db.query(models.PrepaymentRecord).filter(models.PrepaymentRecord.id.in_(prepayment_ids)).all()
+    by_id = {int(row.id): row for row in rows}
+    return [by_id[prepayment_id] for prepayment_id in prepayment_ids if prepayment_id in by_id]
+
+
+def _load_direct_receipt_deposit_refund_relation(
+    db: Session,
+    receipt_bill: models.ReceiptBill,
+) -> List[models.DepositRecord]:
+    if receipt_bill.asset_id is None or receipt_bill.deal_time is None:
+        return []
+
+    return (
+        db.query(models.DepositRecord)
+        .filter(
+            models.DepositRecord.community_id == int(receipt_bill.community_id),
+            models.DepositRecord.house_id == int(receipt_bill.asset_id),
+            models.DepositRecord.pay_time == int(receipt_bill.deal_time),
+            models.DepositRecord.operate_type == 2,
+        )
+        .order_by(models.DepositRecord.id.asc())
+        .all()
+    )
+
+
+def _load_direct_receipt_transfer_prepayment_relation(
+    db: Session,
+    receipt_bill: models.ReceiptBill,
+) -> List[models.PrepaymentRecord]:
+    if receipt_bill.asset_id is None or receipt_bill.deal_time is None:
+        return []
+
+    return (
+        db.query(models.PrepaymentRecord)
+        .filter(
+            models.PrepaymentRecord.community_id == int(receipt_bill.community_id),
+            models.PrepaymentRecord.house_id == int(receipt_bill.asset_id),
+            models.PrepaymentRecord.pay_time == int(receipt_bill.deal_time),
+            models.PrepaymentRecord.operate_type == 1,
+            or_(
+                models.PrepaymentRecord.pay_channel_str.ilike("%押金转预存%"),
+                models.PrepaymentRecord.remark.ilike("%押金转入预存款%"),
+                models.PrepaymentRecord.remark.ilike("%押金转预存%"),
+            ),
+        )
+        .order_by(models.PrepaymentRecord.id.asc())
+        .all()
+    )
+
+
 def _load_receipt_to_bills_relation(
     db: Session,
     receipt_bill: models.ReceiptBill,
@@ -665,6 +810,21 @@ def _load_receipt_to_bills_relation(
     ]
 
 
+def _count_receipt_to_bills_relation(
+    db: Session,
+    receipt_bill: models.ReceiptBill,
+) -> int:
+    return int(
+        db.query(models.Bill)
+        .filter(
+            models.Bill.deal_log_id == int(receipt_bill.id),
+            models.Bill.community_id == int(receipt_bill.community_id),
+        )
+        .count()
+        or 0
+    )
+
+
 def _load_receipt_to_deposit_collect_relation(
     db: Session,
     receipt_bill: models.ReceiptBill,
@@ -682,55 +842,311 @@ def _load_receipt_to_deposit_collect_relation(
     return [_enrich_deposit_record_data(_serialize_deposit_record_model(record)) for record in records]
 
 
+def _count_receipt_to_deposit_collect_relation(
+    db: Session,
+    receipt_bill: models.ReceiptBill,
+) -> int:
+    return int(
+        db.query(models.DepositRecord)
+        .filter(
+            models.DepositRecord.community_id == int(receipt_bill.community_id),
+            models.DepositRecord.payment_id == int(receipt_bill.id),
+            models.DepositRecord.operate_type == 1,
+        )
+        .count()
+        or 0
+    )
+
+
 def _load_receipt_to_deposit_refund_relation(
     db: Session,
     receipt_bill: models.ReceiptBill,
 ) -> List[Dict[str, Any]]:
-    records = (
+    links = _load_receipt_deposit_refund_links(db, receipt_bill)
+    records = _load_deposit_records_by_link_ids(db, links)
+    if not records:
+        records = _load_direct_receipt_deposit_refund_relation(db, receipt_bill)
+    if not records:
+        records = (
+            db.query(models.DepositRecord)
+            .filter(
+                models.DepositRecord.community_id == int(receipt_bill.community_id),
+                models.DepositRecord.refund_receipt_id == int(receipt_bill.id),
+                models.DepositRecord.operate_type == 2,
+            )
+            .order_by(models.DepositRecord.id.asc())
+            .all()
+        )
+    return [_enrich_deposit_record_data(_serialize_deposit_record_model(record)) for record in records]
+
+
+def _count_receipt_to_deposit_refund_relation(
+    db: Session,
+    receipt_bill: models.ReceiptBill,
+) -> int:
+    links = _load_receipt_deposit_refund_links(db, receipt_bill)
+    if links:
+        return len([link for link in links if link.deposit_record_id is not None])
+
+    direct_count = int(
+        db.query(models.DepositRecord)
+        .filter(
+            models.DepositRecord.community_id == int(receipt_bill.community_id),
+            models.DepositRecord.house_id == int(receipt_bill.asset_id),
+            models.DepositRecord.pay_time == int(receipt_bill.deal_time),
+            models.DepositRecord.operate_type == 2,
+        )
+        .count()
+        or 0
+    ) if receipt_bill.asset_id is not None and receipt_bill.deal_time is not None else 0
+    if direct_count > 0:
+        return direct_count
+
+    return int(
         db.query(models.DepositRecord)
         .filter(
             models.DepositRecord.community_id == int(receipt_bill.community_id),
             models.DepositRecord.refund_receipt_id == int(receipt_bill.id),
             models.DepositRecord.operate_type == 2,
         )
-        .order_by(models.DepositRecord.id.asc())
-        .all()
+        .count()
+        or 0
     )
-    return [_enrich_deposit_record_data(_serialize_deposit_record_model(record)) for record in records]
 
 
 def _load_receipt_to_prepayment_recharge_relation(
     db: Session,
     receipt_bill: models.ReceiptBill,
 ) -> List[Dict[str, Any]]:
-    records = (
+    records: List[models.PrepaymentRecord] = []
+    if int(receipt_bill.deal_type or 0) == 6:
+        links = _load_receipt_deposit_refund_links(db, receipt_bill)
+        records = _load_prepayment_records_by_link_ids(db, links)
+        if not records:
+            records = _load_direct_receipt_transfer_prepayment_relation(db, receipt_bill)
+    else:
+        records = (
+            db.query(models.PrepaymentRecord)
+            .filter(
+                models.PrepaymentRecord.community_id == int(receipt_bill.community_id),
+                models.PrepaymentRecord.payment_id == int(receipt_bill.id),
+                models.PrepaymentRecord.operate_type == 1,
+            )
+            .order_by(models.PrepaymentRecord.id.asc())
+            .all()
+        )
+    return [_enrich_prepayment_record_data(_serialize_prepayment_record_model(record)) for record in records]
+
+
+def _count_receipt_to_prepayment_recharge_relation(
+    db: Session,
+    receipt_bill: models.ReceiptBill,
+) -> int:
+    return int(
         db.query(models.PrepaymentRecord)
         .filter(
             models.PrepaymentRecord.community_id == int(receipt_bill.community_id),
             models.PrepaymentRecord.payment_id == int(receipt_bill.id),
             models.PrepaymentRecord.operate_type == 1,
         )
-        .order_by(models.PrepaymentRecord.id.asc())
-        .all()
+        .count()
+        or 0
     )
-    return [_enrich_prepayment_record_data(_serialize_prepayment_record_model(record)) for record in records]
+
+
+def _count_direct_receipt_transfer_prepayment_relation(
+    db: Session,
+    receipt_bill: models.ReceiptBill,
+) -> int:
+    if receipt_bill.asset_id is None or receipt_bill.deal_time is None:
+        return 0
+
+    return int(
+        db.query(models.PrepaymentRecord)
+        .filter(
+            models.PrepaymentRecord.community_id == int(receipt_bill.community_id),
+            models.PrepaymentRecord.house_id == int(receipt_bill.asset_id),
+            models.PrepaymentRecord.pay_time == int(receipt_bill.deal_time),
+            models.PrepaymentRecord.operate_type == 1,
+            or_(
+                models.PrepaymentRecord.pay_channel_str.ilike("%押金转预存%"),
+                models.PrepaymentRecord.remark.ilike("%押金转入预存款%"),
+                models.PrepaymentRecord.remark.ilike("%押金转预存%"),
+            ),
+        )
+        .count()
+        or 0
+    )
 
 
 def _load_receipt_to_prepayment_refund_relation(
     db: Session,
     receipt_bill: models.ReceiptBill,
 ) -> List[Dict[str, Any]]:
-    records = (
+    records: List[models.PrepaymentRecord] = []
+    if receipt_bill.asset_id is not None and receipt_bill.deal_time is not None:
+        records = (
+            db.query(models.PrepaymentRecord)
+            .filter(
+                models.PrepaymentRecord.community_id == int(receipt_bill.community_id),
+                models.PrepaymentRecord.house_id == int(receipt_bill.asset_id),
+                models.PrepaymentRecord.pay_time == int(receipt_bill.deal_time),
+                models.PrepaymentRecord.operate_type == 2,
+            )
+            .order_by(models.PrepaymentRecord.id.asc())
+            .all()
+        )
+    if not records:
+        records = (
+            db.query(models.PrepaymentRecord)
+            .filter(
+                models.PrepaymentRecord.community_id == int(receipt_bill.community_id),
+                models.PrepaymentRecord.refund_receipt_id == int(receipt_bill.id),
+                models.PrepaymentRecord.operate_type == 2,
+            )
+            .order_by(models.PrepaymentRecord.id.asc())
+            .all()
+        )
+    return [_enrich_prepayment_record_data(_serialize_prepayment_record_model(record)) for record in records]
+
+
+def _count_receipt_to_prepayment_refund_relation(
+    db: Session,
+    receipt_bill: models.ReceiptBill,
+) -> int:
+    direct_count = int(
+        db.query(models.PrepaymentRecord)
+        .filter(
+            models.PrepaymentRecord.community_id == int(receipt_bill.community_id),
+            models.PrepaymentRecord.house_id == int(receipt_bill.asset_id),
+            models.PrepaymentRecord.pay_time == int(receipt_bill.deal_time),
+            models.PrepaymentRecord.operate_type == 2,
+        )
+        .count()
+        or 0
+    ) if receipt_bill.asset_id is not None and receipt_bill.deal_time is not None else 0
+    if direct_count > 0:
+        return direct_count
+
+    return int(
         db.query(models.PrepaymentRecord)
         .filter(
             models.PrepaymentRecord.community_id == int(receipt_bill.community_id),
             models.PrepaymentRecord.refund_receipt_id == int(receipt_bill.id),
             models.PrepaymentRecord.operate_type == 2,
         )
-        .order_by(models.PrepaymentRecord.id.asc())
-        .all()
+        .count()
+        or 0
     )
-    return [_enrich_prepayment_record_data(_serialize_prepayment_record_model(record)) for record in records]
+
+
+def _build_receipt_drilldown_meta(
+    db: Session,
+    receipt_bill: models.ReceiptBill,
+) -> Dict[str, Any]:
+    deal_type = int(receipt_bill.deal_type or 0)
+    sections: List[Dict[str, Any]] = []
+
+    if deal_type in {3, 4}:
+        bill_count = _count_receipt_to_bills_relation(db, receipt_bill)
+        sections.append({
+            "relation_key": "receipt_to_bills",
+            "source_type": "bills",
+            "label": "运营账单",
+            "count": bill_count,
+        })
+    elif deal_type == 5:
+        deposit_collect_count = _count_receipt_to_deposit_collect_relation(db, receipt_bill)
+        sections.append({
+            "relation_key": "receipt_to_deposit_collect",
+            "source_type": "deposit_records",
+            "label": "押金收取",
+            "count": deposit_collect_count,
+        })
+    elif deal_type == 6:
+        deposit_refund_count = _count_receipt_to_deposit_refund_relation(db, receipt_bill)
+        prepayment_transfer_count = _count_direct_receipt_transfer_prepayment_relation(db, receipt_bill)
+        sections.append({
+            "relation_key": "receipt_to_deposit_refund",
+            "source_type": "deposit_records",
+            "label": "押金退款",
+            "count": deposit_refund_count,
+        })
+        if prepayment_transfer_count > 0:
+            sections.append({
+                "relation_key": "receipt_to_prepayment_transfer",
+                "source_type": "prepayment_records",
+                "label": "转入预存",
+                "count": prepayment_transfer_count,
+            })
+    elif deal_type == 1:
+        prepayment_recharge_count = _count_receipt_to_prepayment_recharge_relation(db, receipt_bill)
+        sections.append({
+            "relation_key": "receipt_to_prepayment_recharge",
+            "source_type": "prepayment_records",
+            "label": "预存款充值",
+            "count": prepayment_recharge_count,
+        })
+    elif deal_type == 2:
+        prepayment_refund_count = _count_receipt_to_prepayment_refund_relation(db, receipt_bill)
+        sections.append({
+            "relation_key": "receipt_to_prepayment_refund",
+            "source_type": "prepayment_records",
+            "label": "预存款退款",
+            "count": prepayment_refund_count,
+        })
+
+    sections = [section for section in sections if int(section.get("count") or 0) > 0]
+    total_count = sum(int(section["count"]) for section in sections)
+    unique_sources = {section["source_type"] for section in sections}
+    primary_source = next(iter(unique_sources)) if len(unique_sources) == 1 and unique_sources else ("mixed" if unique_sources else None)
+    summary = " / ".join([f"{section['label']} {section['count']} 条" for section in sections]) if sections else "暂无关联数据"
+
+    return {
+        "drilldown_enabled": bool(sections),
+        "drilldown_source": primary_source,
+        "drilldown_count": total_count,
+        "drilldown_summary": summary,
+        "drilldown_sections": sections,
+        "supports_bill_push_ops": any(section["source_type"] == "bills" for section in sections),
+    }
+
+
+def _build_receipt_drilldown_sections(
+    receipt_bill: models.ReceiptBill,
+    related_bills: List[Dict[str, Any]],
+    related_deposit_collect: List[Dict[str, Any]],
+    related_deposit_refund: List[Dict[str, Any]],
+    related_prepayment_recharge: List[Dict[str, Any]],
+    related_prepayment_refund: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    deal_type = int(receipt_bill.deal_type or 0)
+    sections: List[Dict[str, Any]] = []
+
+    def _append_section(relation_key: str, source_type: str, label: str, items: List[Dict[str, Any]]):
+        if not items:
+            return
+        sections.append({
+            "relation_key": relation_key,
+            "source_type": source_type,
+            "label": label,
+            "count": len(items),
+            "items": items,
+        })
+
+    if deal_type in {3, 4}:
+        _append_section("receipt_to_bills", "bills", "运营账单", related_bills)
+    elif deal_type == 5:
+        _append_section("receipt_to_deposit_collect", "deposit_records", "押金收取", related_deposit_collect)
+    elif deal_type == 6:
+        _append_section("receipt_to_deposit_refund", "deposit_records", "押金退款", related_deposit_refund)
+        _append_section("receipt_to_prepayment_transfer", "prepayment_records", "转入预存", related_prepayment_recharge)
+    elif deal_type == 1:
+        _append_section("receipt_to_prepayment_recharge", "prepayment_records", "预存款充值", related_prepayment_recharge)
+    elif deal_type == 2:
+        _append_section("receipt_to_prepayment_refund", "prepayment_records", "预存款退款", related_prepayment_refund)
+
+    return sections
 
 
 def _aggregate_receipt_bill_push_status(statuses: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -2838,6 +3254,7 @@ def get_receipt_bills(
             for ref in related_refs
         ]
         receipt_push_status = _aggregate_receipt_bill_push_status(related_statuses)
+        drilldown_meta = _build_receipt_drilldown_meta(db, rb)
 
         items.append({
             "id": rb.id,
@@ -2858,6 +3275,7 @@ def get_receipt_bills(
             "deal_date": rb.deal_date,
             "deal_type": rb.deal_type,
             "deal_type_label": RECEIPT_BILL_DEAL_TYPE_LABELS.get(rb.deal_type, "其他"),
+            **drilldown_meta,
             **receipt_push_status,
         })
 
@@ -2920,10 +3338,22 @@ def get_receipt_bill(
     if not rb:
         raise HTTPException(status_code=404, detail="Receipt bill not found")
 
+    related_bills = _load_receipt_to_bills_relation(db, rb)
     related_deposit_collect = _load_receipt_to_deposit_collect_relation(db, rb)
+    deposit_refund_links = _load_receipt_deposit_refund_links(db, rb)
+    deposit_refund_link_summary = _build_receipt_deposit_refund_link_summary(deposit_refund_links)
     related_deposit_refund = _load_receipt_to_deposit_refund_relation(db, rb)
     related_prepayment_recharge = _load_receipt_to_prepayment_recharge_relation(db, rb)
     related_prepayment_refund = _load_receipt_to_prepayment_refund_relation(db, rb)
+    drilldown_sections = _build_receipt_drilldown_sections(
+        rb,
+        related_bills,
+        related_deposit_collect,
+        related_deposit_refund,
+        related_prepayment_recharge,
+        related_prepayment_refund,
+    )
+    drilldown_meta = _build_receipt_drilldown_meta(db, rb)
 
     return {
         "id": rb.id,
@@ -2963,6 +3393,18 @@ def get_receipt_bill(
             }
             for u in (rb.users or [])
         ],
+        "deposit_refund_links": [
+            _serialize_receipt_deposit_refund_link_model(link)
+            for link in deposit_refund_links
+        ],
+        "deposit_refund_link_summary": deposit_refund_link_summary,
+        "drilldown_enabled": drilldown_meta.get("drilldown_enabled", False),
+        "drilldown_source": drilldown_meta.get("drilldown_source"),
+        "drilldown_count": drilldown_meta.get("drilldown_count", 0),
+        "drilldown_summary": drilldown_meta.get("drilldown_summary"),
+        "drilldown_sections": drilldown_sections,
+        "supports_bill_push_ops": drilldown_meta.get("supports_bill_push_ops", False),
+        "related_bills": related_bills,
         "related_deposit_collect": related_deposit_collect,
         "related_deposit_refund": related_deposit_refund,
         "related_prepayment_recharge": related_prepayment_recharge,

@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { CashJournal, DepositRecord, PrepaymentRecord, PushResult, VoucherPreview, ChargeItem, House, Project, Resident, BillVoucherPushStatus, ReceiptBill, VoucherSourceMetadataResponse } from '../types';
+import type { CashJournal, DepositRecord, PrepaymentRecord, PushResult, VoucherPreview, ChargeItem, House, Project, ReceiptBillDetail, Resident, BillVoucherPushStatus, ReceiptBill, VoucherSourceMetadataResponse } from '../types';
 
 import { API_BASE_URL } from './apiBase';
 
@@ -322,7 +322,7 @@ export const getReceiptBills = async (params?: {
 };
 
 export const getReceiptBill = async (receiptBillId: number, communityId: number) => {
-    const response = await axios.get(`${API_BASE_URL}/receipt-bills/${receiptBillId}`, {
+    const response = await axios.get<ReceiptBillDetail>(`${API_BASE_URL}/receipt-bills/${receiptBillId}`, {
         params: { community_id: communityId }
     });
     return response.data;

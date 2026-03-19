@@ -115,6 +115,23 @@ export interface PushStatusSummary {
     failed: number;
 }
 
+export interface ReceiptBillDrilldownSection {
+    relation_key: string;
+    source_type: 'bills' | 'deposit_records' | 'prepayment_records' | string;
+    label: string;
+    count: number;
+    items?: Array<Bill | DepositRecord | PrepaymentRecord>;
+}
+
+export interface ReceiptBillDepositRefundLinkSummary {
+    matched: boolean;
+    link_count: number;
+    link_type: 'actual_refund' | 'transfer_to_prepayment' | 'mixed' | 'unmatched' | string;
+    link_type_label?: string | null;
+    match_rule?: string | null;
+    match_confidence?: number | null;
+}
+
 export interface ReceiptBill {
     id: string;
     community_id: number;
@@ -144,6 +161,12 @@ export interface ReceiptBill {
     pushed_at?: string | null;
     message?: string | null;
     account_book_number?: string | null;
+    drilldown_enabled?: boolean;
+    drilldown_source?: string | null;
+    drilldown_count?: number;
+    drilldown_summary?: string | null;
+    drilldown_sections?: ReceiptBillDrilldownSection[];
+    supports_bill_push_ops?: boolean;
 }
 
 export interface DepositRecord {
@@ -203,6 +226,29 @@ export interface PrepaymentRecord {
     refund_receipt_id?: number | null;
     created_at: string;
     updated_at?: string | null;
+}
+
+export interface ReceiptBillDetail extends ReceiptBill {
+    asset_type?: number | null;
+    asset_id?: number | null;
+    pay_channel?: number | null;
+    pay_channel_list?: string | null;
+    remark?: string | null;
+    fk_id?: number | null;
+    receipt_version?: number | null;
+    invoice_number?: string | null;
+    invoice_urls?: string | null;
+    invoice_status?: number | null;
+    open_invoice?: number | null;
+    bind_users_raw?: string | null;
+    users?: Array<{ user_id?: number | null; user_name?: string | null; phone?: string | null }>;
+    related_bills?: Bill[];
+    related_deposit_collect?: DepositRecord[];
+    related_deposit_refund?: DepositRecord[];
+    related_prepayment_recharge?: PrepaymentRecord[];
+    related_prepayment_refund?: PrepaymentRecord[];
+    deposit_refund_links?: Array<Record<string, any>>;
+    deposit_refund_link_summary?: ReceiptBillDepositRefundLinkSummary | null;
 }
 
 export interface ChargeItem {

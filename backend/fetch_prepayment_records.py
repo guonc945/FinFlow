@@ -6,6 +6,7 @@ from datetime import datetime
 import psycopg2
 from dotenv import load_dotenv
 
+from receipt_bill_deposit_links import rebuild_receipt_bill_deposit_refund_links
 from sync_tracker import tracker
 from utils.marki_client import get_api_url_by_id, marki_client
 
@@ -573,6 +574,19 @@ def sync_prepayment_records(community_ids=None, task_id=None):
                         f"Community {community_id}: linked payment IDs for "
                         f"{payment_sync_counts['matched_total']}/{payment_sync_counts['collected_total']} "
                         "prepayment recharge records"
+                    ),
+                    "info",
+                )
+
+            link_counts = rebuild_receipt_bill_deposit_refund_links([community_id])
+            if task_id:
+                tracker.add_log(
+                    task_id,
+                    (
+                        f"Community {community_id}: rebuilt receipt/deposit refund links "
+                        f"{link_counts['total_links']} total, "
+                        f"{link_counts['transfer_to_prepayment_links']} transfer-to-prepayment, "
+                        f"{link_counts['actual_refund_links']} actual refunds"
                     ),
                     "info",
                 )

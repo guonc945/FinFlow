@@ -21,6 +21,7 @@ import '../bills/Bills.css'; // reuse bills styling
 import {
     getBills,
     getProjects,
+    getReceiptBill,
     getReceiptBills,
     getReceiptBillSyncStatus,
     previewBatchVoucherForReceipts,
@@ -33,6 +34,13 @@ import {
 import ConfirmModal from '../../components/common/ConfirmModal';
 import { useToast, ToastContainer } from '../../components/Toast';
 import VoucherPreviewModal from '../../components/common/VoucherPreviewModal';
+import type {
+    DepositRecord,
+    PrepaymentRecord,
+    ReceiptBillDepositRefundLinkSummary,
+    ReceiptBillDetail,
+    ReceiptBillDrilldownSection,
+} from '../../types';
 
 const SyncProgressModal = ({
     isOpen,
@@ -125,67 +133,225 @@ const SyncProgressModal = ({
     );
 };
 
-const RelatedBillsModal = ({
-    isOpen,
-    onClose,
-    receiptBill,
-    loading,
-    bills,
-    total,
-    totalAmount,
-    page,
-    pageSize,
-    onPageChange,
-    onPageSizeChange,
-}: {
-    isOpen: boolean;
-    onClose: () => void;
-    receiptBill: ReceiptBill | null;
-    loading: boolean;
-    bills: Bill[];
-    total: number;
-    totalAmount: number;
-    page: number;
-    pageSize: number;
-    onPageChange: (nextPage: number) => void;
-    onPageSizeChange: (nextSize: number) => void;
-}) => {
-    if (!isOpen) return null;
+const RECEIPT_BILL_DEAL_TYPE_LABELS: Record<number, string> = {
+    1: '预存款充值',
+    2: '预存款退款',
+    3: '账单实收',
+    4: '账单退款',
+    5: '收取押金',
+    6: '退还押金',
+};
 
-    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+const RECEIPT_PUSH_STATUS_LABELS: Record<string, string> = {
+    unbound: '未关联',
+    not_pushed: '未推送',
+    pushing: '推送中',
+    success: '已推送',
+    failed: '推送失败',
+    partial: '部分推送',
+};
 
-    const billColumns = [
-        { key: 'id', title: '账单ID' },
-        { key: 'charge_item_name', title: '收费项目' },
-        { key: 'full_house_name', title: '房号' },
-        { key: 'in_month', title: '所属月份' },
+const RECEIPT_DEPOSIT_REFUND_LINK_TYPE_LABELS: Record<string, string> = {
+    actual_refund: '实际退款',
+    transfer_to_prepayment: '转入预存',
+    mixed: '混合处理',
+    unmatched: '未匹配',
+};
+
+const getReceiptBillDealTypeLabel = (dealType?: number | null, dealTypeLabel?: string | null) => {
+    if (dealTypeLabel) return dealTypeLabel;
+    if (dealType == null) return '-';
+    return RECEIPT_BILL_DEAL_TYPE_LABELS[dealType] || `未知类型(${dealType})`;
+};
+
+const getReceiptDrilldownModuleLabel = (receipt: ReceiptBill) => {
+    if (receipt.drilldown_source === 'deposit_records') return '押金模块';
+    if (receipt.drilldown_source === 'prepayment_records') return '预存款模块';
+    if (receipt.drilldown_source === 'bills') return '运营账单';
+    if (receipt.deal_type === 5 || receipt.deal_type === 6) return '押金模块';
+    if (receipt.deal_type === 1 || receipt.deal_type === 2) return '预存款模块';
+    return '关联模块';
+};
+
+const getDepositRefundLinkTypeLabel = (summary?: ReceiptBillDepositRefundLinkSummary | null) => {
+    const linkType = String(summary?.link_type || '').trim();
+    if (linkType && RECEIPT_DEPOSIT_REFUND_LINK_TYPE_LABELS[linkType]) {
+        return RECEIPT_DEPOSIT_REFUND_LINK_TYPE_LABELS[linkType];
+    }
+    return summary?.link_type_label || '未识别';
+};
+
+const getDrilldownSectionSourceLabel = (sourceType?: string | null) => {
+    if (sourceType === 'bills') return '运营账单';
+    if (sourceType === 'deposit_records') return '押金变动';
+    if (sourceType === 'prepayment_records') return '预存款';
+    return '关联数据';
+};
+
+const getReceiptDrilldownBadges = (receipt: ReceiptBill) => {
+    const sections = Array.isArray(receipt.drilldown_sections) ? receipt.drilldown_sections : [];
+    const deduped = new Map<string, { key: string; label: string; tone: 'blue' | 'amber' | 'emerald' | 'slate' }>();
+
+    sections.forEach((section) => {
+        let badge: { key: string; label: string; tone: 'blue' | 'amber' | 'emerald' | 'slate' };
+        if (section.relation_key === 'receipt_to_prepayment_transfer') {
+            badge = { key: 'transfer_to_prepayment', label: '转预存', tone: 'emerald' };
+        } else if (section.source_type === 'bills') {
+            badge = { key: 'bills', label: '运营账单', tone: 'blue' };
+        } else if (section.source_type === 'deposit_records') {
+            badge = { key: 'deposit', label: '押金', tone: 'amber' };
+        } else if (section.source_type === 'prepayment_records') {
+            badge = { key: 'prepayment', label: '预存', tone: 'emerald' };
+        } else {
+            badge = { key: section.relation_key, label: getDrilldownSectionSourceLabel(section.source_type), tone: 'slate' };
+        }
+        deduped.set(badge.key, badge);
+    });
+
+    return Array.from(deduped.values());
+};
+
+const DRILLDOWN_BADGE_STYLES: Record<'blue' | 'amber' | 'emerald' | 'slate', { bg: string; color: string; border: string }> = {
+    blue: { bg: '#eff6ff', color: '#1d4ed8', border: '#bfdbfe' },
+    amber: { bg: '#fff7ed', color: '#c2410c', border: '#fdba74' },
+    emerald: { bg: '#ecfdf5', color: '#059669', border: '#a7f3d0' },
+    slate: { bg: '#f8fafc', color: '#475569', border: '#cbd5e1' },
+};
+
+const formatUnixTimestamp = (value?: number | null) => {
+    const ts = Number(value || 0);
+    if (!ts) return '-';
+    return new Date(ts * 1000).toLocaleString();
+};
+
+const getDrilldownColumns = (section: ReceiptBillDrilldownSection) => {
+    if (section.source_type === 'bills') {
+        return [
+            { key: 'id', title: '账单ID' },
+            { key: 'charge_item_name', title: '收费项目' },
+            { key: 'full_house_name', title: '房号' },
+            { key: 'in_month', title: '所属月份' },
+            {
+                key: 'amount',
+                title: '金额',
+                render: (v: any) => `¥${Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
+            },
+            { key: 'pay_status_str', title: '缴费状态' },
+            {
+                key: 'pay_time',
+                title: '缴费时间',
+                render: (v: any) => formatUnixTimestamp(v),
+            },
+        ];
+    }
+
+    if (section.source_type === 'deposit_records') {
+        return [
+            { key: 'id', title: '押金记录ID' },
+            { key: 'house_name', title: '房号' },
+            { key: 'cash_pledge_name', title: '押金类型' },
+            {
+                key: 'amount',
+                title: '金额',
+                render: (v: any) => `¥${Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
+            },
+            { key: 'operate_type_label', title: '变动类型' },
+            { key: 'pay_channel_str', title: '渠道' },
+            {
+                key: 'operate_time',
+                title: '操作时间',
+                render: (_: any, record: DepositRecord) => formatUnixTimestamp(record.operate_time || record.pay_time),
+            },
+            {
+                key: 'remark',
+                title: '备注',
+                render: (v: any) => v || '-',
+            },
+        ];
+    }
+
+    return [
+        { key: 'id', title: '预存记录ID' },
+        { key: 'house_name', title: '房号' },
+        { key: 'category_name', title: '预存类别' },
         {
             key: 'amount',
             title: '金额',
             render: (v: any) => `¥${Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
         },
-        { key: 'pay_status_str', title: '缴费状态' },
         {
-            key: 'pay_time',
-            title: '缴费时间',
-            render: (v: any) => {
-                const ts = Number(v || 0);
-                if (!ts) return '-';
-                return new Date(ts * 1000).toLocaleString();
-            },
+            key: 'balance_after_change',
+            title: '变动后余额',
+            render: (v: any) => `¥${Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
+        },
+        { key: 'operate_type_label', title: '变动类型' },
+        { key: 'pay_channel_str', title: '渠道' },
+        {
+            key: 'operate_time',
+            title: '操作时间',
+            render: (_: any, record: PrepaymentRecord) => formatUnixTimestamp(record.operate_time || record.pay_time),
+        },
+        {
+            key: 'remark',
+            title: '备注',
+            render: (v: any) => v || '-',
         },
     ];
+};
+
+const ReceiptDrilldownModal = ({
+    isOpen,
+    onClose,
+    receiptBill,
+    loading,
+    summary,
+    sections,
+    depositRefundLinkSummary,
+}: {
+    isOpen: boolean;
+    onClose: () => void;
+    receiptBill: ReceiptBill | null;
+    loading: boolean;
+    summary: string;
+    sections: ReceiptBillDrilldownSection[];
+    depositRefundLinkSummary?: ReceiptBillDepositRefundLinkSummary | null;
+}) => {
+    if (!isOpen) return null;
 
     return (
         <div className="sync-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-            <div className="sync-modal" style={{ width: '960px', maxWidth: '96vw' }}>
+            <div className="sync-modal" style={{ width: '1120px', maxWidth: '96vw' }}>
                 <div className="sync-header">
                     <div className="sync-title" style={{ justifyContent: 'space-between', width: '100%' }}>
                         <div>
-                            <h3>关联运营账单</h3>
+                            <h3>关联数据钻取</h3>
                             <p className="text-secondary text-sm">
                                 收款明细ID: <span className="font-mono">{receiptBill?.id || '-'}</span> | 园区: {receiptBill?.community_name || '-'}
                             </p>
+                            <p className="text-secondary text-sm">
+                                类型: {getReceiptBillDealTypeLabel(receiptBill?.deal_type, receiptBill?.deal_type_label)} | {summary || '暂无关联数据'}
+                            </p>
+                            {receiptBill?.deal_type === 6 && depositRefundLinkSummary && (
+                                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+                                    <span style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        padding: '0.18rem 0.55rem',
+                                        borderRadius: '999px',
+                                        fontSize: '0.75rem',
+                                        fontWeight: 700,
+                                        background: '#eff6ff',
+                                        color: '#1d4ed8',
+                                        border: '1px solid #bfdbfe',
+                                    }}>
+                                        退还路径：{getDepositRefundLinkTypeLabel(depositRefundLinkSummary)}
+                                    </span>
+                                    <span className="text-secondary text-xs" style={{ display: 'inline-flex', alignItems: 'center' }}>
+                                        绑定 {depositRefundLinkSummary.link_count || 0} 条
+                                        {depositRefundLinkSummary.match_confidence != null ? ` · 置信度 ${Number(depositRefundLinkSummary.match_confidence).toFixed(2)}` : ''}
+                                    </span>
+                                </div>
+                            )}
                         </div>
                         <button className="collapse-toggle" onClick={onClose} aria-label="Close">
                             <X size={16} />
@@ -194,31 +360,53 @@ const RelatedBillsModal = ({
                 </div>
 
                 <div className="sync-content" style={{ padding: '1rem' }}>
-                    <div className="flex items-center justify-between" style={{ marginBottom: '0.75rem' }}>
-                        <div className="text-sm text-secondary">
-                            共 {total} 条 | 金额合计: <strong style={{ color: '#2563eb' }}>¥{Number(totalAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>
+                    {loading ? (
+                        <div style={{ minHeight: '240px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            加载中...
                         </div>
-                        <div className="flex items-center gap-2">
-                            <select className="page-select" value={pageSize} onChange={(e) => onPageSizeChange(Number(e.target.value))}>
-                                <option value={10}>10 条/页</option>
-                                <option value={25}>25 条/页</option>
-                                <option value={50}>50 条/页</option>
-                                <option value={100}>100 条/页</option>
-                            </select>
-                            <div className="flex gap-1">
-                                <button className="page-btn" disabled={page === 1} onClick={() => onPageChange(1)}><ChevronsLeft size={16} /></button>
-                                <button className="page-btn" disabled={page === 1} onClick={() => onPageChange(Math.max(1, page - 1))}><ChevronLeft size={16} /></button>
-                                <button className="page-btn active">{page}</button>
-                                {page < totalPages && <button className="page-btn" onClick={() => onPageChange(page + 1)}>{page + 1}</button>}
-                                <button className="page-btn" disabled={page === totalPages} onClick={() => onPageChange(Math.min(totalPages, page + 1))}><ChevronRight size={16} /></button>
-                                <button className="page-btn" disabled={page === totalPages} onClick={() => onPageChange(totalPages)}><ChevronsRight size={16} /></button>
-                            </div>
+                    ) : sections.length === 0 ? (
+                        <div style={{ minHeight: '200px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}>
+                            当前收款单暂无可钻取的关联数据
                         </div>
-                    </div>
-
-                    <div style={{ maxHeight: '60vh', overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: '0.75rem' }}>
-                        <DataTable columns={billColumns as any} data={bills} loading={loading} />
-                    </div>
+                    ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxHeight: '68vh', overflow: 'auto' }}>
+                            {sections.map((section) => (
+                                <div key={section.relation_key} style={{ border: '1px solid #e2e8f0', borderRadius: '0.75rem', overflow: 'hidden' }}>
+                                    <div style={{
+                                        padding: '0.75rem 1rem',
+                                        borderBottom: '1px solid #e2e8f0',
+                                        background: '#f8fafc',
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center',
+                                    }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                            <div style={{ fontWeight: 700, color: '#0f172a' }}>{section.label}</div>
+                                            <span style={{
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                padding: '0.12rem 0.45rem',
+                                                borderRadius: '999px',
+                                                fontSize: '0.72rem',
+                                                fontWeight: 600,
+                                                background: '#ffffff',
+                                                color: '#475569',
+                                                border: '1px solid #cbd5e1',
+                                            }}>
+                                                {getDrilldownSectionSourceLabel(section.source_type)}
+                                            </span>
+                                        </div>
+                                        <div className="text-secondary text-sm">共 {section.count} 条</div>
+                                    </div>
+                                    <DataTable
+                                        columns={getDrilldownColumns(section) as any}
+                                        data={(section.items || []) as any[]}
+                                        loading={false}
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
 
                 <div className="sync-footer">
@@ -229,21 +417,6 @@ const RelatedBillsModal = ({
             </div>
         </div>
     );
-};
-
-const RECEIPT_BILL_DEAL_TYPE_LABELS: Record<number, string> = {
-    1: '预存款充值',
-    2: '预存款退款',
-    3: '账单实收',
-    4: '账单退款',
-    5: '收取押金',
-    6: '退还押金',
-};
-
-const getReceiptBillDealTypeLabel = (dealType?: number | null, dealTypeLabel?: string | null) => {
-    if (dealTypeLabel) return dealTypeLabel;
-    if (dealType == null) return '-';
-    return RECEIPT_BILL_DEAL_TYPE_LABELS[dealType] || `未知类型(${dealType})`;
 };
 
 const ReceiptBills = () => {
@@ -283,15 +456,12 @@ const ReceiptBills = () => {
     });
     const pollingTimer = useRef<any>(null);
 
-    // Related bills modal state
-    const [relatedBillsOpen, setRelatedBillsOpen] = useState(false);
-    const [relatedBillsLoading, setRelatedBillsLoading] = useState(false);
-    const [relatedBills, setRelatedBills] = useState<Bill[]>([]);
-    const [relatedBillsTotal, setRelatedBillsTotal] = useState(0);
-    const [relatedBillsTotalAmount, setRelatedBillsTotalAmount] = useState(0);
-    const [relatedBillsPage, setRelatedBillsPage] = useState(1);
-    const [relatedBillsPageSize, setRelatedBillsPageSize] = useState(25);
-    const [relatedReceiptBill, setRelatedReceiptBill] = useState<ReceiptBill | null>(null);
+    const [drilldownOpen, setDrilldownOpen] = useState(false);
+    const [drilldownLoading, setDrilldownLoading] = useState(false);
+    const [drilldownReceiptBill, setDrilldownReceiptBill] = useState<ReceiptBill | null>(null);
+    const [drilldownSummary, setDrilldownSummary] = useState('');
+    const [drilldownSections, setDrilldownSections] = useState<ReceiptBillDrilldownSection[]>([]);
+    const [drilldownDepositRefundSummary, setDrilldownDepositRefundSummary] = useState<ReceiptBillDepositRefundLinkSummary | null>(null);
 
     // Voucher preview state (moved from bills page)
     const [voucherPreview, setVoucherPreview] = useState<{ isOpen: boolean; data: any; isLoading: boolean; error: string | null }>({
@@ -507,42 +677,31 @@ const ReceiptBills = () => {
         }
     }, [communityFilter, showToast, startPolling]);
 
-    const loadRelatedBills = useCallback(async (receiptBill: ReceiptBill, pageNo: number, size: number) => {
-        const dealLogId = Number(receiptBill.id);
-        if (!Number.isFinite(dealLogId)) {
-            showToast('error', '无法查看账单', '收款明细ID不是有效数字');
+    const openReceiptDrilldown = useCallback(async (receiptBill: ReceiptBill) => {
+        if (!receiptBill.drilldown_enabled) {
+            showToast('info', '提示', '当前收款单暂无可钻取的关联数据');
             return;
         }
-        setRelatedBillsLoading(true);
+
+        setDrilldownReceiptBill(receiptBill);
+        setDrilldownSummary(receiptBill.drilldown_summary || '');
+        setDrilldownSections([]);
+        setDrilldownDepositRefundSummary(null);
+        setDrilldownOpen(true);
+        setDrilldownLoading(true);
         try {
-            const skip = (pageNo - 1) * size;
-            const resp = await getBills({
-                community_ids: String(receiptBill.community_id),
-                deal_log_id: dealLogId,
-                skip,
-                limit: size,
-            });
-            setRelatedBills(resp?.items || []);
-            setRelatedBillsTotal(resp?.total || 0);
-            setRelatedBillsTotalAmount(resp?.total_amount || 0);
+            const detail: ReceiptBillDetail = await getReceiptBill(Number(receiptBill.id), Number(receiptBill.community_id));
+            setDrilldownSummary(detail.drilldown_summary || receiptBill.drilldown_summary || '');
+            setDrilldownSections(detail.drilldown_sections || []);
+            setDrilldownDepositRefundSummary(detail.deposit_refund_link_summary || null);
         } catch (err: any) {
             const msg = err?.response?.data?.detail || err?.message || '加载失败';
-            showToast('error', '关联账单加载失败', typeof msg === 'string' ? msg : JSON.stringify(msg));
+            showToast('error', '关联数据加载失败', typeof msg === 'string' ? msg : JSON.stringify(msg));
+            setDrilldownOpen(false);
         } finally {
-            setRelatedBillsLoading(false);
+            setDrilldownLoading(false);
         }
     }, [showToast]);
-
-    const openRelatedBills = useCallback(async (receiptBill: ReceiptBill) => {
-        setRelatedReceiptBill(receiptBill);
-        setRelatedBills([]);
-        setRelatedBillsTotal(0);
-        setRelatedBillsTotalAmount(0);
-        setRelatedBillsPage(1);
-        setRelatedBillsPageSize(25);
-        setRelatedBillsOpen(true);
-        await loadRelatedBills(receiptBill, 1, 25);
-    }, [loadRelatedBills]);
 
     const fetchRelatedBillsForReceipt = useCallback(async (receiptBillIdRaw: string | number, communityIdRaw: number) => {
         const dealLogId = Number(receiptBillIdRaw);
@@ -659,7 +818,7 @@ const ReceiptBills = () => {
         showToast('info', title, detail ? `已跳过：${preview}；${detail}` : `已跳过：${preview}`);
     }, [showToast]);
 
-    const handlePreviewVoucherForReceipt = useCallback(async (receipt: { id: string | number; community_id: number }) => {
+    const handlePreviewVoucherForReceipt = useCallback(async (receipt: ReceiptBill) => {
         setVoucherPreview({ isOpen: true, data: null, isLoading: true, error: null });
         try {
             const result = await previewVoucherForReceipt(Number(receipt.id), Number(receipt.community_id));
@@ -674,11 +833,14 @@ const ReceiptBills = () => {
     }, [notifySkippedBills]);
 
     const handlePreviewBatchVoucher = useCallback(async () => {
-        const receipts = Array.from(selectedReceiptRefs.values());
-        if (receipts.length === 0) {
+        const selectedRows = items.filter(r => selectedReceiptKeys.has(buildReceiptSelectionKey(r.id, r.community_id)));
+        if (selectedRows.length === 0) {
             showToast('info', '提示', '请先选择收款账单');
             return;
         }
+        const receipts = selectedRows
+            .map(r => ({ receipt_bill_id: Number(r.id), community_id: Number(r.community_id) }))
+            .filter(r => Number.isFinite(r.receipt_bill_id) && Number.isFinite(r.community_id));
 
         setVoucherPreview({ isOpen: true, data: null, isLoading: true, error: null });
         try {
@@ -691,7 +853,7 @@ const ReceiptBills = () => {
                 error: err?.response?.data?.detail || err?.message || '预览失败'
             });
         }
-    }, [notifySkippedBills, selectedReceiptRefs, showToast]);
+    }, [items, notifySkippedBills, selectedReceiptKeys, showToast]);
 
     const handlePushVoucher = useCallback(async (kingdeeJson: any) => {
         try {
@@ -744,10 +906,7 @@ const ReceiptBills = () => {
     }, [fetchReceiptBills, showToast, summarizePushStatuses, voucherPreview.data]);
     const refreshReceiptViews = useCallback(async () => {
         await fetchReceiptBills();
-        if (relatedBillsOpen && relatedReceiptBill) {
-            await loadRelatedBills(relatedReceiptBill, relatedBillsPage, relatedBillsPageSize);
-        }
-    }, [fetchReceiptBills, loadRelatedBills, relatedBillsOpen, relatedBillsPage, relatedBillsPageSize, relatedReceiptBill]);
+    }, [fetchReceiptBills]);
     const getReceiptPushSummary = useCallback((receipt: ReceiptBill): PushStatusSummary => (
         receipt.related_bill_push_summary || summarizePushStatuses([])
     ), [summarizePushStatuses]);
@@ -969,6 +1128,49 @@ const ReceiptBills = () => {
             render: (v: any) => `¥${Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
         },
         {
+            key: 'drilldown_summary',
+            title: '关联数据',
+            width: 220,
+            render: (_: any, record: ReceiptBill) => {
+                const badges = getReceiptDrilldownBadges(record);
+                return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                        {badges.length > 0 && (
+                            <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                                {badges.map((badge) => {
+                                    const style = DRILLDOWN_BADGE_STYLES[badge.tone];
+                                    return (
+                                        <span
+                                            key={badge.key}
+                                            style={{
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                padding: '0.12rem 0.45rem',
+                                                borderRadius: '999px',
+                                                fontSize: '0.72rem',
+                                                fontWeight: 700,
+                                                background: style.bg,
+                                                color: style.color,
+                                                border: `1px solid ${style.border}`,
+                                            }}
+                                        >
+                                            {badge.label}
+                                        </span>
+                                    );
+                                })}
+                            </div>
+                        )}
+                        <span style={{ fontWeight: 600, color: record.drilldown_enabled ? '#0f172a' : '#94a3b8' }}>
+                            {record.drilldown_summary || '暂无关联数据'}
+                        </span>
+                        <span className="text-secondary text-xs">
+                            {record.drilldown_enabled ? `可钻取 ${record.drilldown_count || 0} 条` : '当前类型暂无关联记录'}
+                        </span>
+                    </div>
+                );
+            },
+        },
+        {
             key: 'amount',
             title: '实收金额',
             render: (v: any) => `¥${Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
@@ -983,6 +1185,32 @@ const ReceiptBills = () => {
             title: '凭证状态',
             width: 180,
             render: (_: any, record: ReceiptBill) => {
+                if (!record.supports_bill_push_ops) {
+                    const moduleLabel = getReceiptDrilldownModuleLabel(record);
+                    return (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                            <span style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                width: 'fit-content',
+                                padding: '0.2rem 0.5rem',
+                                borderRadius: '999px',
+                                fontSize: '0.75rem',
+                                fontWeight: 600,
+                                background: '#eff6ff',
+                                color: '#1d4ed8',
+                                border: '1px solid #bfdbfe',
+                            }}>
+                                收款单模板
+                            </span>
+                            <span className="text-secondary text-xs">
+                                {record.drilldown_enabled
+                                    ? `${record.drilldown_summary || moduleLabel}，可按收款单模板预览`
+                                    : '可按收款单模板预览，不走运营账单追踪'}
+                            </span>
+                        </div>
+                    );
+                }
                 const summary = getReceiptPushSummary(record);
                 const status = record.push_status || (summary.total > 0 ? 'not_pushed' : 'unbound');
                 const colorMap: Record<string, { bg: string; color: string; border: string }> = {
@@ -1008,10 +1236,12 @@ const ReceiptBills = () => {
                             color: style.color,
                             border: `1px solid ${style.border}`,
                         }}>
-                            {record.push_status_label || '未推送'}
+                            {record.push_status_label || RECEIPT_PUSH_STATUS_LABELS[status] || '未推送'}
                         </span>
                         <span className="text-secondary text-xs">
-                            关联 {record.related_bill_count || 0} 条 / 已推送 {summary.success || 0} 条
+                            {(record.related_bill_count || 0) > 0
+                                ? `关联 ${record.related_bill_count || 0} 条 / 已推送 ${summary.success || 0} 条`
+                                : '当前尚未关联运营账单'}
                         </span>
                     </div>
                 );
@@ -1055,7 +1285,7 @@ const ReceiptBills = () => {
                 const actionMenuKey = buildReceiptSelectionKey(record.id, record.community_id);
                 const isActionMenuOpen = openActionMenuKey === actionMenuKey;
                 const successCount = Number(getReceiptPushSummary(record).success || 0);
-                const canManageVoucher = successCount > 0;
+                const canManageVoucher = successCount > 0 && Boolean(record.supports_bill_push_ops);
 
                 return (
                     <div
@@ -1068,9 +1298,9 @@ const ReceiptBills = () => {
                                 onClick={(e) => {
                                     e.stopPropagation();
                                     setOpenActionMenuKey(null);
-                                    void handlePreviewVoucherForReceipt({ id: record.id, community_id: record.community_id });
+                                    void handlePreviewVoucherForReceipt(record);
                                 }}
-                                title="预览凭证（按当前收款单关联账单生成）"
+                                title={record.supports_bill_push_ops ? '预览凭证（按当前收款单关联账单生成）' : '预览凭证（按收款单模板生成）'}
                             >
                                 <FileText size={14} /> 凭证
                             </button>
@@ -1130,11 +1360,11 @@ const ReceiptBills = () => {
                                     className="dropdown-item receipt-row-menu-item"
                                     onClick={() => {
                                         setOpenActionMenuKey(null);
-                                        void openRelatedBills(record);
+                                        void openReceiptDrilldown(record);
                                     }}
-                                    title="查看关联账单"
+                                    title="按收款单类型查看关联数据"
                                 >
-                                    <FileText size={14} /> 关联账单
+                                    <FileText size={14} /> 关联数据
                                 </button>
                             </div>
                         )}
@@ -1144,7 +1374,9 @@ const ReceiptBills = () => {
         },
     ];
     const selectedReceipts = items.filter(r => selectedReceiptKeys.has(buildReceiptSelectionKey(r.id, r.community_id)));
+    const selectedPreviewCount = selectedReceipts.length;
     const selectedSuccessCount = selectedReceipts.reduce((acc, receipt) => acc + Number(getReceiptPushSummary(receipt).success || 0), 0);
+    const canBatchPreview = selectedPreviewCount > 0;
     const canBatchVerify = selectedReceiptRefs.size > 0 && selectedSuccessCount > 0;
     const canBatchReset = selectedReceiptRefs.size > 0 && selectedSuccessCount > 0;
 
@@ -1272,16 +1504,20 @@ const ReceiptBills = () => {
                                                 background: 'transparent',
                                                 textAlign: 'left',
                                                 fontSize: '0.8rem',
-                                                color: selectedReceiptRefs.size > 0 ? '#334155' : '#94a3b8',
-                                                opacity: selectedReceiptRefs.size > 0 ? 1 : 0.5,
-                                                cursor: selectedReceiptRefs.size > 0 ? 'pointer' : 'not-allowed',
+                                                color: canBatchPreview ? '#334155' : '#94a3b8',
+                                                opacity: canBatchPreview ? 1 : 0.5,
+                                                cursor: canBatchPreview ? 'pointer' : 'not-allowed',
                                             }}
                                             onClick={() => {
-                                                if (selectedReceiptRefs.size === 0) return;
+                                                if (!canBatchPreview) return;
                                                 setIsBatchActionsOpen(false);
                                                 void handlePreviewBatchVoucher();
                                             }}
-                                            title={selectedReceiptRefs.size === 0 ? '请先勾选收款账单' : '批量预览凭证（按收款单关联账单生成）'}
+                                            title={
+                                                selectedReceiptRefs.size === 0
+                                                    ? '请先勾选收款账单'
+                                                    : '批量预览凭证（按收款单模板/关联账单生成）'
+                                            }
                                         >
                                             <FileText size={14} /> 批量凭证预览
                                         </button>
@@ -1416,27 +1652,14 @@ const ReceiptBills = () => {
                 status={syncState.status}
             />
 
-            <RelatedBillsModal
-                isOpen={relatedBillsOpen}
-                onClose={() => setRelatedBillsOpen(false)}
-                receiptBill={relatedReceiptBill}
-                loading={relatedBillsLoading}
-                bills={relatedBills}
-                total={relatedBillsTotal}
-                totalAmount={relatedBillsTotalAmount}
-                page={relatedBillsPage}
-                pageSize={relatedBillsPageSize}
-                onPageChange={(nextPage) => {
-                    if (!relatedReceiptBill) return;
-                    setRelatedBillsPage(nextPage);
-                    void loadRelatedBills(relatedReceiptBill, nextPage, relatedBillsPageSize);
-                }}
-                onPageSizeChange={(nextSize) => {
-                    if (!relatedReceiptBill) return;
-                    setRelatedBillsPageSize(nextSize);
-                    setRelatedBillsPage(1);
-                    void loadRelatedBills(relatedReceiptBill, 1, nextSize);
-                }}
+            <ReceiptDrilldownModal
+                isOpen={drilldownOpen}
+                onClose={() => setDrilldownOpen(false)}
+                receiptBill={drilldownReceiptBill}
+                loading={drilldownLoading}
+                summary={drilldownSummary}
+                sections={drilldownSections}
+                depositRefundLinkSummary={drilldownDepositRefundSummary}
             />
 
             <VoucherPreviewModal

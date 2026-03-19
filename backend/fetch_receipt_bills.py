@@ -6,6 +6,7 @@ from datetime import datetime
 import psycopg2
 from dotenv import load_dotenv
 
+from receipt_bill_deposit_links import rebuild_receipt_bill_deposit_refund_links
 from sync_tracker import tracker
 from utils.marki_client import marki_client, get_api_url_by_id
 
@@ -465,6 +466,18 @@ def sync_receipt_bills(community_ids: list = None, task_id: str = None):
             if task_id:
                 tracker.update_progress(task_id, i, f"园区 ID: {cid}")
             total_all += sync_receipt_bills_for_community(int(cid), task_id)
+            link_counts = rebuild_receipt_bill_deposit_refund_links([int(cid)])
+            if task_id:
+                tracker.add_log(
+                    task_id,
+                    (
+                        f"Community {cid}: rebuilt receipt/deposit refund links "
+                        f"{link_counts['total_links']} total, "
+                        f"{link_counts['transfer_to_prepayment_links']} transfer-to-prepayment, "
+                        f"{link_counts['actual_refund_links']} actual refunds"
+                    ),
+                    "info",
+                )
         except Exception as e:
             if task_id:
                 tracker.add_log(task_id, f"同步失败: community={cid} err={e}", "error")
