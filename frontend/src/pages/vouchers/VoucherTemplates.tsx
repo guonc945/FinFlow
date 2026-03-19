@@ -5,18 +5,23 @@ import ConfirmModal from '../../components/common/ConfirmModal';
 import {
     Layers, FileText, Settings, Hash, Info, X, Sliders, ArrowUp, ArrowDown, AlertTriangle,
     Plus, Save, Trash2, ChevronLeft, Database, Copy, ChevronRight, ChevronDown, Search, LayoutGrid, List,
-    CheckSquare, Square, ToggleLeft, ToggleRight
+    CheckSquare, Square, ToggleLeft, ToggleRight, Maximize2
 } from 'lucide-react';
 import axios from 'axios';
-import VariablePicker from '../settings/VariablePicker';
 import ConditionBuilder from './ConditionBuilder';
 import AccountSelector from './AccountSelector';
 import type { AccountingSubject, VoucherFieldModule, VoucherRelationOption, VoucherSourceFieldOption } from '../../types';
 import SourceFieldPickerModal from './SourceFieldPickerModal';
+import ExpressionEditorModal from './ExpressionEditorModal';
 import './VoucherTemplates.css';
 
 import { API_BASE_URL } from '../../services/apiBase';
 import { getVoucherFieldModules, getVoucherTemplateCategoriesTree } from '../../services/api';
+
+void forwardRef;
+void useImperativeHandle;
+void Database;
+void SourceFieldPickerModal;
 
 const API_BASE = API_BASE_URL;
 
@@ -165,139 +170,67 @@ const normalizeSourceFields = (raw: any): SourceFieldOption[] => {
 
 
 
-const ExpressionInput = forwardRef<
-    { insert: (text: string) => void },
-    { value: string, onChange: (val: string) => void, onFocus?: (ins: (text: string) => void) => void, placeholder?: string, className?: string }
->(({ value, onChange, onFocus, placeholder, className }, ref) => {
-    const inputRef = useRef<HTMLInputElement>(null);
-    const onChangeRef = useRef(onChange);
-
-    useEffect(() => {
-        onChangeRef.current = onChange;
-    });
-
-    const insert = (text: string) => {
-        const input = inputRef.current;
-        if (input) {
-            const start = input.selectionStart || 0;
-            const end = input.selectionEnd || 0;
-            const oldVal = input.value;
-            const newVal = oldVal.substring(0, start) + text + oldVal.substring(end);
-            onChangeRef.current(newVal);
-            setTimeout(() => {
-                input.focus();
-                input.setSelectionRange(start + text.length, start + text.length);
-            }, 0);
-        } else {
-            onChangeRef.current(value + text);
-        }
-    };
-
-    useImperativeHandle(ref, () => ({
-        insert
-    }));
-
-    return (
-        <input
-            ref={inputRef}
-            type="text"
-            value={value}
-            onChange={e => onChange(e.target.value)}
-            onFocus={() => onFocus?.(insert)}
-            placeholder={placeholder}
-            className={className}
-        />
-    );
-});
-
 const ExpressionInputWithActions = ({
     value,
     onChange,
-    onGlobalFocus,
-    onOpenPicker,
     fieldModules,
     useBraces = true,
     size = 'normal',
     placeholder,
-    className
+    className,
+    editorTitle = '编辑公式'
 }: {
     value: string,
     onChange: (val: string) => void,
-    onGlobalFocus: (ins: (text: string) => void) => void,
-    onOpenPicker: () => void,
     fieldModules?: VoucherFieldModule[] | null,
     useBraces?: boolean,
     size?: 'normal' | 'mini',
     placeholder?: string,
-    className?: string
+    className?: string,
+    editorTitle?: string
 }) => {
-    const expRef = useRef<{ insert: (t: string) => void }>(null);
-    const [fieldPickerOpen, setFieldPickerOpen] = useState(false);
+    const [editorOpen, setEditorOpen] = useState(false);
 
     return (
-        <div className={`expression-input-group ${size === 'mini' ? 'mini' : ''}`}>
-            <div className={`input-with-action ${size === 'mini' ? 'mini' : ''}`}>
-                <ExpressionInput
-                    ref={expRef}
-                    value={value}
-                    onChange={onChange}
-                    onFocus={onGlobalFocus}
-                    placeholder={placeholder}
-                    className={className}
-                />
-                <button onClick={() => {
-                    if (expRef.current) onGlobalFocus(expRef.current.insert);
-                    onOpenPicker();
-                }}>
-                    <Hash size={size === 'mini' ? 12 : 14} />
-                </button>
-                {fieldModules && fieldModules.length > 0 && (
-                    <div className="source-field-combo" title="选择数据源字段">
-                        <button
-                            type="button"
-                            className="source-field-trigger"
-                            onClick={() => setFieldPickerOpen(true)}
-                            title="选择数据源字段"
-                        >
-                            <Database size={size === 'mini' ? 12 : 14} />
-                        </button>
-                        <SourceFieldPickerModal
-                            open={fieldPickerOpen}
-                            onClose={() => setFieldPickerOpen(false)}
-                            modules={fieldModules}
-                            onPick={(f, ctx) => {
-                                const key = (ctx?.module_id && ctx?.source_id)
-                                    ? `${ctx.module_id}.${ctx.source_id}.${f.value}`
-                                    : (ctx?.source_type ? `${ctx.source_type}.${f.value}` : f.value);
-                                const text = useBraces ? `{${key}}` : key;
-                                if (expRef.current) {
-                                    expRef.current.insert(text);
-                                    onGlobalFocus(expRef.current.insert);
-                                } else {
-                                    onChange(value + text);
-                                }
-                                setFieldPickerOpen(false);
-                            }}
-                        />
-                    </div>
-                )}
+        <>
+            <div className={`expression-input-group ${size === 'mini' ? 'mini' : ''}`}>
+                <div className={`input-with-action ${size === 'mini' ? 'mini' : ''}`}>
+                    <input
+                        type="text"
+                        value={value}
+                        readOnly
+                        onClick={() => setEditorOpen(true)}
+                        placeholder={placeholder}
+                        className={`${className || ''} expression-preview-input`.trim()}
+                        title="打开公式编辑器"
+                    />
+                    <button type="button" onClick={() => setEditorOpen(true)} title="打开公式编辑器">
+                        <Maximize2 size={size === 'mini' ? 12 : 14} />
+                    </button>
+                </div>
             </div>
-        </div>
+            <ExpressionEditorModal
+                open={editorOpen}
+                title={editorTitle}
+                value={value}
+                onClose={() => setEditorOpen(false)}
+                onSave={onChange}
+                fieldModules={fieldModules}
+                useBraces={useBraces}
+                placeholder={placeholder}
+            />
+        </>
     );
 };
 
 const DimensionFormEditor = ({
     value,
     onChange,
-    onFocusField,
-    onOpenPicker,
     fieldModules,
     requiredKeys
 }: {
     value: string | null | undefined,
     onChange: (json: string) => void,
-    onFocusField: (insert: (text: string) => void) => void,
-    onOpenPicker: () => void,
     fieldModules?: VoucherFieldModule[] | null,
     requiredKeys?: string[]
 }) => {
@@ -377,9 +310,8 @@ const DimensionFormEditor = ({
                                     placeholder="{variable}"
                                     value={row.value}
                                     onChange={val => handleRowChange(idx, 'value', val)}
-                                    onGlobalFocus={onFocusField}
-                                    onOpenPicker={onOpenPicker}
                                     fieldModules={fieldModules || EMPTY_VOUCHER_FIELD_MODULES}
+                                    editorTitle={`编辑维度值${row.key ? ` - ${row.key}` : ''}`}
                                 />
                             </td>
                             <td>
@@ -711,12 +643,7 @@ const VoucherTemplates = () => {
     const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
 
-    // Variable Picker State
-    const [isVariablePickerOpen, setIsVariablePickerOpen] = useState(false);
     const [activeTab, setActiveTab] = useState<'basic' | 'condition' | 'subject' | 'rules'>('basic');
-    const [lastFocusedField, setLastFocusedField] = useState<{
-        insert: (text: string) => void
-    } | null>(null);
 
     // Detail Modal State
     const [detailModalOpen, setDetailModalOpen] = useState(false);
@@ -1614,13 +1541,6 @@ const VoucherTemplates = () => {
         updateRule(idx, updates);
     };
 
-    const handleVariableSelect = (variable: any) => {
-        if (lastFocusedField) {
-            const insertText = variable?.insert_text || (variable?.key ? `{${variable.key}}` : String(variable || ''));
-            lastFocusedField.insert(insertText);
-        }
-    };
-
     if (isEditing && currentTemplate) {
         return (
             <div className="template-editor-container animate-in">
@@ -1921,10 +1841,9 @@ const VoucherTemplates = () => {
                                         <ExpressionInputWithActions
                                             value={currentTemplate.book_number_expr}
                                             onChange={val => setCurrentTemplate({ ...currentTemplate, book_number_expr: val })}
-                                            onGlobalFocus={ins => setLastFocusedField({ insert: ins })}
-                                            onOpenPicker={() => setIsVariablePickerOpen(true)}
                                             fieldModules={filterModulesByModuleId(voucherFieldModules, currentTemplate.source_module)}
                                             placeholder="'BU-CODE'"
+                                            editorTitle="编辑账簿编码映射"
                                         />
                                     </div>
                                     <div className="field-item">
@@ -1932,10 +1851,9 @@ const VoucherTemplates = () => {
                                         <ExpressionInputWithActions
                                             value={currentTemplate.vouchertype_number_expr}
                                             onChange={val => setCurrentTemplate({ ...currentTemplate, vouchertype_number_expr: val })}
-                                            onGlobalFocus={ins => setLastFocusedField({ insert: ins })}
-                                            onOpenPicker={() => setIsVariablePickerOpen(true)}
                                             fieldModules={filterModulesByModuleId(voucherFieldModules, currentTemplate.source_module)}
                                             placeholder="'0001'"
+                                            editorTitle="编辑凭证字映射"
                                         />
                                     </div>
                                     <div className="field-item">
@@ -1943,10 +1861,9 @@ const VoucherTemplates = () => {
                                         <ExpressionInputWithActions
                                             value={currentTemplate.attachment_expr}
                                             onChange={val => setCurrentTemplate({ ...currentTemplate, attachment_expr: val })}
-                                            onGlobalFocus={ins => setLastFocusedField({ insert: ins })}
-                                            onOpenPicker={() => setIsVariablePickerOpen(true)}
                                             fieldModules={filterModulesByModuleId(voucherFieldModules, currentTemplate.source_module)}
                                             placeholder="0"
+                                            editorTitle="编辑附件数量表达式"
                                         />
                                     </div>
                                 </div>
@@ -1956,9 +1873,8 @@ const VoucherTemplates = () => {
                                         <ExpressionInputWithActions
                                             value={currentTemplate.bizdate_expr}
                                             onChange={val => setCurrentTemplate({ ...currentTemplate, bizdate_expr: val })}
-                                            onGlobalFocus={ins => setLastFocusedField({ insert: ins })}
-                                            onOpenPicker={() => setIsVariablePickerOpen(true)}
                                             fieldModules={filterModulesByModuleId(voucherFieldModules, currentTemplate.source_module)}
+                                            editorTitle="编辑业务日期表达式"
                                         />
                                     </div>
                                     <div className="field-item">
@@ -1966,9 +1882,8 @@ const VoucherTemplates = () => {
                                         <ExpressionInputWithActions
                                             value={currentTemplate.bookeddate_expr}
                                             onChange={val => setCurrentTemplate({ ...currentTemplate, bookeddate_expr: val })}
-                                            onGlobalFocus={ins => setLastFocusedField({ insert: ins })}
-                                            onOpenPicker={() => setIsVariablePickerOpen(true)}
                                             fieldModules={filterModulesByModuleId(voucherFieldModules, currentTemplate.source_module)}
+                                            editorTitle="编辑记账日期表达式"
                                         />
                                     </div>
                                 </div>
@@ -2004,9 +1919,8 @@ const VoucherTemplates = () => {
                                                     <ExpressionInputWithActions
                                                         value={rule.summary_expr}
                                                         onChange={val => updateRule(idx, { summary_expr: val })}
-                                                        onGlobalFocus={ins => setLastFocusedField({ insert: ins })}
-                                                        onOpenPicker={() => setIsVariablePickerOpen(true)}
                                                         fieldModules={filterModulesByModuleId(voucherFieldModules, currentTemplate.source_module)}
+                                                        editorTitle={`编辑摘要表达式 - 第 ${rule.line_no} 行`}
                                                     />
                                                 </td>
                                                 <td>
@@ -2014,9 +1928,6 @@ const VoucherTemplates = () => {
                                                         value={rule.account_code}
                                                         onChange={(val) => handleAccountChange(idx, val)}
                                                         subjects={subjects}
-                                                        onFocus={() => setLastFocusedField({
-                                                            insert: (text) => updateRule(idx, { account_code: (rule.account_code || '') + text })
-                                                        })}
                                                     />
                                                 </td>
                                                 <td>
@@ -2033,9 +1944,8 @@ const VoucherTemplates = () => {
                                                     <ExpressionInputWithActions
                                                         value={rule.amount_expr}
                                                         onChange={val => updateRule(idx, { amount_expr: val })}
-                                                        onGlobalFocus={ins => setLastFocusedField({ insert: ins })}
-                                                        onOpenPicker={() => setIsVariablePickerOpen(true)}
                                                         fieldModules={filterModulesByModuleId(voucherFieldModules, currentTemplate.source_module)}
+                                                        editorTitle={`编辑金额表达式 - 第 ${rule.line_no} 行`}
                                                     />
                                                 </td>
                                                 <td>
@@ -2087,13 +1997,6 @@ const VoucherTemplates = () => {
                     )}
                 </div >
 
-                <VariablePicker
-                    isOpen={isVariablePickerOpen}
-                    onClose={() => setIsVariablePickerOpen(false)}
-                    onSelect={handleVariableSelect}
-                    includeFunctions
-                />
-
                 {/* Detail Configuration Modal */}
                 {
                     detailModalOpen && currentRuleIndex !== null && currentTemplate.rules[currentRuleIndex] && (
@@ -2132,8 +2035,6 @@ const VoucherTemplates = () => {
                                             <DimensionFormEditor
                                                 value={currentTemplate.rules[currentRuleIndex].aux_items}
                                                 onChange={(val) => updateCurrentRuleDetail('aux_items', val)}
-                                                onFocusField={(insert) => setLastFocusedField({ insert })}
-                                                onOpenPicker={() => setIsVariablePickerOpen(true)}
                                                 fieldModules={filterModulesByModuleId(voucherFieldModules, currentTemplate.source_module)}
                                                 requiredKeys={(() => {
                                                     const accountCode = currentTemplate.rules[currentRuleIndex].account_code;
@@ -2166,8 +2067,6 @@ const VoucherTemplates = () => {
                                             <DimensionFormEditor
                                                 value={currentTemplate.rules[currentRuleIndex].main_cf_assgrp}
                                                 onChange={(val) => updateCurrentRuleDetail('main_cf_assgrp', val)}
-                                                onFocusField={(insert) => setLastFocusedField({ insert })}
-                                                onOpenPicker={() => setIsVariablePickerOpen(true)}
                                                 fieldModules={filterModulesByModuleId(voucherFieldModules, currentTemplate.source_module)}
                                             />
                                         </div>

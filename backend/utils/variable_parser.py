@@ -1,33 +1,29 @@
+import random
 import re
 import uuid
-import random
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Set
+
 from sqlalchemy.orm import Session
 
 from models import GlobalVariable
-from typing import Dict, Any, Optional, List
 
 
-def build_variable_map(
-    db: Session,
-    required_keys: Optional[List[str]] = None,
-    user_context: Optional[Dict[str, str]] = None
-) -> Dict[str, str]:
-    """
-    Build runtime variable map from DB and built-ins.
-    If required_keys is provided, DB fetch is limited to those keys.
-    user_context 可包含: current_user_id, current_username, current_user_realname,
-                         current_org_id, current_org_name,
-                         current_account_book_id, current_account_book_name
-    """
-    db_query = db.query(GlobalVariable)
-    if required_keys:
-        db_query = db_query.filter(GlobalVariable.key.in_(required_keys))
-    variables = db_query.all()
-    var_map = {v.key: v.value for v in variables}
+_PLACEHOLDER_RE = re.compile(r"\{(.*?)\}")
+_USER_CONTEXT_VARIABLE_KEYS = {
+    "CURRENT_ACCOUNT_BOOK_NUMBER",
+    "CURRENT_ACCOUNT_BOOK_NAME",
+    "CURRENT_USER_REALNAME",
+    "CURRENT_USERNAME",
+    "CURRENT_USER_ID",
+    "CURRENT_ORG_ID",
+    "CURRENT_ORG_NAME",
+}
 
-    from datetime import datetime, timedelta
+
+def _build_builtin_variable_map(user_context: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     now = datetime.now()
-    var_map.update({
+    var_map = {
         "CURRENT_DATE": now.strftime("%Y-%m-%d"),
         "CURRENT_DATETIME": now.strftime("%Y-%m-%d %H:%M:%S"),
         "CURRENT_TIME": now.strftime("%H:%M:%S"),
@@ -48,9 +44,8 @@ def build_variable_map(
         "NONCE": "".join(random.choices("abcdefghijklmnopqrstuvwxyz0123456789", k=16)),
         "CURRENCY": "CNY",
         "DEFAULT_TAX": "0.13",
-    })
+    }
 
-    # 注入用户上下文变量
     if user_context:
         ctx_mapping = {
             "current_account_book_number": "CURRENT_ACCOUNT_BOOK_NUMBER",
@@ -69,32 +64,92 @@ def build_variable_map(
     return var_map
 
 
+def get_builtin_variable_keys(user_context: Optional[Dict[str, str]] = None) -> Set[str]:
+    keys = set(_build_builtin_variable_map(user_context).keys())
+    keys.update(_USER_CONTEXT_VARIABLE_KEYS)
+    return keys
+
+
+def extract_placeholder_keys(text: Any) -> List[str]:
+    if text is None:
+        return []
+    content = str(text)
+    keys = []
+    for match in _PLACEHOLDER_RE.finditer(content):
+        key = match.group(1).strip()
+        if key:
+            keys.append(key)
+    return keys
+
+
+def _query_global_variables(
+    db: Session,
+    required_keys: Optional[Set[str]] = None,
+) -> Dict[str, str]:
+    if required_keys is not None and not required_keys:
+        return {}
+
+    query = db.query(GlobalVariable)
+    if required_keys:
+        query = query.filter(GlobalVariable.key.in_(required_keys))
+    return {item.key: item.value for item in query.all()}
+
+
+def build_variable_map(
+    db: Session,
+    required_keys: Optional[List[str]] = None,
+    user_context: Optional[Dict[str, str]] = None,
+) -> Dict[str, str]:
+    """
+    Build runtime variable map from DB variables, built-ins, and user context.
+    """
+    builtin_map = _build_builtin_variable_map(user_context)
+    normalized_required = {
+        str(key).strip()
+        for key in (required_keys or [])
+        if str(key).strip()
+    }
+
+    if normalized_required:
+        variable_map = _query_global_variables(
+            db,
+            required_keys={key for key in normalized_required if key not in builtin_map},
+        )
+    else:
+        variable_map = _query_global_variables(db, required_keys=None)
+
+    result = dict(variable_map)
+    result.update(builtin_map)
+    return result
+
+
 def resolve_variables(
     text: str,
     db: Session,
     preloaded_vars: Optional[Dict[str, str]] = None,
-    user_context: Optional[Dict[str, str]] = None
+    user_context: Optional[Dict[str, str]] = None,
 ) -> str:
     """
-    Find all occurrences of {variable_key} and replace them with their actual values from the database.
+    Find all occurrences of {variable_key} and replace them with their actual values.
     """
     if not text or not isinstance(text, str):
         return text
 
-    # Find all matches for {...}
-    matches = re.findall(r'\{(.*?)\}', text)
+    matches = re.findall(r"\{(.*?)\}", text)
     if not matches:
         return text
 
     unique_keys = list(set(matches))
-    var_map = preloaded_vars if preloaded_vars is not None else build_variable_map(db, unique_keys, user_context=user_context)
+    var_map = (
+        preloaded_vars
+        if preloaded_vars is not None
+        else build_variable_map(db, unique_keys, user_context=user_context)
+    )
 
-    # Perform replacement
     resolved_text = text
     for key in unique_keys:
         if key in var_map:
-            resolved_text = resolved_text.replace(f'{{{key}}}', var_map[key])
-
+            resolved_text = resolved_text.replace(f"{{{key}}}", var_map[key])
 
     return resolved_text
 
@@ -103,7 +158,7 @@ def resolve_dict_variables(
     data: Dict[str, Any],
     db: Session,
     preloaded_vars: Optional[Dict[str, str]] = None,
-    user_context: Optional[Dict[str, str]] = None
+    user_context: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
     Recursively resolve variables in a dictionary.

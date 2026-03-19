@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
-    Search,
-    X,
-    Clock,
-    ShieldCheck,
-    Zap,
-    Coins,
     Activity,
-    User,
     ChevronRight,
+    Clock,
+    Coins,
     FunctionSquare,
+    Search,
+    ShieldCheck,
+    User,
+    X,
+    Zap,
 } from 'lucide-react';
 import axios from 'axios';
 import { API_BASE_URL } from '../../services/apiBase';
@@ -34,31 +34,31 @@ interface VariablePickerProps {
 }
 
 const BUILT_IN_VARS: PickerItem[] = [
-    { id: 'b1', key: 'CURRENT_DATE', description: '当前日期 (YYYY-MM-DD)', category: 'datetime' },
-    { id: 'b2', key: 'CURRENT_DATETIME', description: '当前日期时间 (YYYY-MM-DD HH:mm:ss)', category: 'datetime' },
-    { id: 'b3', key: 'CURRENT_TIME', description: '当前时间 (HH:mm:ss)', category: 'datetime' },
-    { id: 'b4', key: 'YESTERDAY', description: '昨天日期 (YYYY-MM-DD)', category: 'datetime' },
-    { id: 'b5', key: 'TOMORROW', description: '明天日期 (YYYY-MM-DD)', category: 'datetime' },
-    { id: 'b6', key: 'TIMESTAMP', description: 'Unix 时间戳（秒）', category: 'datetime' },
-    { id: 'b7', key: 'YEAR', description: '当前年份 (YYYY)', category: 'datetime' },
-    { id: 'b8', key: 'MONTH', description: '当前月份 (01-12)', category: 'datetime' },
-    { id: 'b9', key: 'DAY', description: '当前日期中的日 (01-31)', category: 'datetime' },
-    { id: 'b10', key: 'YEAR_MONTH', description: '当前年月 (YYYY-MM)', category: 'datetime' },
-    { id: 's1', key: 'SYSTEM_VERSION', description: '系统版本号', category: 'system' },
-    { id: 's2', key: 'APP_ENV', description: '运行环境', category: 'system' },
-    { id: 's3', key: 'BASE_PATH', description: '后端服务基础路径', category: 'system' },
-    { id: 'r1', key: 'UUID', description: '随机 UUID v4', category: 'random' },
-    { id: 'r2', key: 'RANDOM_6', description: '6 位随机数字', category: 'random' },
-    { id: 'r3', key: 'NONCE', description: '16 位随机字符串', category: 'random' },
-    { id: 'f1', key: 'CURRENCY', description: '默认币种代码', category: 'finance' },
-    { id: 'f2', key: 'DEFAULT_TAX', description: '默认税率', category: 'finance' },
-    { id: 'u1', key: 'CURRENT_ACCOUNT_BOOK_NUMBER', description: '当前账簿编码', category: 'user' },
-    { id: 'u2', key: 'CURRENT_ACCOUNT_BOOK_NAME', description: '当前账簿名称', category: 'user' },
-    { id: 'u3', key: 'CURRENT_USER_REALNAME', description: '当前用户姓名', category: 'user' },
-    { id: 'u4', key: 'CURRENT_USERNAME', description: '当前用户名', category: 'user' },
-    { id: 'u5', key: 'CURRENT_USER_ID', description: '当前用户 ID', category: 'user' },
-    { id: 'u6', key: 'CURRENT_ORG_ID', description: '当前组织 ID', category: 'user' },
-    { id: 'u7', key: 'CURRENT_ORG_NAME', description: '当前组织名称', category: 'user' },
+    { id: 'b1', key: 'CURRENT_DATE', description: 'Current date (YYYY-MM-DD)', category: 'datetime' },
+    { id: 'b2', key: 'CURRENT_DATETIME', description: 'Current datetime (YYYY-MM-DD HH:mm:ss)', category: 'datetime' },
+    { id: 'b3', key: 'CURRENT_TIME', description: 'Current time (HH:mm:ss)', category: 'datetime' },
+    { id: 'b4', key: 'YESTERDAY', description: 'Yesterday', category: 'datetime' },
+    { id: 'b5', key: 'TOMORROW', description: 'Tomorrow', category: 'datetime' },
+    { id: 'b6', key: 'TIMESTAMP', description: 'Unix timestamp', category: 'datetime' },
+    { id: 'b7', key: 'YEAR', description: 'Current year', category: 'datetime' },
+    { id: 'b8', key: 'MONTH', description: 'Current month', category: 'datetime' },
+    { id: 'b9', key: 'DAY', description: 'Current day', category: 'datetime' },
+    { id: 'b10', key: 'YEAR_MONTH', description: 'Current year and month', category: 'datetime' },
+    { id: 's1', key: 'SYSTEM_VERSION', description: 'System version', category: 'system' },
+    { id: 's2', key: 'APP_ENV', description: 'Application environment', category: 'system' },
+    { id: 's3', key: 'BASE_PATH', description: 'Base API path', category: 'system' },
+    { id: 'r1', key: 'UUID', description: 'Random UUID v4', category: 'random' },
+    { id: 'r2', key: 'RANDOM_6', description: 'Random 6-digit number', category: 'random' },
+    { id: 'r3', key: 'NONCE', description: 'Random nonce string', category: 'random' },
+    { id: 'f1', key: 'CURRENCY', description: 'Default currency code', category: 'finance' },
+    { id: 'f2', key: 'DEFAULT_TAX', description: 'Default tax rate', category: 'finance' },
+    { id: 'u1', key: 'CURRENT_ACCOUNT_BOOK_NUMBER', description: 'Current account book number', category: 'user' },
+    { id: 'u2', key: 'CURRENT_ACCOUNT_BOOK_NAME', description: 'Current account book name', category: 'user' },
+    { id: 'u3', key: 'CURRENT_USER_REALNAME', description: 'Current user real name', category: 'user' },
+    { id: 'u4', key: 'CURRENT_USERNAME', description: 'Current username', category: 'user' },
+    { id: 'u5', key: 'CURRENT_USER_ID', description: 'Current user ID', category: 'user' },
+    { id: 'u6', key: 'CURRENT_ORG_ID', description: 'Current organization ID', category: 'user' },
+    { id: 'u7', key: 'CURRENT_ORG_NAME', description: 'Current organization name', category: 'user' },
 ];
 
 type TabType = 'custom' | 'datetime' | 'system' | 'random' | 'finance' | 'user' | 'functions';
@@ -132,16 +132,16 @@ const VariablePicker = ({
 
     const tabs = useMemo(() => {
         const baseTabs = [
-            { id: 'custom', label: '自定义', icon: <Activity size={14} />, color: 'blue' },
-            { id: 'datetime', label: '时间', icon: <Clock size={14} />, color: 'amber' },
-            { id: 'user', label: '用户', icon: <User size={14} />, color: 'violet' },
-            { id: 'system', label: '系统', icon: <ShieldCheck size={14} />, color: 'cyan' },
-            { id: 'random', label: '工具', icon: <Zap size={14} />, color: 'rose' },
-            { id: 'finance', label: '财务', icon: <Coins size={14} />, color: 'emerald' },
+            { id: 'custom', label: 'Custom', icon: <Activity size={14} />, color: 'blue' },
+            { id: 'datetime', label: 'DateTime', icon: <Clock size={14} />, color: 'amber' },
+            { id: 'user', label: 'User', icon: <User size={14} />, color: 'violet' },
+            { id: 'system', label: 'System', icon: <ShieldCheck size={14} />, color: 'cyan' },
+            { id: 'random', label: 'Utility', icon: <Zap size={14} />, color: 'rose' },
+            { id: 'finance', label: 'Finance', icon: <Coins size={14} />, color: 'emerald' },
         ] as Array<{ id: TabType; label: string; icon: ReactNode; color: string }>;
 
         if (includeFunctions) {
-            baseTabs.splice(2, 0, { id: 'functions', label: '内置函数', icon: <FunctionSquare size={14} />, color: 'indigo' });
+            baseTabs.splice(1, 0, { id: 'functions', label: 'Functions', icon: <FunctionSquare size={14} />, color: 'indigo' });
         }
 
         return baseTabs;
@@ -180,7 +180,7 @@ const VariablePicker = ({
                 <aside className="ff-picker-sidebar">
                     <div className="sidebar-logo">
                         <Activity size={24} className="text-blue-500 animate-pulse" />
-                        <span>{includeFunctions ? '变量 / 函数' : '变量'}</span>
+                        <span>{includeFunctions ? 'Variables / Functions' : 'Variables'}</span>
                     </div>
 
                     <div className="sidebar-tabs">
@@ -205,15 +205,11 @@ const VariablePicker = ({
                 <main className="ff-picker-main">
                     <header className="ff-picker-header">
                         <div className="header-info">
-                            <h3 className="picker-title">
-                                {tabs.find(tab => tab.id === activeTab)?.label}资源库
-                            </h3>
+                            <h3 className="picker-title">{tabs.find(tab => tab.id === activeTab)?.label} Library</h3>
                             <p className="picker-desc">
                                 {activeTab === 'functions'
-                                    ? '选择一个内置函数并插入到当前输入框'
-                                    : (includeFunctions
-                                        ? '搜索并插入变量，或切换到“内置函数”页签插入日期和格式处理函数'
-                                        : '搜索并插入变量到当前输入框')}
+                                    ? 'Insert a built-in function template into the current editor.'
+                                    : 'Choose a variable and insert it into the current editor.'}
                             </p>
                         </div>
                         <button className="close-x-btn" onClick={onClose}>
@@ -226,7 +222,7 @@ const VariablePicker = ({
                             <Search size={18} className="search-glass" />
                             <input
                                 autoFocus
-                                placeholder={activeTab === 'functions' ? '搜索函数名、语法、示例...' : '搜索变量名、描述...'}
+                                placeholder={activeTab === 'functions' ? 'Search functions...' : 'Search variables...'}
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
                             />
@@ -255,7 +251,7 @@ const VariablePicker = ({
                                                 <p className="var-pro-desc"><code>{item.syntax}</code></p>
                                             )}
                                             {activeTab === 'functions' && item.example && (
-                                                <p className="var-pro-desc">例如：<code>{item.example}</code></p>
+                                                <p className="var-pro-desc">Example: <code>{item.example}</code></p>
                                             )}
                                         </div>
                                         <div className="var-pro-arrow">
@@ -266,7 +262,7 @@ const VariablePicker = ({
                             ) : (
                                 <div className="no-data-state">
                                     <div className="no-data-icon"><Search size={40} /></div>
-                                    <p>没有找到匹配项</p>
+                                    <p>No matching items found.</p>
                                 </div>
                             )}
                         </div>
@@ -277,8 +273,8 @@ const VariablePicker = ({
                             <ShieldCheck size={14} className="text-emerald-500" />
                             <span>
                                 {activeTab === 'functions'
-                                    ? <>函数会按示例语法直接插入，你可以再替换其中字段。</>
-                                    : <>变量插入格式为 <b>{`{key}`}</b>{includeFunctions ? '，也可以切换到“内置函数”页签使用其它能力。' : '，运行时会自动解析。'}</>}
+                                    ? <>Functions are inserted as templates so you can keep editing parameters right away.</>
+                                    : <>Variables are inserted as <b>{`{key}`}</b> and will be resolved at runtime.</>}
                             </span>
                         </div>
                     </footer>

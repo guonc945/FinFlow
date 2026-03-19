@@ -1473,6 +1473,14 @@
     outline: none;
 }
 
+.expression-preview-input {
+    cursor: pointer;
+}
+
+.expression-preview-input::placeholder {
+    color: #94a3b8;
+}
+
 .input-with-action > button {
     background: #f8fafc;
     border: none;
@@ -1944,6 +1952,174 @@
 .input-with-action.mini button {
     height: 100%;
     border-radius: 0 6px 6px 0;
+}
+
+.expression-editor-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.46);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1100;
+    padding: 1.5rem;
+}
+
+.expression-editor-modal {
+    width: min(960px, 100%);
+    max-height: min(88vh, 900px);
+    background: #ffffff;
+    border: 1px solid #dbe4f0;
+    border-radius: 18px;
+    box-shadow: 0 24px 80px -28px rgba(15, 23, 42, 0.55);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.expression-editor-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.2rem 1.35rem 1rem;
+    border-bottom: 1px solid #e2e8f0;
+    background: linear-gradient(135deg, #f8fafc 0%, #eef4ff 100%);
+}
+
+.expression-editor-title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    color: #1e293b;
+}
+
+.expression-editor-title-row h3 {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 700;
+}
+
+.expression-editor-header p {
+    margin: 0.35rem 0 0;
+    color: #64748b;
+    font-size: 0.85rem;
+}
+
+.expression-editor-close {
+    border: none;
+    background: transparent;
+    color: #64748b;
+    cursor: pointer;
+    width: 34px;
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+}
+
+.expression-editor-close:hover {
+    background: rgba(148, 163, 184, 0.14);
+    color: #1e293b;
+}
+
+.expression-editor-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.9rem 1.35rem;
+    border-bottom: 1px solid #e2e8f0;
+    background: #ffffff;
+}
+
+.expression-editor-toolbtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    border: 1px solid #dbe4f0;
+    background: #f8fafc;
+    color: #334155;
+    padding: 0.45rem 0.8rem;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 0.84rem;
+    font-weight: 600;
+}
+
+.expression-editor-toolbtn:hover {
+    background: #eef4ff;
+    border-color: #bfd3f9;
+    color: #1d4ed8;
+}
+
+.expression-editor-meta {
+    margin-left: auto;
+    color: #94a3b8;
+    font-size: 0.76rem;
+    font-family: Consolas, Monaco, monospace;
+}
+
+.expression-editor-body {
+    padding: 1.1rem 1.35rem;
+    min-height: 0;
+    flex: 1;
+    display: flex;
+}
+
+.expression-editor-textarea {
+    width: 100%;
+    min-height: 360px;
+    flex: 1;
+    resize: vertical;
+    border: 1px solid #dbe4f0;
+    border-radius: 14px;
+    background: #f8fafc;
+    color: #0f172a;
+    font-family: Consolas, Monaco, monospace;
+    font-size: 0.92rem;
+    line-height: 1.7;
+    padding: 1rem 1.1rem;
+    outline: none;
+}
+
+.expression-editor-textarea:focus {
+    border-color: #6366f1;
+    box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.12);
+    background: #ffffff;
+}
+
+.expression-editor-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    padding: 1rem 1.35rem 1.2rem;
+    border-top: 1px solid #e2e8f0;
+    background: #f8fafc;
+}
+
+@media (max-width: 960px) {
+    .expression-editor-overlay {
+        padding: 0.8rem;
+    }
+
+    .expression-editor-modal {
+        max-height: 94vh;
+    }
+
+    .expression-editor-toolbar {
+        flex-wrap: wrap;
+    }
+
+    .expression-editor-meta {
+        margin-left: 0;
+        width: 100%;
+    }
+
+    .expression-editor-textarea {
+        min-height: 280px;
+    }
 }
 
 .delete-dim-btn {
