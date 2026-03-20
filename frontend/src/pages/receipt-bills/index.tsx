@@ -437,7 +437,8 @@ const ReceiptBills = () => {
     const [dealDateEnd, setDealDateEnd] = useState('');
     const [dealTypeFilter, setDealTypeFilter] = useState('');
 
-    const [isFilterCollapsed, setIsFilterCollapsed] = useState(false);
+    const [isOperationsCollapsed, setIsOperationsCollapsed] = useState(false);
+    const [isConditionCollapsed, setIsConditionCollapsed] = useState(false);
     const [isCommunityDropdownOpen, setIsCommunityDropdownOpen] = useState(false);
     const communityDropdownRef = useRef<HTMLDivElement>(null);
     const [openActionMenuKey, setOpenActionMenuKey] = useState<string | null>(null);
@@ -1341,36 +1342,53 @@ const ReceiptBills = () => {
 
     return (
         <div className="page-container">
-            <div className={`bills-filter-section ${isFilterCollapsed ? 'collapsed' : ''}`}>
+            <div className={`bills-filter-section ${isOperationsCollapsed ? 'collapsed' : ''}`}>
                 <div className="filter-header-row">
                     <div className="flex items-center gap-2">
-                        <h3 className="font-bold text-slate-800">收款账单</h3>
-                        <span className="text-xs text-secondary">共 {totalRecords} 条</span>
+                        <FileText size={16} className="text-primary" />
+                        <h4 className="text-sm font-semibold">同步与操作</h4>
                     </div>
-                    <button className="collapse-toggle" onClick={() => setIsFilterCollapsed(v => !v)}>
-                        {isFilterCollapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+                    <button className="collapse-toggle" onClick={() => setIsOperationsCollapsed(v => !v)}>
+                        {isOperationsCollapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
                     </button>
                 </div>
 
-                {!isFilterCollapsed && (
-                    <div className="filter-content-wrapper">
-                        <div className="action-row flex-wrap">
-                            <div className="flex items-center gap-2 flex-1 flex-wrap">
-                                <div className="search-group" style={{ maxWidth: '240px' }}>
-                                    <Search size={14} className="search-icon" />
-                                    <input
-                                        type="text"
-                                        placeholder="搜索收据号/房号/付款人..."
-                                        value={searchQuery}
-                                        onChange={(e) => { setSearchQuery(e.target.value); setPage(1); }}
-                                    />
+                {!isOperationsCollapsed && (
+                    <div className="filter-content-wrapper fade-in">
+                        <div className="selection-row" style={{ gap: '1rem', alignItems: 'flex-start' }}>
+                            <div className="flex items-center gap-3 flex-1 flex-wrap" style={{ minWidth: 0 }}>
+                                <div className="flex items-center gap-2" style={{ paddingTop: '0.2rem' }}>
+                                    <h3 className="font-bold text-slate-800">收款账单</h3>
+                                    <span
+                                        className="text-xs text-secondary"
+                                        style={{
+                                            padding: '0.15rem 0.5rem',
+                                            borderRadius: '999px',
+                                            background: '#f8fafc',
+                                            border: '1px solid #e2e8f0',
+                                            whiteSpace: 'nowrap',
+                                        }}
+                                    >
+                                        共 {totalRecords} 条
+                                    </span>
                                 </div>
-
-                                <div className="selection-group" ref={communityDropdownRef} style={{ maxWidth: '200px', minWidth: '180px' }}>
+                                <div
+                                    style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '0.5rem',
+                                        padding: '0.35rem 0.5rem',
+                                        borderRadius: '0.75rem',
+                                        background: '#f8fafc',
+                                        border: '1px solid #e2e8f0',
+                                    }}
+                                >
+                                    <span className="text-xs text-secondary" style={{ whiteSpace: 'nowrap' }}>园区范围</span>
+                                <div className="selection-group" ref={communityDropdownRef} style={{ maxWidth: '220px', minWidth: '180px' }}>
                                     <div className={`custom-select-trigger ${isCommunityDropdownOpen ? 'active' : ''}`} onClick={() => setIsCommunityDropdownOpen(v => !v)}>
                                         <div className="trigger-content">
-                                            <span className={communityFilter.length === 0 ? 'placeholder' : 'text-xs truncate'} style={{ maxWidth: '130px' }}>
-                                                {communityFilter.length === 0 ? '选择园区...' : `已选 ${communityFilter.length} 个`}
+                                            <span className={communityFilter.length === 0 ? 'placeholder' : 'text-xs truncate'} style={{ maxWidth: '140px' }}>
+                                                {communityFilter.length === 0 ? '选择园区...' : `已选 ${communityFilter.length} 个园区`}
                                             </span>
                                         </div>
                                         <ChevronDown size={14} className={`arrow ${isCommunityDropdownOpen ? 'rotate' : ''}`} />
@@ -1400,154 +1418,203 @@ const ReceiptBills = () => {
                                         </div>
                                     )}
                                 </div>
-
-                                <div className="flex items-center gap-1">
-                                    <select
-                                        className="enhanced-select text-xs"
-                                        style={{ width: '150px' }}
-                                        value={dealTypeFilter}
-                                        onChange={(e) => { setDealTypeFilter(e.target.value); setPage(1); }}
-                                    >
-                                        <option value="">收入类型</option>
-                                        {Object.entries(RECEIPT_BILL_DEAL_TYPE_LABELS).map(([value, label]) => (
-                                            <option key={value} value={value}>{label}</option>
-                                        ))}
-                                    </select>
                                 </div>
-
-                                <div className="flex items-center gap-1">
-                                    <span className="text-secondary text-xs" style={{ whiteSpace: 'nowrap' }}>收款日期:</span>
-                                    <input type="date" className="enhanced-select text-xs" style={{ width: '140px' }} value={dealDateStart} onChange={(e) => { setDealDateStart(e.target.value); setPage(1); }} />
-                                    <span className="text-secondary">-</span>
-                                    <input type="date" className="enhanced-select text-xs" style={{ width: '140px' }} value={dealDateEnd} onChange={(e) => { setDealDateEnd(e.target.value); setPage(1); }} />
+                                <div className="chips-container" style={{ minHeight: '32px', gap: '0.5rem' }}>
+                                    <div className="selected-chip">
+                                        <span>已选 {selectedReceiptRefs.size} 条</span>
+                                    </div>
+                                    {selectedReceiptRefs.size > 0 && (
+                                        <div className="selected-chip">
+                                            <span>入账合计 ¥{selectedTotalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
 
-                            <button className="btn-primary btn-refresh-list" onClick={handleSync}>
-                                <RefreshCw size={14} /> 同步收款账单
-                            </button>
-
-                            <div className="receipt-batch-action" style={{ position: 'relative' }}>
-                                <button
-                                    className={`btn-outline btn-batch-actions ${isBatchActionsOpen ? 'open' : ''}`}
-                                    onClick={() => {
-                                        setIsBatchActionsOpen(v => !v);
-                                    }}
-                                    title="展开批量操作"
-                                    style={{ height: '36px', padding: '0 0.85rem' }}
-                                >
-                                    <FileText size={14} />
-                                    <span>批量操作</span>
-                                    <span className="batch-actions-badge">{selectedReceiptRefs.size}</span>
-                                    <ChevronDown size={14} className={`batch-actions-arrow ${isBatchActionsOpen ? 'rotate' : ''}`} />
+                            <div className="flex gap-2 flex-wrap" style={{ justifyContent: 'flex-end' }}>
+                                <button className="btn-primary btn-refresh-list" onClick={handleSync}>
+                                    <RefreshCw size={14} className={isSyncing && !['completed', 'failed', 'partially_completed'].includes(syncState.status) ? 'animate-spin' : ''} />
+                                    {isSyncing && !['completed', 'failed', 'partially_completed'].includes(syncState.status) ? '同步中...' : '同步收款账单'}
+                                </button>
+                                <button className="btn-outline" onClick={() => void refreshReceiptViews()}>
+                                    <RefreshCw size={14} /> 刷新列表
                                 </button>
 
-                                {isBatchActionsOpen && (
-                                    <div
-                                        className="custom-dropdown card-shadow slide-up batch-actions-menu"
-                                        style={{
-                                            position: 'absolute',
-                                            top: 'calc(100% + 0.45rem)',
-                                            right: 0,
-                                            width: '188px',
-                                            zIndex: 130,
-                                            padding: '0.35rem 0',
+                                <div className="receipt-batch-action" style={{ position: 'relative' }}>
+                                    <button
+                                        className={`btn-outline btn-batch-actions ${isBatchActionsOpen ? 'open' : ''}`}
+                                        onClick={() => {
+                                            setIsBatchActionsOpen(v => !v);
                                         }}
+                                        title="展开批量操作"
+                                        style={{ height: '36px', padding: '0 0.85rem' }}
                                     >
-                                        <button
-                                            type="button"
-                                            className="dropdown-item"
+                                        <FileText size={14} />
+                                        <span>批量操作</span>
+                                        <span className="batch-actions-badge">{selectedReceiptRefs.size}</span>
+                                        <ChevronDown size={14} className={`batch-actions-arrow ${isBatchActionsOpen ? 'rotate' : ''}`} />
+                                    </button>
+
+                                    {isBatchActionsOpen && (
+                                        <div
+                                            className="custom-dropdown card-shadow slide-up batch-actions-menu"
                                             style={{
-                                                width: '100%',
-                                                border: 'none',
-                                                background: 'transparent',
-                                                textAlign: 'left',
-                                                fontSize: '0.8rem',
-                                                color: canBatchPreview ? '#334155' : '#94a3b8',
-                                                opacity: canBatchPreview ? 1 : 0.5,
-                                                cursor: canBatchPreview ? 'pointer' : 'not-allowed',
+                                                position: 'absolute',
+                                                top: 'calc(100% + 0.45rem)',
+                                                right: 0,
+                                                width: '188px',
+                                                zIndex: 130,
+                                                padding: '0.35rem 0',
                                             }}
-                                            onClick={() => {
-                                                if (!canBatchPreview) return;
-                                                setIsBatchActionsOpen(false);
-                                                void handlePreviewBatchVoucher();
-                                            }}
-                                            title={
-                                                selectedReceiptRefs.size === 0
-                                                    ? '请先勾选收款账单'
-                                                    : '批量预览凭证（按收款单模板/关联账单生成）'
-                                            }
                                         >
-                                            <FileText size={14} /> 批量凭证预览
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="dropdown-item"
-                                            style={{
-                                                width: '100%',
-                                                border: 'none',
-                                                background: 'transparent',
-                                                textAlign: 'left',
-                                                fontSize: '0.8rem',
-                                                color: canBatchVerify ? '#334155' : '#94a3b8',
-                                                opacity: canBatchVerify ? 1 : 0.5,
-                                                cursor: canBatchVerify ? 'pointer' : 'not-allowed',
-                                            }}
-                                            disabled={!canBatchVerify}
-                                            onClick={() => {
-                                                if (!canBatchVerify) return;
-                                                setIsBatchActionsOpen(false);
-                                                void handleBatchVerify();
-                                            }}
-                                            title={
-                                                selectedSuccessCount === 0
-                                                    ? '所选收款单下没有已推送记录'
-                                                    : '批量校验金蝶凭证是否仍然存在'
-                                            }
-                                        >
-                                            <ShieldCheck size={14} /> 批量校验
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="dropdown-item"
-                                            style={{
-                                                width: '100%',
-                                                border: 'none',
-                                                background: 'transparent',
-                                                textAlign: 'left',
-                                                fontSize: '0.8rem',
-                                                color: canBatchReset ? '#c2410c' : '#94a3b8',
-                                                opacity: canBatchReset ? 1 : 0.5,
-                                                cursor: canBatchReset ? 'pointer' : 'not-allowed',
-                                            }}
-                                            disabled={!canBatchReset}
-                                            onClick={() => {
-                                                if (!canBatchReset) return;
-                                                setIsBatchActionsOpen(false);
-                                                void handleBatchReset();
-                                            }}
-                                            title={
-                                                selectedSuccessCount === 0
-                                                    ? '所选收款单下没有可解除记录'
-                                                    : '校验后批量解除本地绑定状态'
-                                            }
-                                        >
-                                            <Link2Off size={14} /> 批量解除
-                                        </button>
-                                    </div>
-                                )}
+                                            <button
+                                                type="button"
+                                                className="dropdown-item"
+                                                style={{
+                                                    width: '100%',
+                                                    border: 'none',
+                                                    background: 'transparent',
+                                                    textAlign: 'left',
+                                                    fontSize: '0.8rem',
+                                                    color: canBatchPreview ? '#334155' : '#94a3b8',
+                                                    opacity: canBatchPreview ? 1 : 0.5,
+                                                    cursor: canBatchPreview ? 'pointer' : 'not-allowed',
+                                                }}
+                                                onClick={() => {
+                                                    if (!canBatchPreview) return;
+                                                    setIsBatchActionsOpen(false);
+                                                    void handlePreviewBatchVoucher();
+                                                }}
+                                                title={
+                                                    selectedReceiptRefs.size === 0
+                                                        ? '请先勾选收款账单'
+                                                        : '批量预览凭证（按收款单模板/关联账单生成）'
+                                                }
+                                            >
+                                                <FileText size={14} /> 批量凭证预览
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="dropdown-item"
+                                                style={{
+                                                    width: '100%',
+                                                    border: 'none',
+                                                    background: 'transparent',
+                                                    textAlign: 'left',
+                                                    fontSize: '0.8rem',
+                                                    color: canBatchVerify ? '#334155' : '#94a3b8',
+                                                    opacity: canBatchVerify ? 1 : 0.5,
+                                                    cursor: canBatchVerify ? 'pointer' : 'not-allowed',
+                                                }}
+                                                disabled={!canBatchVerify}
+                                                onClick={() => {
+                                                    if (!canBatchVerify) return;
+                                                    setIsBatchActionsOpen(false);
+                                                    void handleBatchVerify();
+                                                }}
+                                                title={
+                                                    selectedSuccessCount === 0
+                                                        ? '所选收款单下没有已推送记录'
+                                                        : '批量校验金蝶凭证是否仍然存在'
+                                                }
+                                            >
+                                                <ShieldCheck size={14} /> 批量校验
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="dropdown-item"
+                                                style={{
+                                                    width: '100%',
+                                                    border: 'none',
+                                                    background: 'transparent',
+                                                    textAlign: 'left',
+                                                    fontSize: '0.8rem',
+                                                    color: canBatchReset ? '#c2410c' : '#94a3b8',
+                                                    opacity: canBatchReset ? 1 : 0.5,
+                                                    cursor: canBatchReset ? 'pointer' : 'not-allowed',
+                                                }}
+                                                disabled={!canBatchReset}
+                                                onClick={() => {
+                                                    if (!canBatchReset) return;
+                                                    setIsBatchActionsOpen(false);
+                                                    void handleBatchReset();
+                                                }}
+                                                title={
+                                                    selectedSuccessCount === 0
+                                                        ? '所选收款单下没有可解除记录'
+                                                        : '校验后批量解除本地绑定状态'
+                                                }
+                                            >
+                                                <Link2Off size={14} /> 批量解除
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div
+                            style={{
+                                border: '1px solid #eef2f7',
+                                borderRadius: '0.75rem',
+                                background: '#fcfdff',
+                                padding: '0.75rem 0.85rem 0.2rem',
+                            }}
+                        >
+                            <div className="flex items-center justify-between" style={{ marginBottom: isConditionCollapsed ? '0' : '0.65rem' }}>
+                                <span className="text-xs text-secondary font-medium">筛选条件</span>
+                                <button className="btn-text text-xs text-primary flex items-center gap-1" onClick={() => setIsConditionCollapsed(v => !v)}>
+                                    {isConditionCollapsed ? '展开筛选' : '收起筛选'} {isConditionCollapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+                                </button>
                             </div>
 
-                            <button className="btn-outline" style={{ color: '#ef4444' }} onClick={() => {
-                                setSearchQuery('');
-                                setCommunityFilter([]);
-                                setDealDateStart('');
-                                setDealDateEnd('');
-                                setDealTypeFilter('');
-                                setPage(1);
-                            }}>
-                                <X size={14} /> 重置筛选
-                            </button>
+                            {!isConditionCollapsed && (
+                                <div className="action-row flex-wrap" style={{ paddingTop: 0, borderTop: 'none', gap: '0.65rem' }}>
+                                    <div className="flex items-center gap-2 flex-1 flex-wrap">
+                                        <div className="search-group" style={{ maxWidth: '240px' }}>
+                                            <Search size={14} className="search-icon" />
+                                            <input
+                                                type="text"
+                                                placeholder="搜索收据号/房号/付款人..."
+                                                value={searchQuery}
+                                                onChange={(e) => { setSearchQuery(e.target.value); setPage(1); }}
+                                            />
+                                        </div>
+
+                                        <div className="flex items-center gap-1">
+                                            <select
+                                                className="enhanced-select text-xs"
+                                                style={{ width: '150px' }}
+                                                value={dealTypeFilter}
+                                                onChange={(e) => { setDealTypeFilter(e.target.value); setPage(1); }}
+                                            >
+                                                <option value="">收入类型</option>
+                                                {Object.entries(RECEIPT_BILL_DEAL_TYPE_LABELS).map(([value, label]) => (
+                                                    <option key={value} value={value}>{label}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+
+                                        <div className="flex items-center gap-1">
+                                            <span className="text-secondary text-xs" style={{ whiteSpace: 'nowrap' }}>收款日期:</span>
+                                            <input type="date" className="enhanced-select text-xs" style={{ width: '140px' }} value={dealDateStart} onChange={(e) => { setDealDateStart(e.target.value); setPage(1); }} />
+                                            <span className="text-secondary">-</span>
+                                            <input type="date" className="enhanced-select text-xs" style={{ width: '140px' }} value={dealDateEnd} onChange={(e) => { setDealDateEnd(e.target.value); setPage(1); }} />
+                                        </div>
+                                    </div>
+
+                                    <button className="btn-outline" style={{ color: '#ef4444' }} onClick={() => {
+                                        setSearchQuery('');
+                                        setCommunityFilter([]);
+                                        setDealDateStart('');
+                                        setDealDateEnd('');
+                                        setDealTypeFilter('');
+                                        setPage(1);
+                                    }}>
+                                        <X size={14} /> 重置筛选
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     </div>
                 )}
