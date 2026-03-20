@@ -406,6 +406,16 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.4rem;
+    min-height: 48px;
+}
+
+.cb-adv-field-meta {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
 }
 
 .cb-adv-field-text {
@@ -415,6 +425,18 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     text-align: left;
+    font-weight: 600;
+}
+
+.cb-adv-field-code {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+    font-size: 0.72rem;
+    color: #64748b;
+    font-family: 'SF Mono', 'Fira Code', monospace;
 }
 
 .cb-field-trigger {

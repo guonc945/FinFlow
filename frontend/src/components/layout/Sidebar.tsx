@@ -188,6 +188,10 @@ const Sidebar = () => {
     ];
 
     const navItems = useMemo(() => filterNavItems(rawNavItems), [isAdmin]);
+    const activeAncestorSet = useMemo(
+        () => new Set(collectAncestorKeys(navItems, location.pathname)),
+        [location.pathname, navItems]
+    );
 
     useEffect(() => {
         const ancestors = collectAncestorKeys(navItems, location.pathname);
@@ -208,10 +212,18 @@ const Sidebar = () => {
                 const isExpanded = expandedMenus[key];
 
                 return (
-                    <div key={key} className={classNames('nav-group', { 'nested-group': level > 0 })}>
+                    <div
+                        key={key}
+                        className={classNames('nav-group', {
+                            'nested-group': level > 0,
+                            'group-active': activeAncestorSet.has(key),
+                        })}
+                    >
                         <button
                             className={classNames('nav-item justify-between w-full', {
                                 'nested-nav-item': level > 0,
+                                'nav-parent-active': activeAncestorSet.has(key),
+                                'nav-parent-open': isExpanded,
                             })}
                             onClick={() => toggleMenu(key)}
                         >
@@ -221,7 +233,11 @@ const Sidebar = () => {
                             </div>
                             {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                         </button>
-                        {isExpanded && <div className="nav-children">{renderItems(item.children, level + 1)}</div>}
+                        {isExpanded && (
+                            <div className={classNames('nav-children', { 'nav-children-active': activeAncestorSet.has(key) })}>
+                                {renderItems(item.children, level + 1)}
+                            </div>
+                        )}
                     </div>
                 );
             }

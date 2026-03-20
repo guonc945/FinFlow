@@ -199,6 +199,7 @@ const Projects = () => {
                     columns={columns}
                     data={projects}
                     loading={isLoading}
+                    serialStart={(page - 1) * pageSize + 1}
                     tableId="projects-list"
                     title={
                         <div className="flex items-center gap-2">

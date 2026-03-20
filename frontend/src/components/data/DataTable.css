@@ -268,20 +268,19 @@
 .modern-table th.dt-sticky-right,
 .modern-table td.dt-sticky-right {
     position: sticky;
-    right: 0;
     border-left: 1px solid var(--border-color);
 }
 
 .modern-table th.dt-sticky-left,
 .modern-table td.dt-sticky-left {
     position: sticky;
-    left: 0;
     border-right: 1px solid var(--border-color);
 }
 
 .modern-table th.dt-sticky-right,
 .modern-table th.dt-sticky-left {
     z-index: 15;
+    background: var(--gray-50);
 }
 
 .modern-table td.dt-sticky-right,
@@ -297,6 +296,10 @@
 
 .modern-table td.dt-sticky-right {
     box-shadow: -8px 0 12px -12px rgba(15, 23, 42, 0.35);
+}
+
+.modern-table td.dt-sticky-left {
+    box-shadow: 8px 0 12px -12px rgba(15, 23, 42, 0.35);
 }
 
 .modern-table.table-striped tbody tr:nth-of-type(odd) td.dt-sticky-right,

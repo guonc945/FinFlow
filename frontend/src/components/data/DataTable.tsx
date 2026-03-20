@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { ArrowUpDown, ArrowUp, ArrowDown, Settings2, GripVertical, Eye, EyeOff, ChevronUp, ChevronDown, RotateCcw } from 'lucide-react';
 import classNames from 'classnames';
 import { getMyTableColumnPreference, updateMyTableColumnPreference } from '../../services/api';
@@ -29,6 +29,8 @@ interface DataTableProps<T> {
     onRowClick?: (record: T) => void;
     tableId?: string;
     enableColumnSettings?: boolean;
+    showSerialColumn?: boolean;
+    serialStart?: number;
 }
 
 interface StoredColumnSettings {
@@ -41,10 +43,28 @@ interface ManagedColumn<T> extends Column<T> {
     label: string;
     hideableResolved: boolean;
     reorderableResolved: boolean;
+    fixedResolved?: 'left' | 'right';
+    isSerialColumn: boolean;
+    stickyOffset?: number;
 }
 
 const TABLE_COLUMN_SETTINGS_PREFIX = 'finflow:table-columns:';
 const DEFAULT_COLUMN_SETTINGS: StoredColumnSettings = { order: [], hidden: [] };
+const DEFAULT_SELECTION_COLUMN_WIDTH = 48;
+const DEFAULT_SERIAL_COLUMN_WIDTH = 72;
+const DEFAULT_ACTION_COLUMN_WIDTH = 120;
+const SERIAL_COLUMN_KEYS = new Set([
+    '_serial',
+    '__serial',
+    'serial',
+    'serialno',
+    'serial_no',
+    'rowindex',
+    'row_index',
+    'index',
+    '_index',
+    'no',
+]);
 
 const normalizeStoredSettings = (settings?: Partial<StoredColumnSettings> | null): StoredColumnSettings => ({
     order: Array.isArray(settings?.order) ? Array.from(new Set(settings.order.map(String))) : [],
@@ -78,6 +98,29 @@ const removeLocalSettings = (tableId: string) => {
     window.localStorage.removeItem(`${TABLE_COLUMN_SETTINGS_PREFIX}${tableId}`);
 };
 
+const normalizeColumnTitle = (title: ReactNode) => (typeof title === 'string' ? title.trim() : '');
+
+const isSerialColumnDefinition = <T extends Record<string, any>>(column: Column<T>) => {
+    const normalizedKey = String(column.key).trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
+    const displayLabel = String(column.displayLabel || '').trim();
+    const title = normalizeColumnTitle(column.title);
+    return SERIAL_COLUMN_KEYS.has(normalizedKey) || displayLabel === '序号' || title === '序号';
+};
+
+const resolveStickyWidth = <T extends Record<string, any>>(column: ManagedColumn<T>) => {
+    if (typeof column.width === 'number') return column.width;
+    if (typeof column.width === 'string') {
+        const pxMatch = column.width.trim().match(/^(\d+(?:\.\d+)?)px$/i);
+        if (pxMatch) {
+            return Number(pxMatch[1]);
+        }
+    }
+    if (column.normalizedKey === '_selection') return DEFAULT_SELECTION_COLUMN_WIDTH;
+    if (column.normalizedKey === 'actions') return DEFAULT_ACTION_COLUMN_WIDTH;
+    if (column.isSerialColumn) return DEFAULT_SERIAL_COLUMN_WIDTH;
+    return 0;
+};
+
 const DataTable = <T extends Record<string, any>>({
     columns,
     data,
@@ -89,6 +132,8 @@ const DataTable = <T extends Record<string, any>>({
     onRowClick,
     tableId,
     enableColumnSettings,
+    showSerialColumn = true,
+    serialStart = 1,
 }: DataTableProps<T>) => {
     const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
     const [settingsOpen, setSettingsOpen] = useState(false);
@@ -99,11 +144,40 @@ const DataTable = <T extends Record<string, any>>({
     const hasLocalSettingsChangeRef = useRef(false);
     const settingsEnabled = (enableColumnSettings ?? Boolean(tableId)) && Boolean(tableId);
 
-    const managedColumns = useMemo<ManagedColumn<T>[]>(() => columns.map((column) => {
+    const normalizedColumns = useMemo<Column<T>[]>(() => {
+        const hasSerialColumn = columns.some((column) => isSerialColumnDefinition(column));
+        if (!showSerialColumn || hasSerialColumn) {
+            return columns;
+        }
+
+        const serialColumn: Column<T> = {
+            key: '_serial',
+            title: '序号',
+            width: DEFAULT_SERIAL_COLUMN_WIDTH,
+            fixed: 'left',
+            sortable: false,
+            hideable: false,
+            reorderable: false,
+            render: (_value: any, _record: T, index: number) => serialStart + index,
+        };
+        const nextColumns = [...columns];
+        const selectionIndex = nextColumns.findIndex((column) => String(column.key) === '_selection');
+        const insertIndex = selectionIndex >= 0 ? selectionIndex + 1 : 0;
+        nextColumns.splice(insertIndex, 0, serialColumn);
+        return nextColumns;
+    }, [columns, serialStart, showSerialColumn]);
+
+    const managedColumns = useMemo<ManagedColumn<T>[]>(() => normalizedColumns.map((column) => {
         const normalizedKey = String(column.key);
         const isSelectionColumn = normalizedKey === '_selection';
         const isActionColumn = normalizedKey === 'actions';
-        const isLocked = isSelectionColumn || isActionColumn;
+        const isSerialColumn = isSerialColumnDefinition(column);
+        const isLocked = isSelectionColumn || isActionColumn || isSerialColumn;
+        const fixedResolved = isSelectionColumn || isSerialColumn
+            ? 'left'
+            : isActionColumn
+                ? 'right'
+                : column.fixed;
 
         return {
             ...column,
@@ -112,8 +186,10 @@ const DataTable = <T extends Record<string, any>>({
             sortable: column.sortable ?? !isLocked,
             hideableResolved: column.hideable ?? !isLocked,
             reorderableResolved: column.reorderable ?? !(isLocked || Boolean(column.fixed)),
+            fixedResolved,
+            isSerialColumn,
         };
-    }), [columns]);
+    }), [normalizedColumns]);
 
     const configurableColumns = useMemo(
         () => managedColumns.filter((column) => column.hideableResolved || column.reorderableResolved),
@@ -293,8 +369,8 @@ const DataTable = <T extends Record<string, any>>({
     };
 
     const effectiveColumns = useMemo(() => {
-        const leftColumns = managedColumns.filter((column) => column.fixed === 'left' || column.normalizedKey === '_selection');
-        const rightColumns = managedColumns.filter((column) => column.fixed === 'right' || column.normalizedKey === 'actions');
+        const leftColumns = managedColumns.filter((column) => column.fixedResolved === 'left');
+        const rightColumns = managedColumns.filter((column) => column.fixedResolved === 'right');
         const middleColumns = managedColumns.filter((column) => !leftColumns.includes(column) && !rightColumns.includes(column));
 
         const reorderableKeys = middleColumns
@@ -318,7 +394,27 @@ const DataTable = <T extends Record<string, any>>({
         });
 
         const visibleMiddleColumns = orderedMiddleColumns.filter((column) => !column.hideableResolved || !hiddenKeys.has(column.normalizedKey));
-        return [...leftColumns, ...visibleMiddleColumns, ...rightColumns];
+        const orderedColumns = [...leftColumns, ...visibleMiddleColumns, ...rightColumns];
+        let leftOffset = 0;
+        let rightOffset = 0;
+
+        const stickyRightOffsets = new Map<string, number>();
+        [...rightColumns].reverse().forEach((column) => {
+            stickyRightOffsets.set(column.normalizedKey, rightOffset);
+            rightOffset += resolveStickyWidth(column);
+        });
+
+        return orderedColumns.map((column) => {
+            if (column.fixedResolved === 'left') {
+                const stickyOffset = leftOffset;
+                leftOffset += resolveStickyWidth(column);
+                return { ...column, stickyOffset };
+            }
+            if (column.fixedResolved === 'right') {
+                return { ...column, stickyOffset: stickyRightOffsets.get(column.normalizedKey) ?? 0 };
+            }
+            return { ...column, stickyOffset: undefined };
+        });
     }, [managedColumns, storedSettings.hidden, storedSettings.order]);
 
     const orderedConfigurableColumns = useMemo(() => {
@@ -374,6 +470,20 @@ const DataTable = <T extends Record<string, any>>({
         return sortConfig.direction === 'asc'
             ? <ArrowUp size={14} className="sort-icon active" />
             : <ArrowDown size={14} className="sort-icon active" />;
+    };
+
+    const getStickyStyle = (column: ManagedColumn<T>) => {
+        const style: CSSProperties = {};
+        if (column.width != null) {
+            style.width = column.width;
+        }
+        if (column.fixedResolved === 'left') {
+            style.left = `${column.stickyOffset ?? 0}px`;
+        }
+        if (column.fixedResolved === 'right') {
+            style.right = `${column.stickyOffset ?? 0}px`;
+        }
+        return style;
     };
 
     if (loading) {
@@ -491,14 +601,14 @@ const DataTable = <T extends Record<string, any>>({
                                     <th
                                         key={column.normalizedKey}
                                         onClick={() => column.sortable !== false && handleSort(column.normalizedKey)}
-                                        style={{ width: column.width }}
+                                        style={getStickyStyle(column)}
                                         className={classNames(
                                             'sortable-header',
                                             column.className,
                                             {
                                                 'is-not-sortable': column.sortable === false,
-                                                'dt-sticky-left': column.fixed === 'left',
-                                                'dt-sticky-right': column.fixed === 'right',
+                                                'dt-sticky-left': column.fixedResolved === 'left',
+                                                'dt-sticky-right': column.fixedResolved === 'right',
                                             }
                                         )}
                                     >
@@ -522,11 +632,12 @@ const DataTable = <T extends Record<string, any>>({
                                     {effectiveColumns.map((column) => (
                                         <td
                                             key={column.normalizedKey}
+                                            style={getStickyStyle(column)}
                                             className={classNames(
                                                 column.className,
                                                 {
-                                                    'dt-sticky-left': column.fixed === 'left',
-                                                    'dt-sticky-right': column.fixed === 'right',
+                                                    'dt-sticky-left': column.fixedResolved === 'left',
+                                                    'dt-sticky-right': column.fixedResolved === 'right',
                                                 }
                                             )}
                                         >

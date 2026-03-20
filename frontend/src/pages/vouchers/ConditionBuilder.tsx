@@ -16,6 +16,7 @@ import {
 import SourceFieldPickerModal from './SourceFieldPickerModal';
 import type { VoucherFieldModule, VoucherRelationOption, VoucherSourceFieldOption } from '../../types';
 import ExpressionInputWithActions from './ExpressionInputWithActions';
+import { getSourceFieldDisplayText, getUnifiedSourceFieldLabel } from './sourceFieldLabelUtils';
 import './ConditionBuilder.css';
 
 type ExpressionFunctionOption = {
@@ -265,7 +266,7 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({
             .flatMap(module => module.sources || [])
             .flatMap(source => source.fields || [])
             .map(field => ({
-                label: String(field.label || field.value || ''),
+                label: getUnifiedSourceFieldLabel(field),
                 value: String(field.value || ''),
                 group: field.group ? String(field.group) : undefined,
             }))
@@ -356,6 +357,17 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({
         }
 
         return getFieldOptionsForSourceType(sourceType).find(item => item.value === raw)?.label || raw;
+    };
+
+    const getDisplayFieldCode = (fieldKey: string) => {
+        const raw = String(fieldKey || '').trim();
+        if (!raw) return '';
+
+        const parts = raw.split('.').filter(Boolean);
+        if (parts.length >= 2) {
+            return parts[parts.length - 1] || raw;
+        }
+        return raw;
     };
 
     const applyHistorySnapshot = (serialized: string) => {
@@ -903,10 +915,15 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({
                                     setSourceFieldPickerTarget({ mode: 'field', nodeId: node.id, sourceType: activeSourceType });
                                     setSourceFieldPickerOpen(true);
                                 }}
-                                title="选择字段"
+                                title={node.field ? `${getDisplayFieldLabel(node.field, activeSourceType)} (${getDisplayFieldCode(node.field)})` : '选择字段'}
                             >
-                                <span className="cb-adv-field-text">
-                                    {getDisplayFieldLabel(node.field, activeSourceType)}
+                                <span className="cb-adv-field-meta">
+                                    <span className="cb-adv-field-text">
+                                        {getDisplayFieldLabel(node.field, activeSourceType)}
+                                    </span>
+                                    <span className="cb-adv-field-code">
+                                        {getDisplayFieldCode(node.field)}
+                                    </span>
                                 </span>
                                 <Database size={14} />
                             </button>
@@ -917,7 +934,7 @@ const ConditionBuilder: React.FC<ConditionBuilderProps> = ({
                                 className="rule-field"
                             >
                                 {activeFields.map(field => (
-                                    <option key={field.value} value={field.value}>{field.label}</option>
+                                    <option key={field.value} value={field.value}>{getSourceFieldDisplayText(field)}</option>
                                 ))}
                             </select>
                         )}

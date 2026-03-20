@@ -66,11 +66,11 @@ class VoucherEntryRule(Base):
     line_no = Column(Integer, nullable=False)
     dr_cr = Column(CHAR(1))  # 'D' or 'C'
     account_code = Column(String(50), nullable=False)
-    display_condition_expr = Column(String(255), default="")
-    amount_expr = Column(String(255), nullable=False)
-    summary_expr = Column(String(255), nullable=False)
-    currency_expr = Column(String(100), default="'CNY'")
-    localrate_expr = Column(String(100), default="1")
+    display_condition_expr = Column(Text, default="")
+    amount_expr = Column(Text, nullable=False)
+    summary_expr = Column(Text, nullable=False)
+    currency_expr = Column(Text, default="'CNY'")
+    localrate_expr = Column(Text, default="1")
     aux_items = Column(Text)  # JSON string mapping for Kingdee assgrp (Flex)
     main_cf_assgrp = Column(Text) # JSON string for maincfassgrp
 

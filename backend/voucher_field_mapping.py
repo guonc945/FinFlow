@@ -490,7 +490,7 @@ def build_source_field_options(source_type: str) -> List[Dict[str, str]]:
     options = []
     for field_name in sorted(fields):
         display_name = labels.get(field_name)
-        label = f"{display_name} ({field_name})" if display_name else field_name
+        label = display_name or field_name
         options.append({
             "label": label,
             "value": field_name,

@@ -6041,13 +6041,14 @@ def _preview_voucher_for_bill_via_receipt_templates(
         x_account_book_number=x_account_book_number,
     )
     runtime_vars = build_variable_map(db, user_context=user_context)
+    scoped_relation_records = {"bills": [enriched_bill]}
 
     match_result = _match_receipt_templates(
         receipt_bill=receipt_bill,
         enriched=enriched_receipt,
         runtime_vars=runtime_vars,
         db=db,
-        scoped_relation_records={"bills": [enriched_bill]},
+        scoped_relation_records=scoped_relation_records,
     )
     matched_template = match_result["matched_template"]
     matched_selected_records = match_result["matched_selected_records"]
@@ -6107,7 +6108,7 @@ def _preview_voucher_for_bill_via_receipt_templates(
     for rule in sorted(matched_template.rules, key=lambda r: r.line_no):
         visible, rule_selected_records = _evaluate_rule_display_condition(
             rule.display_condition_expr,
-            enriched,
+            enriched_receipt,
             runtime_vars,
             rule_relation_base_ctx,
         )

@@ -1594,7 +1594,13 @@ const ReceiptBills = () => {
             </div>
 
             <div className="table-area-wrapper">
-                <DataTable columns={columns} data={items} loading={isLoading} tableId="receipt-bills-list" />
+                <DataTable
+                    columns={columns}
+                    data={items}
+                    loading={isLoading}
+                    serialStart={(page - 1) * pageSize + 1}
+                    tableId="receipt-bills-list"
+                />
 
                 <div className="pagination-footer">
                     <div className="pagination-info" style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>

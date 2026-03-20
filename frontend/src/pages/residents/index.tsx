@@ -498,6 +498,7 @@ const Residents = () => {
                     columns={columns}
                     data={filteredResidents}
                     loading={isLoading}
+                    serialStart={(page - 1) * pageSize + 1}
                     tableId="residents-list"
                     title={
                         <div className="flex items-center gap-2">

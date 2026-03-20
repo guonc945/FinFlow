@@ -14,6 +14,7 @@ import AccountSelector from './AccountSelector';
 import type { AccountingSubject, VoucherFieldModule, VoucherRelationOption, VoucherSourceFieldOption } from '../../types';
 import SourceFieldPickerModal from './SourceFieldPickerModal';
 import ExpressionInputWithActions from './ExpressionInputWithActions';
+import { getUnifiedSourceFieldLabel, normalizeVoucherFieldModules } from './sourceFieldLabelUtils';
 import './VoucherTemplates.css';
 
 import { API_BASE_URL } from '../../services/apiBase';
@@ -162,7 +163,10 @@ const normalizeSourceFields = (raw: any): SourceFieldOption[] => {
         }
         const value = String(item?.value ?? item?.field ?? '').trim();
         if (!value) return;
-        const label = String(item?.label ?? value).trim() || value;
+        const label = getUnifiedSourceFieldLabel({
+            label: String(item?.label ?? value).trim() || value,
+            value,
+        });
         const group = String(item?.group ?? '').trim() || '账单字段';
         normalized.push({ label, value, group });
     });
@@ -1062,11 +1066,12 @@ const VoucherTemplates = () => {
         modules: VoucherFieldModule[],
         relations: VoucherRelationOption[] = [],
     ) => {
-        setVoucherFieldModules(modules);
+        const normalizedModules = normalizeVoucherFieldModules(modules);
+        setVoucherFieldModules(normalizedModules);
         setRelationOptions(relations);
-        setBillSourceFields(extractSourceFields(modules, 'bills'));
-        setReceiptBillSourceFields(extractSourceFields(modules, 'receipt_bills'));
-        setDepositSourceFields(extractSourceFields(modules, 'deposit_records'));
+        setBillSourceFields(extractSourceFields(normalizedModules, 'bills'));
+        setReceiptBillSourceFields(extractSourceFields(normalizedModules, 'receipt_bills'));
+        setDepositSourceFields(extractSourceFields(normalizedModules, 'deposit_records'));
     };
 
     const fetchSourceFieldsByType = async (sourceType: 'bills' | 'receipt_bills' | 'deposit_records') => {

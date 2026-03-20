@@ -5,10 +5,10 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    background: rgba(255, 255, 255, 0.75);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border-bottom: 1px solid rgba(226, 232, 240, 0.6);
+    background: rgba(255, 255, 255, 0.78);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(226, 232, 240, 0.9);
     position: sticky;
     top: 0;
     z-index: 10;
@@ -25,7 +25,7 @@
 .header-right {
     display: flex;
     align-items: center;
-    gap: 1.25rem;
+    gap: 1rem;
 }
 
 /* Search Bar */
@@ -46,21 +46,21 @@
 
 .search-bar input {
     width: 100%;
-    padding: 8px 50px 8px 38px;
-    border-radius: 9999px;
+    height: 40px;
+    padding: 8px 48px 8px 38px;
+    border-radius: 10px;
     border: 1px solid transparent;
     background-color: #f1f5f9;
     font-size: 0.875rem;
     color: #334155;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: all 0.2s ease;
     outline: none;
 }
 
 .search-bar input:focus {
     background-color: #ffffff;
     border-color: #cbd5e1;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-    width: 300px;
+    box-shadow: 0 0 0 3px rgba(219, 234, 254, 0.8);
 }
 
 .search-bar input:focus+.search-icon {
@@ -76,6 +76,8 @@
 }
 
 .search-shortcut kbd {
+    min-width: 20px;
+    text-align: center;
     background: #ffffff;
     border: 1px solid #e2e8f0;
     border-radius: 4px;
@@ -83,7 +85,6 @@
     font-size: 0.7rem;
     color: #94a3b8;
     font-family: inherit;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
 /* Icons & Dividers */
@@ -95,32 +96,35 @@
 
 .icon-btn {
     position: relative;
-    padding: 8px;
+    width: 38px;
+    height: 38px;
+    padding: 0;
     color: #64748b;
-    border-radius: 9999px;
-    transition: all 0.2s;
+    border-radius: 10px;
+    transition: all 0.2s ease;
     display: flex;
     align-items: center;
     justify-content: center;
     background: transparent;
-    border: none;
+    border: 1px solid transparent;
     cursor: pointer;
 }
 
 .icon-btn:hover {
-    background-color: #eff6ff;
-    color: #3b82f6;
+    background-color: var(--primary-50);
+    color: var(--primary-600);
 }
 
 .badge-dot {
     position: absolute;
-    top: 6px;
+    top: 8px;
     right: 8px;
     width: 8px;
     height: 8px;
     background-color: #ef4444;
     border-radius: 9999px;
-    border: 2px solid white;
+    border: 2px solid #ffffff;
+    box-shadow: 0 0 0 1px rgba(248, 250, 252, 0.9);
 }
 
 .header-divider {
@@ -151,20 +155,19 @@
 .glass-select {
     appearance: none;
     -webkit-appearance: none;
-    background: rgba(239, 246, 255, 0.6);
-    border: 1px solid rgba(191, 219, 254, 0.5);
-    border-radius: 9999px;
-    padding: 8px 34px 8px 38px;
+    height: 40px;
+    background: rgba(239, 246, 255, 0.78);
+    border: 1px solid rgba(191, 219, 254, 0.62);
+    border-radius: 10px;
+    padding: 8px 38px 8px 40px;
     font-size: 0.875rem;
     font-weight: 600;
     color: #1e3a8a;
     cursor: pointer;
-    box-shadow: 0 1px 2px rgba(59, 130, 246, 0.05);
-    transition: all 0.3s ease;
+    transition: all 0.2s ease;
     backdrop-filter: blur(8px);
     max-width: 350px;
     width: 350px;
-    /* explicitly set to 350px to ensure width */
     text-overflow: ellipsis;
     white-space: nowrap;
     overflow: hidden;
@@ -194,15 +197,14 @@
 }
 
 .glass-select:hover {
-    background: rgba(239, 246, 255, 0.9);
+    background: rgba(239, 246, 255, 0.96);
     border-color: #93c5fd;
-    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.1);
 }
 
 .glass-select:focus {
     outline: none;
     border-color: #60a5fa;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+    box-shadow: 0 0 0 3px rgba(219, 234, 254, 0.9);
     background: #ffffff;
 }
 
@@ -219,10 +221,13 @@
     display: flex;
     align-items: center;
     gap: 12px;
+    min-height: 40px;
     padding: 4px 8px 4px 12px;
-    border-radius: 9999px;
-    transition: background-color 0.2s;
+    border-radius: 10px;
+    transition: background-color 0.2s ease;
     cursor: pointer;
+    border: 1px solid transparent;
+    background: transparent;
 }
 
 .user-profile-header:hover {
@@ -250,7 +255,7 @@
 .avatar-header {
     width: 36px;
     height: 36px;
-    background: linear-gradient(135deg, #3b82f6, #00f2fe);
+    background: linear-gradient(135deg, #3b82f6, #00b4d8);
     color: white;
     border-radius: 9999px;
     display: flex;
@@ -258,32 +263,34 @@
     justify-content: center;
     font-weight: 600;
     font-size: 0.875rem;
-    box-shadow: 0 2px 4px rgba(59, 130, 246, 0.2);
+    box-shadow: 0 2px 6px rgba(59, 130, 246, 0.18);
     border: 2px solid #ffffff;
 }
 
 .profile-chevron {
     color: #94a3b8;
-    transition: transform 0.2s;
+    transition: color 0.2s ease, transform 0.2s ease;
 }
 
 .user-profile-header:hover .profile-chevron {
-    color: #64748b;
+    color: #475569;
 }
 
 /* Logout Button */
 .logout-btn-header {
-    padding: 8px;
-    color: #94a3b8;
-    border-radius: 9999px;
-    transition: all 0.2s;
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    color: #64748b;
+    border-radius: 10px;
+    transition: all 0.2s ease;
     display: flex;
     align-items: center;
     justify-content: center;
     background: transparent;
-    border: none;
+    border: 1px solid transparent;
     cursor: pointer;
-    margin-left: 4px;
+    margin-left: 2px;
 }
 
 .logout-btn-header:hover {
@@ -300,6 +307,10 @@
     .search-shortcut {
         display: none;
     }
+
+    .glass-select {
+        width: 260px;
+    }
 }
 
 @media (max-width: 768px) {
@@ -312,10 +323,16 @@
     }
 
     .glass-select {
-        max-width: 140px;
+        max-width: 160px;
+        width: 160px;
+        padding-left: 36px;
     }
 
     .header-right {
         gap: 0.5rem;
+    }
+
+    .header {
+        padding: 0 1rem;
     }
 }

@@ -254,6 +254,7 @@ const ChargeItems = () => {
                     columns={columns}
                     data={pagedItems}
                     loading={isLoading}
+                    serialStart={startIndex + 1}
                     tableId="charge-items-list"
                     title={
                         <div className="flex items-center justify-between w-full">

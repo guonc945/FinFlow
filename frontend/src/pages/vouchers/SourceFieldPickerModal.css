@@ -10,8 +10,8 @@
 }
 
 .sfpm-modal {
-    width: min(1040px, 96vw);
-    height: min(680px, 86vh);
+    width: min(1320px, 97vw);
+    height: min(700px, 88vh);
     background: #ffffff;
     border-radius: 14px;
     box-shadow: 0 20px 60px rgba(15, 23, 42, 0.25);
@@ -25,7 +25,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0.9rem 1rem;
+    padding: 0.8rem 0.95rem;
     border-bottom: 1px solid #eef2f7;
     background: linear-gradient(180deg, rgba(248, 250, 252, 0.95), rgba(255, 255, 255, 0.95));
 }
@@ -57,7 +57,7 @@
 
 .sfpm-body {
     display: grid;
-    grid-template-columns: 220px 220px 1fr;
+    grid-template-columns: 144px 176px minmax(0, 1fr);
     flex: 1;
     min-height: 0;
 }
@@ -74,8 +74,8 @@
 }
 
 .sfpm-col-title {
-    padding: 0.75rem 0.9rem;
-    font-size: 0.8rem;
+    padding: 0.68rem 0.78rem;
+    font-size: 0.76rem;
     font-weight: 700;
     color: #334155;
     background: #fbfdff;
@@ -83,23 +83,27 @@
 }
 
 .sfpm-list {
-    padding: 0.5rem;
+    padding: 0.45rem;
     overflow: auto;
     display: flex;
     flex-direction: column;
-    gap: 0.35rem;
+    gap: 0.3rem;
 }
 
 .sfpm-item {
     text-align: left;
     border: 1px solid #e2e8f0;
     background: #ffffff;
-    padding: 0.55rem 0.6rem;
+    padding: 0.5rem 0.55rem;
     border-radius: 12px;
     cursor: pointer;
     display: flex;
     flex-direction: column;
     gap: 0.2rem;
+}
+
+.sfpm-modules .sfpm-item {
+    padding: 0.45rem 0.5rem;
 }
 
 .sfpm-item:hover {
@@ -114,19 +118,20 @@
 .sfpm-item-label {
     font-weight: 700;
     color: #0f172a;
-    font-size: 0.9rem;
+    font-size: 0.86rem;
 }
 
 .sfpm-item-note {
     color: #64748b;
-    font-size: 0.75rem;
+    font-size: 0.72rem;
+    line-height: 1.35;
 }
 
 .sfpm-search {
     display: flex;
     align-items: center;
     gap: 0.45rem;
-    padding: 0.75rem 0.9rem;
+    padding: 0.65rem 0.8rem;
     border-bottom: 1px solid #eef2f7;
     background: #ffffff;
 }
@@ -134,10 +139,10 @@
 .sfpm-search input {
     width: 100%;
     border: 1px solid #e2e8f0;
-    padding: 0.5rem 0.6rem;
-    border-radius: 12px;
+    padding: 0.45rem 0.58rem;
+    border-radius: 10px;
     outline: none;
-    font-size: 0.9rem;
+    font-size: 0.86rem;
 }
 
 .sfpm-search input:focus {
@@ -145,22 +150,65 @@
     box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.12);
 }
 
+.sfpm-field-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 0.5rem 0.8rem;
+    border-bottom: 1px solid #eef2f7;
+    background: #ffffff;
+}
+
+.sfpm-view-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.16rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    background: #f8fafc;
+}
+
+.sfpm-view-btn {
+    border: none;
+    background: transparent;
+    color: #64748b;
+    font-size: 0.78rem;
+    font-weight: 700;
+    padding: 0.38rem 0.65rem;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.sfpm-view-btn:hover {
+    color: #334155;
+    background: #eef2f7;
+}
+
+.sfpm-view-btn.active {
+    color: #1d4ed8;
+    background: #eff6ff;
+    box-shadow: inset 0 0 0 1px #bfdbfe;
+}
+
 .sfpm-groups {
-    padding: 0.75rem 0.9rem 1rem 0.9rem;
+    padding: 0.65rem 0.8rem 0.9rem 0.8rem;
     overflow: auto;
+    min-height: 0;
 }
 
 .sfpm-group {
-    margin-bottom: 0.9rem;
+    margin-bottom: 0.8rem;
 }
 
 .sfpm-group-title {
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     font-weight: 800;
     color: #475569;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.42rem;
 }
 
 .sfpm-group-items {
@@ -173,11 +221,11 @@
     text-align: left;
     border: 1px solid #e2e8f0;
     background: #ffffff;
-    border-radius: 12px;
-    padding: 0.55rem 0.65rem;
+    border-radius: 10px;
+    padding: 0.5rem 0.58rem;
     display: grid;
     grid-template-columns: 1fr auto;
-    gap: 0.75rem;
+    gap: 0.65rem;
     align-items: center;
     cursor: pointer;
 }
@@ -189,7 +237,7 @@
 
 .sfpm-field-label {
     color: #0f172a;
-    font-size: 0.9rem;
+    font-size: 0.86rem;
     font-weight: 650;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -198,9 +246,9 @@
 
 .sfpm-field-key {
     color: #64748b;
-    font-size: 0.8rem;
-    padding: 0.2rem 0.45rem;
-    border-radius: 10px;
+    font-size: 0.76rem;
+    padding: 0.18rem 0.4rem;
+    border-radius: 8px;
     border: 1px solid #e2e8f0;
     background: #fbfdff;
     max-width: 420px;
@@ -215,9 +263,113 @@
     font-size: 0.9rem;
 }
 
+.sfpm-field-panels {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 0;
+    flex: 1;
+    min-height: 0;
+}
+
+.sfpm-field-panel {
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid #eef2f7;
+}
+
+.sfpm-field-panel:last-child {
+    border-right: none;
+}
+
+.sfpm-field-panel.is-hidden {
+    display: none;
+}
+
+.sfpm-field-panel-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.58rem 0.8rem;
+    background: #fbfdff;
+    border-bottom: 1px solid #eef2f7;
+    color: #334155;
+    font-size: 0.76rem;
+    font-weight: 700;
+}
+
+.sfpm-field-panel-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.75rem;
+    height: 1.4rem;
+    padding: 0 0.45rem;
+    border-radius: 999px;
+    background: #eef2ff;
+    color: #4f46e5;
+    font-size: 0.75rem;
+    font-weight: 700;
+}
+
+.sfpm-related-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 0.46rem 0.8rem;
+    border-bottom: 1px solid #eef2f7;
+    background: #ffffff;
+}
+
+.sfpm-related-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+}
+
+.sfpm-related-btn {
+    border: 1px solid #e2e8f0;
+    background: #ffffff;
+    color: #64748b;
+    font-size: 0.74rem;
+    font-weight: 700;
+    padding: 0.3rem 0.56rem;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.sfpm-related-btn:hover {
+    border-color: #cbd5e1;
+    color: #334155;
+    background: #f8fafc;
+}
+
+.sfpm-related-btn.active {
+    border-color: #bfdbfe;
+    color: #1d4ed8;
+    background: #eff6ff;
+}
+
 @media (max-width: 920px) {
     .sfpm-body {
-        grid-template-columns: 170px 170px 1fr;
+        grid-template-columns: 116px 144px 1fr;
+    }
+
+    .sfpm-field-panels {
+        grid-template-columns: 1fr;
+    }
+
+    .sfpm-field-panel {
+        border-right: none;
+        border-bottom: 1px solid #eef2f7;
+    }
+
+    .sfpm-field-panel:last-child {
+        border-bottom: none;
     }
 }
 
@@ -236,5 +388,9 @@
     }
     .sfpm-fields {
         border-bottom: none;
+    }
+
+    .sfpm-field-panels {
+        grid-template-columns: 1fr;
     }
 }

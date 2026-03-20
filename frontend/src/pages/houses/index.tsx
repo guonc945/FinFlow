@@ -493,6 +493,7 @@ const Houses = () => {
                     columns={columns}
                     data={pagedHouses}
                     loading={isLoading}
+                    serialStart={startIndex + 1}
                     tableId="houses-list"
                     title={
                         <div className="flex items-center gap-2">
