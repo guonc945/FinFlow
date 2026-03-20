@@ -520,6 +520,7 @@ class VoucherEntryRuleBase(BaseModel):
     line_no: int = Field(..., ge=1)
     dr_cr: Literal["D", "C"]
     account_code: str
+    display_condition_expr: Optional[str] = None
     amount_expr: str
     summary_expr: str
     currency_expr: Optional[str] = "'CNY'"

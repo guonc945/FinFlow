@@ -1,9 +1,10 @@
 ﻿import { useState, useEffect, useMemo, useRef, forwardRef, useImperativeHandle } from 'react';
 import { useLocation } from 'react-router-dom';
+import type { DragEvent as ReactDragEvent } from 'react';
 import { ToastContainer, useToast } from '../../components/Toast';
 import ConfirmModal from '../../components/common/ConfirmModal';
 import {
-    Layers, FileText, Settings, Hash, Info, X, Sliders, ArrowUp, ArrowDown, AlertTriangle,
+    Layers, FileText, Settings, Hash, Info, X, Sliders, GripVertical, AlertTriangle,
     Plus, Save, Trash2, ChevronLeft, Database, Copy, ChevronRight, ChevronDown, Search, LayoutGrid, List,
     CheckSquare, Square, ToggleLeft, ToggleRight
 } from 'lucide-react';
@@ -279,6 +280,7 @@ interface VoucherEntryRule {
     line_no: number;
     dr_cr: 'D' | 'C';
     account_code: string;
+    display_condition_expr?: string;
     amount_expr: string;
     summary_expr: string;
     currency_expr: string;
@@ -286,6 +288,8 @@ interface VoucherEntryRule {
     aux_items?: string | null;
     main_cf_assgrp?: string | null;
 }
+
+type RuleDragPosition = 'before' | 'after';
 
 interface TemplateCategory {
     id: number;
@@ -594,6 +598,7 @@ const VoucherTemplates = () => {
 
     // Detail Modal State
     const [detailModalOpen, setDetailModalOpen] = useState(false);
+    const [displayConditionModalOpen, setDisplayConditionModalOpen] = useState(false);
     const [currentRuleIndex, setCurrentRuleIndex] = useState<number | null>(null);
     const [detailTab, setDetailTab] = useState<'assgrp' | 'maincf'>('assgrp');
 
@@ -618,6 +623,9 @@ const VoucherTemplates = () => {
     const templatesListRef = useRef<HTMLDivElement | null>(null);
     const [currentPage, setCurrentPage] = useState(1);
     const [pageSize, setPageSize] = useState(12);
+    const [draggingRuleIndex, setDraggingRuleIndex] = useState<number | null>(null);
+    const [dragOverRuleIndex, setDragOverRuleIndex] = useState<number | null>(null);
+    const [dragOverRulePosition, setDragOverRulePosition] = useState<RuleDragPosition>('before');
     const location = useLocation();
     const { toasts, showToast, removeToast } = useToast();
     const [confirmState, setConfirmState] = useState<{
@@ -1196,7 +1204,7 @@ const VoucherTemplates = () => {
             return next;
         };
 
-        const normalizeTriggerCondition = (trigger: string | null | undefined) => {
+        const normalizeConditionTree = (trigger: string | null | undefined) => {
             const raw = trigger == null ? '' : String(trigger).trim();
             if (!raw) return raw;
             try {
@@ -1243,10 +1251,11 @@ const VoucherTemplates = () => {
             attachment_expr: replaceInText(template.attachment_expr),
             bizdate_expr: replaceInText(template.bizdate_expr),
             bookeddate_expr: replaceInText(template.bookeddate_expr),
-            trigger_condition: normalizeTriggerCondition(template.trigger_condition),
+            trigger_condition: normalizeConditionTree(template.trigger_condition),
             rules: (template.rules || []).map(r => ({
                 ...r,
                 account_code: replaceInText(r.account_code),
+                display_condition_expr: normalizeConditionTree(r.display_condition_expr),
                 amount_expr: replaceInText(r.amount_expr),
                 summary_expr: replaceInText(r.summary_expr),
                 currency_expr: replaceInText(r.currency_expr),
@@ -1279,8 +1288,8 @@ const VoucherTemplates = () => {
             source_module: 'marki',
             source_type: 'bills',
             rules: [
-                { line_no: 1, dr_cr: 'D', account_code: '', amount_expr: '', summary_expr: '', currency_expr: "'CNY'", localrate_expr: "1" },
-                { line_no: 2, dr_cr: 'C', account_code: '', amount_expr: '', summary_expr: '', currency_expr: "'CNY'", localrate_expr: "1" }
+                { line_no: 1, dr_cr: 'D', account_code: '', display_condition_expr: '', amount_expr: '', summary_expr: '', currency_expr: "'CNY'", localrate_expr: "1" },
+                { line_no: 2, dr_cr: 'C', account_code: '', display_condition_expr: '', amount_expr: '', summary_expr: '', currency_expr: "'CNY'", localrate_expr: "1" }
             ]
         });
         setEditingTemplateId(null);
@@ -1394,6 +1403,7 @@ const VoucherTemplates = () => {
             line_no: currentTemplate.rules.length + 1,
             dr_cr: 'D',
             account_code: '',
+            display_condition_expr: '',
             amount_expr: '',
             summary_expr: '',
             currency_expr: "'CNY'",
@@ -1405,10 +1415,13 @@ const VoucherTemplates = () => {
         });
     };
 
+    const reindexRules = (rules: VoucherEntryRule[]) => (
+        rules.map((rule, index) => ({ ...rule, line_no: index + 1 }))
+    );
+
     const removeRule = (idx: number) => {
         if (!currentTemplate) return;
-        const newRules = currentTemplate.rules.filter((_, i) => i !== idx)
-            .map((r, i) => ({ ...r, line_no: i + 1 }));
+        const newRules = reindexRules(currentTemplate.rules.filter((_, i) => i !== idx));
         setCurrentTemplate({ ...currentTemplate, rules: newRules });
     };
 
@@ -1425,24 +1438,98 @@ const VoucherTemplates = () => {
         setDetailModalOpen(true);
     };
 
-    const updateCurrentRuleDetail = (field: 'aux_items' | 'main_cf_assgrp', value: string) => {
+    const openRuleDisplayCondition = (idx: number) => {
+        setCurrentRuleIndex(idx);
+        setDisplayConditionModalOpen(true);
+    };
+
+    const updateCurrentRuleDetail = (field: 'aux_items' | 'main_cf_assgrp' | 'display_condition_expr', value: string) => {
         if (currentRuleIndex === null) return;
         updateRule(currentRuleIndex, { [field]: value });
     };
 
-    const moveRule = (idx: number, direction: 'up' | 'down') => {
+    const moveRuleToIndex = (fromIndex: number, insertIndex: number) => {
         if (!currentTemplate) return;
+        if (fromIndex < 0 || fromIndex >= currentTemplate.rules.length) return;
+
         const newRules = [...currentTemplate.rules];
-        if (direction === 'up') {
-            if (idx === 0) return;
-            [newRules[idx - 1], newRules[idx]] = [newRules[idx], newRules[idx - 1]];
-        } else {
-            if (idx === newRules.length - 1) return;
-            [newRules[idx + 1], newRules[idx]] = [newRules[idx], newRules[idx + 1]];
+        const [movingRule] = newRules.splice(fromIndex, 1);
+        if (!movingRule) return;
+
+        const boundedIndex = Math.max(0, Math.min(insertIndex, newRules.length));
+        newRules.splice(boundedIndex, 0, movingRule);
+        setCurrentTemplate({ ...currentTemplate, rules: reindexRules(newRules) });
+    };
+
+    const resetRuleDragState = () => {
+        setDraggingRuleIndex(null);
+        setDragOverRuleIndex(null);
+        setDragOverRulePosition('before');
+    };
+
+    const getRuleDragPosition = (event: ReactDragEvent<HTMLTableRowElement>): RuleDragPosition => {
+        const rect = event.currentTarget.getBoundingClientRect();
+        return event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+    };
+
+    const handleRuleDragStart = (idx: number, event: ReactDragEvent<HTMLButtonElement>) => {
+        setDraggingRuleIndex(idx);
+        setDragOverRuleIndex(null);
+        setDragOverRulePosition('before');
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', String(idx));
+    };
+
+    const handleRuleDragOver = (idx: number, event: ReactDragEvent<HTMLTableRowElement>) => {
+        if (draggingRuleIndex === null) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+        const nextPosition = getRuleDragPosition(event);
+        if (dragOverRuleIndex !== idx || dragOverRulePosition !== nextPosition) {
+            setDragOverRuleIndex(idx);
+            setDragOverRulePosition(nextPosition);
         }
-        // Re-assign line numbers
-        const reindexedRules = newRules.map((r, i) => ({ ...r, line_no: i + 1 }));
-        setCurrentTemplate({ ...currentTemplate, rules: reindexedRules });
+    };
+
+    const handleRuleDrop = (idx: number, event: ReactDragEvent<HTMLTableRowElement>) => {
+        if (draggingRuleIndex === null) return;
+        event.preventDefault();
+
+        const dropPosition = getRuleDragPosition(event);
+        let insertIndex = idx + (dropPosition === 'after' ? 1 : 0);
+        if (insertIndex > draggingRuleIndex) {
+            insertIndex -= 1;
+        }
+
+        if (insertIndex !== draggingRuleIndex) {
+            moveRuleToIndex(draggingRuleIndex, insertIndex);
+        }
+        resetRuleDragState();
+    };
+
+    const handleRuleTailDragOver = (event: ReactDragEvent<HTMLTableRowElement>) => {
+        if (draggingRuleIndex === null || !currentTemplate) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+        const tailIndex = currentTemplate.rules.length;
+        if (dragOverRuleIndex !== tailIndex || dragOverRulePosition !== 'after') {
+            setDragOverRuleIndex(tailIndex);
+            setDragOverRulePosition('after');
+        }
+    };
+
+    const handleRuleTailDrop = (event: ReactDragEvent<HTMLTableRowElement>) => {
+        if (draggingRuleIndex === null || !currentTemplate) return;
+        event.preventDefault();
+        const insertIndex = currentTemplate.rules.length - 1;
+        if (insertIndex >= 0 && insertIndex !== draggingRuleIndex) {
+            moveRuleToIndex(draggingRuleIndex, currentTemplate.rules.length);
+        }
+        resetRuleDragState();
+    };
+
+    const handleRuleDragEnd = () => {
+        resetRuleDragState();
     };
 
     const handleAccountChange = (idx: number, accountCode: string) => {
@@ -1855,12 +1942,22 @@ const VoucherTemplates = () => {
                                             <th style={{ width: '80px' }}>借/贷</th>
                                             <th>金额表达式</th>
                                             <th style={{ width: '120px' }}>操作</th>
-                                            <th style={{ width: '60px' }}>排序</th>
+                                            <th style={{ width: '72px' }}>拖拽</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         {currentTemplate.rules.map((rule, idx) => (
-                                            <tr key={idx}>
+                                            <tr
+                                                key={idx}
+                                                className={[
+                                                    'rule-row',
+                                                    draggingRuleIndex === idx ? 'is-dragging' : '',
+                                                    draggingRuleIndex !== idx && dragOverRuleIndex === idx && dragOverRulePosition === 'before' ? 'drop-before' : '',
+                                                    draggingRuleIndex !== idx && dragOverRuleIndex === idx && dragOverRulePosition === 'after' ? 'drop-after' : '',
+                                                ].filter(Boolean).join(' ')}
+                                                onDragOver={(event) => handleRuleDragOver(idx, event)}
+                                                onDrop={(event) => handleRuleDrop(idx, event)}
+                                            >
                                                 <td>{rule.line_no}</td>
                                                 <td>
                                                     <ExpressionInputWithActions
@@ -1898,6 +1995,13 @@ const VoucherTemplates = () => {
                                                 <td>
                                                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                                                         <button
+                                                            className={`detail-config-btn-large condition-config-btn ${rule.display_condition_expr?.trim() ? 'is-active' : ''}`}
+                                                            onClick={() => openRuleDisplayCondition(idx)}
+                                                            title={rule.display_condition_expr?.trim() ? '编辑显示条件（已配置）' : '配置显示条件'}
+                                                        >
+                                                            <ToggleRight size={16} />
+                                                        </button>
+                                                        <button
                                                             className="detail-config-btn-large"
                                                             onClick={() => openRuleDetails(idx)}
                                                             title="配置辅助核算"
@@ -1910,33 +2014,32 @@ const VoucherTemplates = () => {
                                                     </div>
                                                 </td>
                                                 <td>
-                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                                    <div className="rule-drag-cell">
                                                         <button
-                                                            onClick={() => moveRule(idx, 'up')}
-                                                            disabled={idx === 0}
-                                                            style={{
-                                                                border: 'none', background: 'transparent', cursor: idx === 0 ? 'default' : 'pointer',
-                                                                opacity: idx === 0 ? 0.3 : 1, padding: 0, display: 'flex'
-                                                            }}
-                                                            title="上移"
+                                                            type="button"
+                                                            className="rule-drag-handle"
+                                                            draggable
+                                                            onDragStart={(event) => handleRuleDragStart(idx, event)}
+                                                            onDragEnd={handleRuleDragEnd}
+                                                            title="拖动调整分录顺序"
                                                         >
-                                                            <ArrowUp size={14} />
-                                                        </button>
-                                                        <button
-                                                            onClick={() => moveRule(idx, 'down')}
-                                                            disabled={idx === currentTemplate.rules.length - 1}
-                                                            style={{
-                                                                border: 'none', background: 'transparent', cursor: idx === currentTemplate.rules.length - 1 ? 'default' : 'pointer',
-                                                                opacity: idx === currentTemplate.rules.length - 1 ? 0.3 : 1, padding: 0, display: 'flex'
-                                                            }}
-                                                            title="下移"
-                                                        >
-                                                            <ArrowDown size={14} />
+                                                            <GripVertical size={16} />
                                                         </button>
                                                     </div>
                                                 </td>
                                             </tr>
                                         ))}
+                                        {draggingRuleIndex !== null && (
+                                            <tr
+                                                className={`rule-drop-tail ${dragOverRuleIndex === currentTemplate.rules.length ? 'is-active' : ''}`}
+                                                onDragOver={handleRuleTailDragOver}
+                                                onDrop={handleRuleTailDrop}
+                                            >
+                                                <td colSpan={7}>
+                                                    拖到这里，放到最后
+                                                </td>
+                                            </tr>
+                                        )}
                                     </tbody>
                                 </table>
                             </div>
@@ -2018,6 +2121,64 @@ const VoucherTemplates = () => {
                                             />
                                         </div>
                                     )}
+                                </div>
+                            </div>
+                        </div>
+                    )
+                }
+
+                {
+                    displayConditionModalOpen && currentRuleIndex !== null && currentTemplate.rules[currentRuleIndex] && (
+                        <div className="rule-detail-overlay">
+                            <div className="rule-detail-modal display-condition-modal glass-card">
+                                <div className="modal-header">
+                                    <h3>分录行 #{currentTemplate.rules[currentRuleIndex].line_no} 显示条件</h3>
+                                    <button onClick={() => setDisplayConditionModalOpen(false)}><X size={20} /></button>
+                                </div>
+
+                                <div className="display-condition-body">
+                                    {(() => {
+                                        const effectiveSourceType = getEffectiveSourceType(currentTemplate.source_type);
+                                        const triggerSources = getTriggerSourcesForTemplate(currentTemplate);
+                                        return triggerSources.length > 0 ? (
+                                            <>
+                                                <div className="info-box">
+                                                    <Info size={14} />
+                                                    <span>
+                                                        配置当前分录的显示条件。<br />
+                                                        留空表示默认显示；设置条件后，只有命中条件时才生成该分录。
+                                                    </span>
+                                                </div>
+                                                {effectiveSourceType === 'receipt_bills' && (
+                                                    <div style={{
+                                                        marginBottom: '1rem',
+                                                        padding: '0.75rem 1rem',
+                                                        border: '1px solid #fcd34d',
+                                                        background: '#fffbeb',
+                                                        color: '#92400e',
+                                                        borderRadius: '0.75rem',
+                                                        fontSize: '0.875rem'
+                                                    }}>
+                                                        当前为“收款账单根数据源”模式。你可以像模板触发条件一样，通过“添加关联条件”切换到运营账单或押金记录做显示判断。
+                                                    </div>
+                                                )}
+                                                <ConditionBuilder
+                                                    value={currentTemplate.rules[currentRuleIndex].display_condition_expr || ''}
+                                                    onChange={(val) => updateCurrentRuleDetail('display_condition_expr', val)}
+                                                    fields={getConditionRootFields(effectiveSourceType)}
+                                                    fieldModules={voucherFieldModules}
+                                                    rootSourceType={effectiveSourceType}
+                                                    relationOptions={relationOptions}
+                                                />
+                                            </>
+                                        ) : (
+                                            <div className="editor-card animate-slide-up" style={{ padding: '3rem', textAlign: 'center', color: '#64748b' }}>
+                                                <AlertTriangle size={48} style={{ margin: '0 auto 1rem', opacity: 0.5 }} />
+                                                <h3>当前业务模块不支持显示条件</h3>
+                                                <p>请选择支持条件判断的数据源模块后再配置。</p>
+                                            </div>
+                                        );
+                                    })()}
                                 </div>
                             </div>
                         </div>

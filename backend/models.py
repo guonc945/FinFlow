@@ -66,6 +66,7 @@ class VoucherEntryRule(Base):
     line_no = Column(Integer, nullable=False)
     dr_cr = Column(CHAR(1))  # 'D' or 'C'
     account_code = Column(String(50), nullable=False)
+    display_condition_expr = Column(String(255), default="")
     amount_expr = Column(String(255), nullable=False)
     summary_expr = Column(String(255), nullable=False)
     currency_expr = Column(String(100), default="'CNY'")

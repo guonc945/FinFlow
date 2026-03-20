@@ -12,19 +12,21 @@ interface AccountSelectorProps {
     placeholder?: string;
 }
 
-const AccountSelector = ({ value, onChange, onFocus, subjects, placeholder }: AccountSelectorProps) => {
+const AccountSelector = ({
+    value,
+    onChange,
+    onFocus,
+    subjects,
+    placeholder,
+}: AccountSelectorProps) => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const wrapperRef = useRef<HTMLDivElement>(null);
+    const [isFocused, setIsFocused] = useState(false);
+    const matchedSubject = subjects.find(s => s.number === value);
 
-    // Validate Check logic
     const validateInput = (val: string) => {
         if (!val) {
-            setError(null);
-            return;
-        }
-
-        if (val.includes('{') || val.includes('}')) {
             setError(null);
             return;
         }
@@ -46,13 +48,11 @@ const AccountSelector = ({ value, onChange, onFocus, subjects, placeholder }: Ac
     };
 
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const val = e.target.value;
-        onChange(val);
-        if (error) setError(null);
+        onChange(e.target.value);
+        if (error) {
+            setError(null);
+        }
     };
-
-    const [isFocused, setIsFocused] = useState(false);
-    const matchedSubject = subjects.find(s => s.number === value);
 
     const handleFocus = () => {
         setIsFocused(true);
@@ -75,10 +75,9 @@ const AccountSelector = ({ value, onChange, onFocus, subjects, placeholder }: Ac
                         onChange={handleInputChange}
                         onBlur={handleInternalBlur}
                         onFocus={handleFocus}
-                        placeholder={placeholder || "输入或选择科目"}
+                        placeholder={placeholder || '输入或选择科目'}
                     />
 
-                    {/* Display Name Badge when not focused and matched */}
                     {matchedSubject && !isFocused && (
                         <div className="selection-badge" onClick={() => setIsModalOpen(true)}>
                             <span className="badge-code">{matchedSubject.number}</span>
@@ -86,23 +85,23 @@ const AccountSelector = ({ value, onChange, onFocus, subjects, placeholder }: Ac
                         </div>
                     )}
 
-                    {!error && (
-                        <button
-                            type="button"
-                            onClick={() => setIsModalOpen(true)}
-                            className="selector-trigger-btn"
-                            tabIndex={-1}
-                            title="选择科目"
-                        >
-                            <Search size={14} />
-                        </button>
-                    )}
+                    <button
+                        type="button"
+                        onClick={() => setIsModalOpen(true)}
+                        className="selector-trigger-btn"
+                        tabIndex={-1}
+                        title="选择会计科目"
+                    >
+                        <Search size={14} />
+                    </button>
+
                     {error && (
                         <span title={error} className="error-icon">
                             <AlertCircle size={14} />
                         </span>
                     )}
                 </div>
+
                 {matchedSubject && isFocused && (
                     <div className="matched-subject-path-floating" title={matchedSubject.fullname}>
                         {matchedSubject.fullname}

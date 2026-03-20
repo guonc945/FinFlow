@@ -14,7 +14,7 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy import and_, desc, func, extract, or_, inspect, text, cast, String
 from decimal import Decimal
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 import models, schemas, database
 from fetch_bills import sync_bills
 from fetch_deposit_records import sync_deposit_records
@@ -4828,9 +4828,35 @@ def _normalize_literal_account_code(expr: Any) -> Optional[str]:
     account_code = expr.strip()
     if not account_code or "{" in account_code or "}" in account_code:
         return None
+    if extract_expression_function_names(account_code):
+        return None
     if account_code.startswith("'") and account_code.endswith("'") and len(account_code) >= 2:
         account_code = account_code[1:-1].strip()
     return account_code or None
+
+
+def _coerce_expression_result_to_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, (int, float, Decimal)):
+        return value != 0
+
+    text_value = str(value).strip()
+    if not text_value:
+        return False
+
+    normalized = text_value.lower()
+    if normalized in {"false", "0", "0.0", "none", "null", "no", "off", "n", "f", "否", "假"}:
+        return False
+    if normalized in {"true", "1", "1.0", "yes", "on", "y", "t", "是", "真"}:
+        return True
+
+    try:
+        return Decimal(text_value) != 0
+    except Exception:
+        return True
 
 
 def _serialize_rule(rule: models.VoucherEntryRule) -> Dict[str, Any]:
@@ -4838,6 +4864,7 @@ def _serialize_rule(rule: models.VoucherEntryRule) -> Dict[str, Any]:
         "line_no": rule.line_no,
         "dr_cr": rule.dr_cr,
         "account_code": rule.account_code,
+        "display_condition_expr": rule.display_condition_expr,
         "amount_expr": rule.amount_expr,
         "summary_expr": rule.summary_expr,
         "currency_expr": rule.currency_expr,
@@ -5406,6 +5433,7 @@ def _validate_trigger_condition(
     allowed_placeholders: Set[str],
     allowed_fields: Set[str],
     errors: List[str],
+    field_path: str = "trigger_condition",
 ) -> None:
     if not trigger_condition:
         return
@@ -5413,11 +5441,11 @@ def _validate_trigger_condition(
     try:
         root = json.loads(trigger_condition)
     except json.JSONDecodeError as exc:
-        errors.append(f"trigger_condition must be valid JSON: {exc}")
+        errors.append(f"{field_path} must be valid JSON: {exc}")
         return
 
     if not isinstance(root, dict):
-        errors.append("trigger_condition must be a JSON object")
+        errors.append(f"{field_path} must be a JSON object")
         return
 
     normalized_source = (source_type or "").strip().lower() or "bills"
@@ -5495,7 +5523,7 @@ def _validate_trigger_condition(
 
         errors.append(f"{path}.type must be group, rule or relation")
 
-    walk(root, "trigger_condition", normalized_source, allowed_fields)
+    walk(root, field_path, normalized_source, allowed_fields)
 
 
 def _validate_voucher_template_payload(payload: Dict[str, Any], db: Session) -> None:
@@ -5560,16 +5588,23 @@ def _validate_voucher_template_payload(payload: Dict[str, Any], db: Session) -> 
         if dr_cr not in {"D", "C"}:
             errors.append(f"rules[{idx}].dr_cr must be D or C")
 
-        _validate_unknown_placeholders(rule.get("account_code"), f"rules[{idx}].account_code", allowed_placeholders, errors)
         _validate_unknown_placeholders(rule.get("amount_expr"), f"rules[{idx}].amount_expr", allowed_placeholders, errors)
         _validate_unknown_placeholders(rule.get("summary_expr"), f"rules[{idx}].summary_expr", allowed_placeholders, errors)
         _validate_unknown_placeholders(rule.get("currency_expr"), f"rules[{idx}].currency_expr", allowed_placeholders, errors)
         _validate_unknown_placeholders(rule.get("localrate_expr"), f"rules[{idx}].localrate_expr", allowed_placeholders, errors)
-        _validate_unknown_functions(rule.get("account_code"), f"rules[{idx}].account_code", errors)
         _validate_unknown_functions(rule.get("amount_expr"), f"rules[{idx}].amount_expr", errors)
         _validate_unknown_functions(rule.get("summary_expr"), f"rules[{idx}].summary_expr", errors)
         _validate_unknown_functions(rule.get("currency_expr"), f"rules[{idx}].currency_expr", errors)
         _validate_unknown_functions(rule.get("localrate_expr"), f"rules[{idx}].localrate_expr", errors)
+
+        _validate_trigger_condition(
+            rule.get("display_condition_expr"),
+            source_type,
+            allowed_placeholders,
+            allowed_source_fields,
+            errors,
+            f"rules[{idx}].display_condition_expr",
+        )
 
         aux_mapping = _validate_dimension_mapping_json(
             rule.get("aux_items"),
@@ -5586,6 +5621,7 @@ def _validate_voucher_template_payload(payload: Dict[str, Any], db: Session) -> 
 
         account_code = _normalize_literal_account_code(rule.get("account_code"))
         if not account_code:
+            errors.append(f"rules[{idx}].account_code must be a static leaf account code; formulas are not allowed")
             continue
 
         if account_code not in required_dims_cache:
@@ -5594,9 +5630,17 @@ def _validate_voucher_template_payload(payload: Dict[str, Any], db: Session) -> 
                 .filter(models.AccountingSubject.number == account_code)
                 .first()
             )
-            required_dims_cache[account_code] = _extract_required_check_dimensions(subject)
+            required_dims_cache[account_code] = subject
 
-        required_dims = required_dims_cache.get(account_code, set())
+        subject = required_dims_cache.get(account_code)
+        if not subject:
+            errors.append(f"rules[{idx}].account_code references a non-existent account: {account_code}")
+            continue
+        if not getattr(subject, "is_leaf", False):
+            errors.append(f"rules[{idx}].account_code must be a leaf account: {account_code}")
+            continue
+
+        required_dims = _extract_required_check_dimensions(subject)
         if not required_dims:
             continue
 
@@ -5636,10 +5680,49 @@ def _normalize_rule_for_response(rule: models.VoucherEntryRule, fallback_line_no
     rule.dr_cr = dr_map.get(dr_raw, "D")
     rule.line_no = rule.line_no if isinstance(rule.line_no, int) and rule.line_no > 0 else fallback_line_no
     rule.account_code = (rule.account_code or "").strip()
+    rule.display_condition_expr = rule.display_condition_expr if isinstance(rule.display_condition_expr, str) else ""
     rule.amount_expr = rule.amount_expr if isinstance(rule.amount_expr, str) and rule.amount_expr.strip() else "0"
     rule.summary_expr = rule.summary_expr if isinstance(rule.summary_expr, str) else ""
     rule.currency_expr = rule.currency_expr if isinstance(rule.currency_expr, str) and rule.currency_expr.strip() else "'CNY'"
     rule.localrate_expr = rule.localrate_expr if isinstance(rule.localrate_expr, str) and rule.localrate_expr.strip() else "1"
+
+
+def _merge_selected_record_values(base_context: Dict[str, Any], selected_records: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    merged = dict(base_context or {})
+    for record in (selected_records or {}).values():
+        if not isinstance(record, dict):
+            continue
+        for key, value in record.items():
+            if isinstance(key, str) and "." in key:
+                merged[key] = value
+    return merged
+
+
+def _evaluate_rule_display_condition(
+    raw_condition: Optional[str],
+    data: Dict[str, Any],
+    global_context: Optional[Dict[str, Any]] = None,
+    relation_context: Optional[Dict[str, Any]] = None,
+) -> Tuple[bool, Dict[str, Any]]:
+    condition_text = str(raw_condition or "").strip()
+    if not condition_text:
+        return True, {}
+
+    try:
+        condition_root = json.loads(condition_text)
+    except Exception:
+        return False, {}
+
+    scoped_relation_ctx = dict(relation_context or {})
+    scoped_relation_ctx["selected_records"] = {}
+    matched = _check_trigger_conditions(
+        condition_root,
+        data,
+        [],
+        global_context,
+        scoped_relation_ctx if scoped_relation_ctx else None,
+    )
+    return matched, dict(scoped_relation_ctx.get("selected_records") or {})
 
 
 def _normalize_template_for_response(template: models.VoucherTemplate) -> None:
@@ -5996,9 +6079,9 @@ def _preview_voucher_for_bill_via_receipt_templates(
             if isinstance(key, str) and "." in key:
                 expression_context[key] = value
 
-    def resolve_expr(expr: Optional[str]) -> str:
+    def resolve_expr(expr: Optional[str], ctx: Optional[Dict[str, Any]] = None) -> str:
         resolved_with_globals = resolve_variables(expr or "", db, preloaded_vars=runtime_vars)
-        return evaluate_expression(resolved_with_globals, expression_context)
+        return evaluate_expression(resolved_with_globals, ctx or expression_context)
 
     now = datetime.now()
     book_number = resolve_expr(matched_template.book_number_expr or "'BU-35256'")
@@ -6012,13 +6095,30 @@ def _preview_voucher_for_bill_via_receipt_templates(
     kingdee_entries = []
     subject_names_cache = {}
     subject_type_cache = {}
+    rule_relation_base_ctx = {
+        "db": db,
+        "root_record": receipt_bill,
+        "receipt_bill": receipt_bill,
+        "cache": {},
+    }
+    if scoped_relation_records is not None:
+        rule_relation_base_ctx["scoped_records"] = scoped_relation_records
 
     for rule in sorted(matched_template.rules, key=lambda r: r.line_no):
-        summary = resolve_expr(rule.summary_expr)
-        account_code = resolve_expr(rule.account_code)
-        amount_str = resolve_expr(rule.amount_expr)
-        currency = resolve_expr(rule.currency_expr or "'CNY'")
-        localrate = resolve_expr(rule.localrate_expr or "1")
+        visible, rule_selected_records = _evaluate_rule_display_condition(
+            rule.display_condition_expr,
+            enriched,
+            runtime_vars,
+            rule_relation_base_ctx,
+        )
+        if not visible:
+            continue
+        rule_expression_context = _merge_selected_record_values(expression_context, rule_selected_records)
+        summary = resolve_expr(rule.summary_expr, rule_expression_context)
+        account_code = _normalize_literal_account_code(rule.account_code) or (rule.account_code or "").strip()
+        amount_str = resolve_expr(rule.amount_expr, rule_expression_context)
+        currency = resolve_expr(rule.currency_expr or "'CNY'", rule_expression_context)
+        localrate = resolve_expr(rule.localrate_expr or "1", rule_expression_context)
 
         account_display_name = account_code
         if account_code:
@@ -6045,7 +6145,7 @@ def _preview_voucher_for_bill_via_receipt_templates(
                 for dim_key, dim_config in aux_obj.items():
                     assgrp[dim_key] = {}
                     for prop, expr in dim_config.items():
-                        assgrp[dim_key][prop] = resolve_expr(str(expr))
+                        assgrp[dim_key][prop] = resolve_expr(str(expr), rule_expression_context)
             except (json.JSONDecodeError, Exception):
                 pass
 
@@ -6056,7 +6156,7 @@ def _preview_voucher_for_bill_via_receipt_templates(
                 for dim_key, dim_config in mcf_obj.items():
                     maincfassgrp[dim_key] = {}
                     for prop, expr in dim_config.items():
-                        maincfassgrp[dim_key][prop] = resolve_expr(str(expr))
+                        maincfassgrp[dim_key][prop] = resolve_expr(str(expr), rule_expression_context)
             except (json.JSONDecodeError, Exception):
                 pass
 
@@ -6412,9 +6512,9 @@ def preview_voucher_for_receipt(
             if isinstance(key, str) and "." in key:
                 expression_context[key] = value
 
-    def resolve_expr(expr: Optional[str]) -> str:
+    def resolve_expr(expr: Optional[str], ctx: Optional[Dict[str, Any]] = None) -> str:
         resolved_with_globals = resolve_variables(expr or "", db, preloaded_vars=runtime_vars)
-        return evaluate_expression(resolved_with_globals, expression_context)
+        return evaluate_expression(resolved_with_globals, ctx or expression_context)
 
     now = datetime.now()
     book_number = resolve_expr(matched_template.book_number_expr or "'BU-35256'")
@@ -6428,13 +6528,28 @@ def preview_voucher_for_receipt(
     kingdee_entries = []
     subject_names_cache = {}
     subject_type_cache = {}
+    rule_relation_base_ctx = {
+        "db": db,
+        "root_record": receipt_bill,
+        "receipt_bill": receipt_bill,
+        "cache": {},
+    }
 
     for rule in sorted(matched_template.rules, key=lambda r: r.line_no):
-        summary = resolve_expr(rule.summary_expr)
-        account_code = resolve_expr(rule.account_code)
-        amount_str = resolve_expr(rule.amount_expr)
-        currency = resolve_expr(rule.currency_expr or "'CNY'")
-        localrate = resolve_expr(rule.localrate_expr or "1")
+        visible, rule_selected_records = _evaluate_rule_display_condition(
+            rule.display_condition_expr,
+            enriched,
+            runtime_vars,
+            rule_relation_base_ctx,
+        )
+        if not visible:
+            continue
+        rule_expression_context = _merge_selected_record_values(expression_context, rule_selected_records)
+        summary = resolve_expr(rule.summary_expr, rule_expression_context)
+        account_code = _normalize_literal_account_code(rule.account_code) or (rule.account_code or "").strip()
+        amount_str = resolve_expr(rule.amount_expr, rule_expression_context)
+        currency = resolve_expr(rule.currency_expr or "'CNY'", rule_expression_context)
+        localrate = resolve_expr(rule.localrate_expr or "1", rule_expression_context)
 
         account_display_name = account_code
         if account_code:
@@ -6461,7 +6576,7 @@ def preview_voucher_for_receipt(
                 for dim_key, dim_config in aux_obj.items():
                     assgrp[dim_key] = {}
                     for prop, expr in dim_config.items():
-                        assgrp[dim_key][prop] = resolve_expr(str(expr))
+                        assgrp[dim_key][prop] = resolve_expr(str(expr), rule_expression_context)
             except (json_mod.JSONDecodeError, Exception):
                 pass
 
@@ -6472,7 +6587,7 @@ def preview_voucher_for_receipt(
                 for dim_key, dim_config in mcf_obj.items():
                     maincfassgrp[dim_key] = {}
                     for prop, expr in dim_config.items():
-                        maincfassgrp[dim_key][prop] = resolve_expr(str(expr))
+                        maincfassgrp[dim_key][prop] = resolve_expr(str(expr), rule_expression_context)
             except (json_mod.JSONDecodeError, Exception):
                 pass
 
@@ -6839,9 +6954,9 @@ def preview_voucher_for_bill(
     }
 
     runtime_vars = build_variable_map(db, user_context=user_context)
-    def resolve_expr(expr: Optional[str]) -> str:
+    def resolve_expr(expr: Optional[str], ctx: Optional[Dict[str, Any]] = None) -> str:
         resolved_with_globals = resolve_variables(expr or '', db, preloaded_vars=runtime_vars)
-        return evaluate_expression(resolved_with_globals, enriched)
+        return evaluate_expression(resolved_with_globals, ctx or enriched)
 
     matched_template = None
     all_debug_logs = {}
@@ -6924,13 +7039,22 @@ def preview_voucher_for_bill(
     # Prepare subject naming cache
     subject_names_cache = {}
     subject_type_cache = {}
+    expression_context = dict(enriched)
 
     for rule in sorted(matched_template.rules, key=lambda r: r.line_no):
-        summary = resolve_expr(rule.summary_expr)
-        account_code = resolve_expr(rule.account_code)
-        amount_str = resolve_expr(rule.amount_expr)
-        currency = resolve_expr(rule.currency_expr or "'CNY'")
-        localrate = resolve_expr(rule.localrate_expr or "1")
+        visible, rule_selected_records = _evaluate_rule_display_condition(
+            rule.display_condition_expr,
+            enriched,
+            runtime_vars,
+        )
+        if not visible:
+            continue
+        rule_expression_context = _merge_selected_record_values(expression_context, rule_selected_records)
+        summary = resolve_expr(rule.summary_expr, rule_expression_context)
+        account_code = _normalize_literal_account_code(rule.account_code) or (rule.account_code or "").strip()
+        amount_str = resolve_expr(rule.amount_expr, rule_expression_context)
+        currency = resolve_expr(rule.currency_expr or "'CNY'", rule_expression_context)
+        localrate = resolve_expr(rule.localrate_expr or "1", rule_expression_context)
 
         # Fetch subject name for display
         account_display_name = account_code
@@ -6960,7 +7084,7 @@ def preview_voucher_for_bill(
                 for dim_key, dim_config in aux_obj.items():
                     assgrp[dim_key] = {}
                     for prop, expr in dim_config.items():
-                        assgrp[dim_key][prop] = resolve_expr(str(expr))
+                        assgrp[dim_key][prop] = resolve_expr(str(expr), rule_expression_context)
             except (json_mod.JSONDecodeError, Exception):
                 pass
 
@@ -6972,7 +7096,7 @@ def preview_voucher_for_bill(
                 for dim_key, dim_config in mcf_obj.items():
                     maincfassgrp[dim_key] = {}
                     for prop, expr in dim_config.items():
-                        maincfassgrp[dim_key][prop] = resolve_expr(str(expr))
+                        maincfassgrp[dim_key][prop] = resolve_expr(str(expr), rule_expression_context)
             except (json_mod.JSONDecodeError, Exception):
                 pass
 

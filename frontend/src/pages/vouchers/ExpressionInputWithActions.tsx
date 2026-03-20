@@ -33,11 +33,10 @@ const ExpressionInputWithActions = ({
                     <input
                         type="text"
                         value={value}
-                        readOnly
-                        onClick={() => setEditorOpen(true)}
+                        onChange={(event) => onChange(event.target.value)}
                         placeholder={placeholder}
                         className={`${className || ''} expression-preview-input`.trim()}
-                        title="打开公式编辑器"
+                        title="可直接输入，或点击右侧按钮打开公式编辑器"
                     />
                     <button type="button" onClick={() => setEditorOpen(true)} title="打开公式编辑器">
                         <Maximize2 size={size === 'mini' ? 12 : 14} />
