@@ -601,8 +601,8 @@ def _serialize_deposit_record_model(record: models.DepositRecord) -> Dict[str, A
     return {key: _jsonify_scalar(value) for key, value in data.items()}
 
 
-def _enrich_deposit_record_data(record_data: Dict[str, Any]) -> Dict[str, Any]:
-    return mapping_enrich_source_data("deposit_records", record_data)
+def _enrich_deposit_record_data(record_data: Dict[str, Any], db: Optional[Session] = None) -> Dict[str, Any]:
+    return mapping_enrich_source_data("deposit_records", record_data, db=db)
 
 
 def _serialize_prepayment_record_model(record: models.PrepaymentRecord) -> Dict[str, Any]:
@@ -643,8 +643,8 @@ def _serialize_prepayment_record_model(record: models.PrepaymentRecord) -> Dict[
     return {key: _jsonify_scalar(value) for key, value in data.items()}
 
 
-def _enrich_prepayment_record_data(record_data: Dict[str, Any]) -> Dict[str, Any]:
-    return mapping_enrich_source_data("prepayment_records", record_data)
+def _enrich_prepayment_record_data(record_data: Dict[str, Any], db: Optional[Session] = None) -> Dict[str, Any]:
+    return mapping_enrich_source_data("prepayment_records", record_data, db=db)
 
 
 RECEIPT_DEPOSIT_REFUND_LINK_TYPE_LABELS = {
@@ -844,7 +844,7 @@ def _load_receipt_to_deposit_collect_relation(
         .order_by(models.DepositRecord.id.asc())
         .all()
     )
-    return [_enrich_deposit_record_data(_serialize_deposit_record_model(record)) for record in records]
+    return [_enrich_deposit_record_data(_serialize_deposit_record_model(record), db=db) for record in records]
 
 
 def _count_receipt_to_deposit_collect_relation(
@@ -882,7 +882,7 @@ def _load_receipt_to_deposit_refund_relation(
             .order_by(models.DepositRecord.id.asc())
             .all()
         )
-    return [_enrich_deposit_record_data(_serialize_deposit_record_model(record)) for record in records]
+    return [_enrich_deposit_record_data(_serialize_deposit_record_model(record), db=db) for record in records]
 
 
 def _count_receipt_to_deposit_refund_relation(
@@ -940,7 +940,7 @@ def _load_receipt_to_prepayment_recharge_relation(
             .order_by(models.PrepaymentRecord.id.asc())
             .all()
         )
-    return [_enrich_prepayment_record_data(_serialize_prepayment_record_model(record)) for record in records]
+    return [_enrich_prepayment_record_data(_serialize_prepayment_record_model(record), db=db) for record in records]
 
 
 def _count_receipt_to_prepayment_recharge_relation(
@@ -1012,7 +1012,7 @@ def _load_receipt_to_prepayment_refund_relation(
             .order_by(models.PrepaymentRecord.id.asc())
             .all()
         )
-    return [_enrich_prepayment_record_data(_serialize_prepayment_record_model(record)) for record in records]
+    return [_enrich_prepayment_record_data(_serialize_prepayment_record_model(record), db=db) for record in records]
 
 
 def _count_receipt_to_prepayment_refund_relation(
@@ -1159,8 +1159,8 @@ def _aggregate_receipt_bill_push_status(statuses: List[Dict[str, Any]]) -> Dict[
     summary = _summarize_bill_push_statuses(statuses)
 
     if related_bill_count == 0:
-        push_status = "unbound"
-        push_status_label = "未关联运营账单"
+        push_status = "not_pushed"
+        push_status_label = "未推送"
     elif summary["pushing"] > 0:
         push_status = "pushing"
         push_status_label = "推送中"
@@ -2896,6 +2896,24 @@ def _serialize_deposit_record(record: models.DepositRecord) -> Dict[str, Any]:
     }
 
 
+def _build_house_resident_name_subquery(db: Session):
+    resident_display = func.coalesce(
+        func.nullif(models.HouseUser.owner_name, ""),
+        func.nullif(models.HouseUser.name, ""),
+    )
+    return (
+        db.query(
+            models.House.house_id.label("house_id"),
+            models.House.community_id.label("community_id"),
+            func.string_agg(func.distinct(resident_display), ", ").label("resident_name"),
+        )
+        .join(models.HouseUser, models.HouseUser.house_fk == models.House.id)
+        .filter(resident_display.isnot(None))
+        .group_by(models.House.house_id, models.House.community_id)
+        .subquery()
+    )
+
+
 @app.get("/api/prepayment-records")
 def get_prepayment_records(
     search: Optional[str] = None,
@@ -2916,8 +2934,18 @@ def get_prepayment_records(
     if not allowed_community_ids:
         return {"total": 0, "total_amount": 0.00, "items": []}
 
-    query = db.query(models.PrepaymentRecord).filter(
-        models.PrepaymentRecord.community_id.in_(allowed_community_ids)
+    resident_subq = _build_house_resident_name_subquery(db)
+
+    query = (
+        db.query(models.PrepaymentRecord, resident_subq.c.resident_name)
+        .outerjoin(
+            resident_subq,
+            and_(
+                cast(models.PrepaymentRecord.house_id, SAString) == resident_subq.c.house_id,
+                cast(models.PrepaymentRecord.community_id, SAString) == resident_subq.c.community_id,
+            ),
+        )
+        .filter(models.PrepaymentRecord.community_id.in_(allowed_community_ids))
     )
 
     if community_ids:
@@ -2975,6 +3003,7 @@ def get_prepayment_records(
                 models.PrepaymentRecord.category_name.ilike(like),
                 models.PrepaymentRecord.remark.ilike(like),
                 models.PrepaymentRecord.pay_channel_str.ilike(like),
+                resident_subq.c.resident_name.ilike(like),
             )
         )
 
@@ -2987,10 +3016,16 @@ def get_prepayment_records(
         .all()
     )
 
+    items = []
+    for row, resident_name in rows:
+        item = _serialize_prepayment_record(row)
+        item["resident_name"] = resident_name or ""
+        items.append(item)
+
     return {
         "total": total,
         "total_amount": float(total_amount) if total_amount else 0.00,
-        "items": [_serialize_prepayment_record(row) for row in rows],
+        "items": items,
     }
 
 
@@ -3047,8 +3082,18 @@ def get_deposit_records(
     if not allowed_community_ids:
         return {"total": 0, "total_amount": 0.00, "items": []}
 
-    query = db.query(models.DepositRecord).filter(
-        models.DepositRecord.community_id.in_(allowed_community_ids)
+    resident_subq = _build_house_resident_name_subquery(db)
+
+    query = (
+        db.query(models.DepositRecord, resident_subq.c.resident_name)
+        .outerjoin(
+            resident_subq,
+            and_(
+                cast(models.DepositRecord.house_id, SAString) == resident_subq.c.house_id,
+                cast(models.DepositRecord.community_id, SAString) == resident_subq.c.community_id,
+            ),
+        )
+        .filter(models.DepositRecord.community_id.in_(allowed_community_ids))
     )
 
     if community_ids:
@@ -3106,6 +3151,7 @@ def get_deposit_records(
                 models.DepositRecord.cash_pledge_name.ilike(like),
                 models.DepositRecord.remark.ilike(like),
                 models.DepositRecord.pay_channel_str.ilike(like),
+                resident_subq.c.resident_name.ilike(like),
             )
         )
 
@@ -3118,10 +3164,16 @@ def get_deposit_records(
         .all()
     )
 
+    items = []
+    for row, resident_name in rows:
+        item = _serialize_deposit_record(row)
+        item["resident_name"] = resident_name or ""
+        items.append(item)
+
     return {
         "total": total,
         "total_amount": float(total_amount) if total_amount else 0.00,
-        "items": [_serialize_deposit_record(row) for row in rows],
+        "items": items,
     }
 
 

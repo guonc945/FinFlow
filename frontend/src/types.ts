@@ -182,6 +182,7 @@ export interface DepositRecord {
     community_name?: string | null;
     house_id?: number | null;
     house_name?: string | null;
+    resident_name?: string | null;
     amount: number;
     operate_type?: number | null;
     operate_type_label?: string | null;
@@ -210,6 +211,7 @@ export interface PrepaymentRecord {
     unit_id?: number | null;
     house_id?: number | null;
     house_name?: string | null;
+    resident_name?: string | null;
     amount: number;
     balance_after_change?: number | null;
     operate_type?: number | null;

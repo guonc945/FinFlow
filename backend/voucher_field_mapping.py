@@ -146,13 +146,14 @@ RECEIPT_BILL_FIELD_LABELS: Dict[str, str] = {
     "kd_pay_bank_name": "付款银行账户名称",
 }
 
-DEPOSIT_RECORD_RUNTIME_EXTRA_FIELDS: Set[str] = {"operate_type_label"}
+DEPOSIT_RECORD_RUNTIME_EXTRA_FIELDS: Set[str] = {"operate_type_label", "resident_name"}
 DEPOSIT_RECORD_FIELD_LABELS: Dict[str, str] = {
     "id": "记录ID",
     "community_id": "园区ID",
     "community_name": "园区",
     "house_id": "房屋ID",
     "house_name": "房号",
+    "resident_name": "住户",
     "amount": "金额",
     "operate_type": "变动类型编码",
     "operate_type_label": "变动类型",
@@ -174,7 +175,7 @@ DEPOSIT_RECORD_FIELD_LABELS: Dict[str, str] = {
 }
 
 
-PREPAYMENT_RECORD_RUNTIME_EXTRA_FIELDS: Set[str] = {"operate_type_label"}
+PREPAYMENT_RECORD_RUNTIME_EXTRA_FIELDS: Set[str] = {"operate_type_label", "resident_name"}
 PREPAYMENT_RECORD_FIELD_LABELS: Dict[str, str] = {
     "id": "记录ID",
     "community_id": "园区ID",
@@ -184,6 +185,7 @@ PREPAYMENT_RECORD_FIELD_LABELS: Dict[str, str] = {
     "unit_id": "单元ID",
     "house_id": "房屋ID",
     "house_name": "房号",
+    "resident_name": "住户",
     "amount": "变动金额",
     "balance_after_change": "变动后余额",
     "operate_type": "变动类型编码",
@@ -364,12 +366,46 @@ def _enrich_receipt_bill_data(
     return prefix_source_fields(enriched, "receipt_bills")
 
 
-def _enrich_deposit_record_data(record_data: Dict[str, Any]) -> Dict[str, Any]:
-    return prefix_source_fields(record_data, "deposit_records")
+def _lookup_house_resident_name(
+    data: Dict[str, Any],
+    db: Optional[Session] = None,
+) -> str:
+    if db is None:
+        return ""
+
+    community_id = _normalize_lookup_id(data.get("community_id"))
+    house_id = _normalize_lookup_id(data.get("house_id"))
+    if not house_id:
+        return ""
+
+    resident_display = func.coalesce(
+        func.nullif(models.HouseUser.owner_name, ""),
+        func.nullif(models.HouseUser.name, ""),
+    )
+    query = (
+        db.query(func.string_agg(func.distinct(resident_display), ", "))
+        .select_from(models.House)
+        .join(models.HouseUser, models.HouseUser.house_fk == models.House.id)
+        .filter(models.House.house_id == house_id)
+        .filter(resident_display.isnot(None))
+    )
+    if community_id:
+        query = query.filter(models.House.community_id == community_id)
+    return str(query.scalar() or "").strip()
 
 
-def _enrich_prepayment_record_data(record_data: Dict[str, Any]) -> Dict[str, Any]:
-    return prefix_source_fields(record_data, "prepayment_records")
+def _enrich_deposit_record_data(record_data: Dict[str, Any], db: Optional[Session] = None) -> Dict[str, Any]:
+    enriched = dict(record_data)
+    if "resident_name" not in enriched:
+        enriched["resident_name"] = _lookup_house_resident_name(enriched, db=db)
+    return prefix_source_fields(enriched, "deposit_records")
+
+
+def _enrich_prepayment_record_data(record_data: Dict[str, Any], db: Optional[Session] = None) -> Dict[str, Any]:
+    enriched = dict(record_data)
+    if "resident_name" not in enriched:
+        enriched["resident_name"] = _lookup_house_resident_name(enriched, db=db)
+    return prefix_source_fields(enriched, "prepayment_records")
 
 
 def _group_bills_field(field_name: str) -> str:
@@ -518,9 +554,9 @@ def enrich_source_data(
         return _enrich_receipt_bill_data(data, receipt_bill=record, db=db)
 
     if normalized_source == "deposit_records":
-        return _enrich_deposit_record_data(data)
+        return _enrich_deposit_record_data(data, db=db)
 
     if normalized_source == "prepayment_records":
-        return _enrich_prepayment_record_data(data)
+        return _enrich_prepayment_record_data(data, db=db)
 
     return prefix_source_fields(data, normalized_source)

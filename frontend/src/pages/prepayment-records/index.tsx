@@ -269,6 +269,7 @@ const PrepaymentRecords = () => {
         { key: 'id', title: '记录ID' },
         { key: 'community_name', title: '园区' },
         { key: 'house_name', title: '房号' },
+        { key: 'resident_name', title: '住户', render: (value: string) => value || '-' },
         { key: 'category_name', title: '预存款类别', render: (value: string) => value || '-' },
         {
             key: 'amount',

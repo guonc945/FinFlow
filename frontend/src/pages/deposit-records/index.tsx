@@ -264,6 +264,7 @@ const DepositRecords = () => {
         { key: 'id', title: '记录ID' },
         { key: 'community_name', title: '园区' },
         { key: 'house_name', title: '房号' },
+        { key: 'resident_name', title: '住户', render: (value: string) => value || '-' },
         { key: 'cash_pledge_name', title: '押金类型' },
         {
             key: 'amount',

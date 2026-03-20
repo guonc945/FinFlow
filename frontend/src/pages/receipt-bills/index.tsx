@@ -174,15 +174,6 @@ const getReceiptBillDealTypeLabel = (dealType?: number | null, dealTypeLabel?: s
     return RECEIPT_BILL_DEAL_TYPE_LABELS[dealType] || `未知类型(${dealType})`;
 };
 
-const getReceiptDrilldownModuleLabel = (receipt: ReceiptBill) => {
-    if (receipt.drilldown_source === 'deposit_records') return '押金模块';
-    if (receipt.drilldown_source === 'prepayment_records') return '预存款模块';
-    if (receipt.drilldown_source === 'bills') return '运营账单';
-    if (receipt.deal_type === 5 || receipt.deal_type === 6) return '押金模块';
-    if (receipt.deal_type === 1 || receipt.deal_type === 2) return '预存款模块';
-    return '关联模块';
-};
-
 const getDepositRefundLinkTypeLabel = (summary?: ReceiptBillDepositRefundLinkSummary | null) => {
     const linkType = String(summary?.link_type || '').trim();
     if (linkType && RECEIPT_DEPOSIT_REFUND_LINK_TYPE_LABELS[linkType]) {
@@ -1174,9 +1165,6 @@ const ReceiptBills = () => {
                         <span style={{ fontWeight: 600, color: record.drilldown_enabled ? '#0f172a' : '#94a3b8' }}>
                             {record.drilldown_summary || '暂无关联数据'}
                         </span>
-                        <span className="text-secondary text-xs">
-                            {record.drilldown_enabled ? `可钻取 ${record.drilldown_count || 0} 条` : '当前类型暂无关联记录'}
-                        </span>
                     </div>
                 );
             },
@@ -1196,45 +1184,27 @@ const ReceiptBills = () => {
             title: '凭证状态',
             width: 180,
             render: (_: any, record: ReceiptBill) => {
-                let statusKey = 'untracked';
-                let statusLabel = '未跟踪';
-                let detailText = '';
-
-                if (!record.supports_bill_push_ops) {
-                    const moduleLabel = getReceiptDrilldownModuleLabel(record);
-                    detailText = record.drilldown_enabled
-                        ? `收款单模板生成 · ${record.drilldown_summary || moduleLabel}`
-                        : '收款单模板生成 · 当前未建立推送状态追踪';
-                } else {
-                    const summary = getReceiptPushSummary(record);
-                    statusKey = record.push_status || (summary.total > 0 ? 'not_pushed' : 'unbound');
-                    statusLabel = record.push_status_label || RECEIPT_PUSH_STATUS_LABELS[statusKey] || '未推送';
-                    detailText = (record.related_bill_count || 0) > 0
-                        ? `运营账单链路 · 关联 ${record.related_bill_count || 0} 条 / 已推送 ${summary.success || 0} 条`
-                        : '运营账单链路 · 当前尚未关联账单';
-                }
+                const statusKey = String(record.push_status || 'not_pushed').trim() || 'not_pushed';
+                const statusLabel = String(
+                    record.push_status_label || RECEIPT_PUSH_STATUS_LABELS[statusKey] || '未推送'
+                ).trim();
 
                 const style = RECEIPT_VOUCHER_STATUS_STYLES[statusKey] || RECEIPT_VOUCHER_STATUS_STYLES.untracked;
                 return (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                        <span style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            width: 'fit-content',
-                            padding: '0.2rem 0.5rem',
-                            borderRadius: '999px',
-                            fontSize: '0.75rem',
-                            fontWeight: 600,
-                            background: style.bg,
-                            color: style.color,
-                            border: `1px solid ${style.border}`,
-                        }}>
-                            {statusLabel}
-                        </span>
-                        <span className="text-secondary text-xs">
-                            {detailText}
-                        </span>
-                    </div>
+                    <span style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        width: 'fit-content',
+                        padding: '0.2rem 0.5rem',
+                        borderRadius: '999px',
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                        background: style.bg,
+                        color: style.color,
+                        border: `1px solid ${style.border}`,
+                    }}>
+                        {statusLabel}
+                    </span>
                 );
             },
         },
@@ -1243,23 +1213,13 @@ const ReceiptBills = () => {
             title: '金蝶凭证',
             width: 170,
             render: (_: any, record: ReceiptBill) => {
-                const moduleLabel = getReceiptDrilldownModuleLabel(record);
-                const primaryText = record.voucher_number || (record.supports_bill_push_ops ? '-' : '未回写');
-                const secondaryText = record.pushed_at
-                    ? new Date(record.pushed_at).toLocaleString()
-                    : (record.supports_bill_push_ops
-                        ? '运营账单链路回写'
-                        : `收款单模板生成 · ${record.drilldown_summary || moduleLabel || '暂未回写凭证号'}`);
+                const primaryText = String(record.voucher_number || '').trim();
+                if (!primaryText) return '';
 
                 return (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.125rem' }}>
-                        <span style={{ fontWeight: 600, color: record.voucher_number ? '#0f172a' : '#94a3b8' }}>
-                            {primaryText}
-                        </span>
-                        <span className="text-secondary text-xs">
-                            {secondaryText}
-                        </span>
-                    </div>
+                    <span style={{ fontWeight: 600, color: record.voucher_number ? '#0f172a' : '#94a3b8' }}>
+                        {primaryText}
+                    </span>
                 );
             },
         },
