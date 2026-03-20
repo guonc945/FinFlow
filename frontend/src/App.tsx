@@ -98,7 +98,10 @@ function App() {
             <Route path="houses" element={<RouteElement variant="table"><Houses /></RouteElement>} />
             <Route path="residents" element={<RouteElement variant="table"><Residents /></RouteElement>} />
             <Route path="parks" element={<RouteElement variant="table"><Parks /></RouteElement>} />
-            <Route path="reports" element={<RouteElement variant="dashboard"><Reports /></RouteElement>} />
+            <Route path="reports" element={<Navigate to="/integrations/reporting" replace />} />
+            <Route path="integrations" element={<Navigate to="/integrations/reporting" replace />} />
+            <Route path="integrations/reports" element={<Navigate to="/integrations/reporting" replace />} />
+            <Route path="integrations/reporting" element={<RouteElement variant="dashboard"><Reports /></RouteElement>} />
             <Route path="accounting-subjects" element={<RouteElement variant="table"><AccountingSubjects /></RouteElement>} />
             <Route path="customers" element={<RouteElement variant="table"><Customers /></RouteElement>} />
             <Route path="suppliers" element={<RouteElement variant="table"><Suppliers /></RouteElement>} />
@@ -114,7 +117,6 @@ function App() {
               <Route path="charge-items" element={<RouteElement variant="table"><ChargeItems /></RouteElement>} />
               <Route path="users" element={<RouteElement variant="table"><Users /></RouteElement>} />
               <Route path="organizations" element={<RouteElement variant="table"><Organizations /></RouteElement>} />
-              <Route path="integrations" element={<Navigate to="/integrations/credentials" replace />} />
               <Route path="integrations/credentials" element={<RouteElement variant="settings"><CredentialsManager /></RouteElement>} />
               <Route path="integrations/apis" element={<RouteElement variant="table"><APIManager /></RouteElement>} />
               <Route path="vouchers/templates" element={<RouteElement variant="settings"><VoucherTemplates /></RouteElement>} />

@@ -115,6 +115,19 @@
     color: var(--primary-700);
 }
 
+.nav-item.nav-static {
+    cursor: default;
+    background: rgba(248, 250, 252, 0.72);
+    color: var(--text-primary);
+    border-color: rgba(226, 232, 240, 0.9);
+    font-weight: 600;
+}
+
+.nav-item.nav-static:hover {
+    background: rgba(248, 250, 252, 0.72);
+    color: var(--text-primary);
+}
+
 .nav-item.active {
     background: linear-gradient(90deg, var(--primary-50) 0%, rgba(239, 246, 255, 0.35) 100%);
     color: var(--primary-600);

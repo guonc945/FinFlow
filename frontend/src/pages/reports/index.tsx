@@ -893,7 +893,7 @@ export default function Reports() {
                 )}
                 <button className={`reporting-tab ${tab === 'reports' ? 'active' : ''}`} onClick={() => setTab('reports')}>
                     <BarChart3 size={16} />
-                    报表中心
+                    报表定义
                 </button>
                 <button className="btn-outline reporting-tab-action" onClick={() => void loadData()} disabled={loading}>
                     <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />

@@ -33,6 +33,7 @@ interface NavItem {
     icon: LucideIcon;
     key?: string;
     adminOnly?: boolean;
+    static?: boolean;
     children?: NavItem[];
 }
 
@@ -132,6 +133,7 @@ const Sidebar = () => {
             label: '集成中心',
             icon: Network,
             children: [
+                { path: '/integrations/reporting', label: '报表设计', icon: BarChart3 },
                 { path: '/integrations/credentials', label: '凭证配置', icon: Settings, adminOnly: true },
                 { path: '/integrations/apis', label: '接口管理', icon: FileJson, adminOnly: true },
             ],
@@ -172,7 +174,7 @@ const Sidebar = () => {
                 },
             ],
         },
-        { path: '/reports', label: '统计分析', icon: BarChart3 },
+        { label: '报表中心', icon: BarChart3, key: 'report-center', static: true },
         { path: '/account', label: '个人设置', icon: Users },
         {
             key: 'system-management',
@@ -238,6 +240,20 @@ const Sidebar = () => {
                                 {renderItems(item.children, level + 1)}
                             </div>
                         )}
+                    </div>
+                );
+            }
+
+            if (!item.path) {
+                return (
+                    <div
+                        key={item.key || `static-${level}-${index}`}
+                        className={classNames('nav-item', 'nav-static', {
+                            'nav-child': level > 0,
+                        })}
+                    >
+                        {level === 0 && <item.icon className="nav-icon" size={20} />}
+                        <span className={classNames('nav-text', { 'pl-2': level > 0 })}>{item.label}</span>
                     </div>
                 );
             }
