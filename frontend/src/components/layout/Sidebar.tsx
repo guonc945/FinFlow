@@ -102,30 +102,72 @@ const Sidebar = () => {
     const rawNavItems: NavItem[] = [
         { path: '/', label: '仪表盘', icon: LayoutDashboard },
         {
-            key: 'business-center',
-            label: '业务中心',
+            key: 'marki-center',
+            label: '马克业务',
             icon: FileText,
             children: [
                 {
-                    key: 'marki-business',
-                    label: '马克系统',
-                    icon: Building2,
+                    key: 'marki-documents',
+                    label: '业务单据',
+                    icon: Receipt,
                     children: [
-                        { path: '/bills', label: '运营账单', icon: Receipt },
-                        { path: '/receipt-bills', label: '收款账单', icon: Receipt },
+                        { path: '/receipt-bills', label: '收款单据', icon: Receipt },
                         { path: '/deposit-records', label: '押金管理', icon: Wallet },
                         { path: '/prepayment-records', label: '预存款管理', icon: Wallet },
+                        { path: '/bills', label: '运营账单', icon: Receipt },
+                    ],
+                },
+                {
+                    key: 'marki-archives',
+                    label: '基础资料',
+                    icon: Database,
+                    children: [
+                        { path: '/projects', label: '园区管理', icon: Building2, adminOnly: true },
+                        { path: '/charge-items', label: '收费项目', icon: Wallet, adminOnly: true },
+                        { path: '/houses', label: '房屋管理', icon: Home },
+                        { path: '/residents', label: '住户管理', icon: Users },
+                        { path: '/parks', label: '车位管理', icon: Car },
                     ],
                 },
             ],
         },
         {
-            key: 'voucher-center',
-            label: '凭证中心',
-            icon: Layers,
+            key: 'kingdee-center',
+            label: '金蝶财务',
+            icon: Landmark,
             children: [
-                { path: '/vouchers/templates', label: '模板管理', icon: Layers, adminOnly: true },
-                { path: '/vouchers/categories', label: '模板分类', icon: Tags, adminOnly: true },
+                {
+                    key: 'kingdee-archives',
+                    label: '财务档案',
+                    icon: BookOpen,
+                    children: [
+                        { path: '/account-books', label: '账簿管理', icon: BookOpen },
+                        { path: '/accounting-subjects', label: '会计科目', icon: BookOpen },
+                        { path: '/auxiliary-data-categories', label: '辅助资料分类', icon: Tags },
+                        { path: '/auxiliary-data', label: '辅助资料', icon: Layers },
+                        { path: '/customers', label: '客户管理', icon: Users },
+                        { path: '/suppliers', label: '供应商管理', icon: Users },
+                        { path: '/kd-houses', label: '金蝶房号', icon: Home },
+                        { path: '/bank-accounts', label: '银行账户', icon: Landmark },
+                    ],
+                },
+                {
+                    key: 'kingdee-vouchers',
+                    label: '凭证管理',
+                    icon: Layers,
+                    children: [
+                        { path: '/vouchers/templates', label: '凭证模板', icon: Layers, adminOnly: true },
+                        { path: '/vouchers/categories', label: '模板分类', icon: Tags, adminOnly: true },
+                    ],
+                },
+            ],
+        },
+        {
+            key: 'oa-center',
+            label: '泛微协同',
+            icon: Building2,
+            children: [
+                { path: '/oa-center', label: '待接入页面', icon: FileText },
             ],
         },
         {
@@ -138,44 +180,7 @@ const Sidebar = () => {
                 { path: '/integrations/apis', label: '接口管理', icon: FileJson, adminOnly: true },
             ],
         },
-        {
-            key: 'base-archives',
-            label: '基础档案',
-            icon: Database,
-            children: [
-                {
-                    key: 'kingdee-system',
-                    label: '金蝶财务',
-                    icon: Landmark,
-                    children: [
-                        { path: '/account-books', label: '账簿管理', icon: BookOpen },
-                        { path: '/accounting-subjects', label: '会计科目', icon: BookOpen },
-                        { path: '/auxiliary-data-categories', label: '辅助资料分类', icon: Tags },
-                        { path: '/auxiliary-data', label: '辅助资料', icon: Layers },
-                        { path: '/customers', label: '客户管理', icon: Users },
-                        { path: '/suppliers', label: '供应商管理', icon: Users },
-                        { path: '/kd-houses', label: '房号管理', icon: Home },
-                        { path: '/bank-accounts', label: '银行账户', icon: Landmark },
-                    ],
-                },
-                {
-                    key: 'marki-system',
-                    label: '马克运营',
-                    icon: Building2,
-                    children: [
-                        { path: '/projects', label: '园区管理', icon: Building2, adminOnly: true },
-                        { path: '/charge-items', label: '收费项目', icon: Wallet, adminOnly: true },
-                        { path: '/deposit-records', label: '押金管理', icon: Wallet },
-                        { path: '/prepayment-records', label: '预存款管理', icon: Wallet },
-                        { path: '/houses', label: '房屋管理', icon: Home },
-                        { path: '/residents', label: '住户管理', icon: Users },
-                        { path: '/parks', label: '车位管理', icon: Car },
-                    ],
-                },
-            ],
-        },
-        { label: '报表中心', icon: BarChart3, key: 'report-center', static: true },
-        { path: '/account', label: '个人设置', icon: Users },
+        { path: '/report-center', label: '报表中心', icon: BarChart3 },
         {
             key: 'system-management',
             label: '系统管理',
@@ -185,6 +190,7 @@ const Sidebar = () => {
                 { path: '/organizations', label: '组织管理', icon: Network },
                 { path: '/users', label: '用户管理', icon: Users },
                 { path: '/settings', label: '系统设置', icon: Settings },
+                { path: '/account', label: '个人设置', icon: Users },
             ],
         },
     ];
@@ -261,8 +267,8 @@ const Sidebar = () => {
             return (
                 <NavLink
                     key={item.path}
-                    to={item.path!}
-                    onClick={handleRouteClick(item.path!)}
+                    to={item.path}
+                    onClick={handleRouteClick(item.path)}
                     onMouseEnter={() => warmRoute(item.path)}
                     onFocus={() => warmRoute(item.path)}
                     onPointerDown={() => warmRoute(item.path)}

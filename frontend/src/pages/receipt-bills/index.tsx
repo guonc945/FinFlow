@@ -1358,7 +1358,7 @@ const ReceiptBills = () => {
                         <div className="selection-row" style={{ gap: '1rem', alignItems: 'flex-start' }}>
                             <div className="flex items-center gap-3 flex-1 flex-wrap" style={{ minWidth: 0 }}>
                                 <div className="flex items-center gap-2" style={{ paddingTop: '0.2rem' }}>
-                                    <h3 className="font-bold text-slate-800">收款账单</h3>
+                                    <h3 className="font-bold text-slate-800">收款单据</h3>
                                     <span
                                         className="text-xs text-secondary"
                                         style={{

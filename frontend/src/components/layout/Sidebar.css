@@ -43,10 +43,10 @@
 
 .sidebar-nav {
     flex: 1;
-    padding: var(--space-4) var(--space-3);
+    padding: 0.78rem 0.68rem;
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
+    gap: 0.52rem;
     overflow-y: auto;
     scrollbar-gutter: stable;
 }
@@ -148,15 +148,15 @@
 .nav-group {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 4px;
 }
 
 .nav-children {
     display: flex;
     flex-direction: column;
-    margin-left: 12px;
-    padding-left: 12px;
-    gap: 2px;
+    margin-left: 14px;
+    padding: 0.4rem 0 0.1rem 0.85rem;
+    gap: 4px;
     position: relative;
 }
 
@@ -175,11 +175,11 @@
 }
 
 .nested-group {
-    margin-top: 2px;
+    margin-top: 4px;
 }
 
 .nested-nav-item {
-    padding-left: var(--space-6);
+    padding-left: calc(var(--space-6) + 2px);
 }
 
 .nav-parent-open {
@@ -210,7 +210,7 @@
     min-height: 38px;
     padding-top: var(--space-2);
     padding-bottom: var(--space-2);
-    padding-left: var(--space-6);
+    padding-left: calc(var(--space-6) + 2px);
     font-size: 0.9rem;
     border-radius: var(--radius-md);
 }
@@ -225,6 +225,156 @@
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+/* 一级主系统 */
+.sidebar-nav > .nav-group {
+    padding: 0.12rem;
+    border-radius: 0.82rem;
+    background: linear-gradient(180deg, rgba(248, 250, 252, 0.92) 0%, rgba(241, 245, 249, 0.58) 100%);
+    border: 1px solid rgba(226, 232, 240, 0.9);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.sidebar-nav > .nav-group + .nav-group {
+    margin-top: 0;
+}
+
+.sidebar-nav > .nav-group > .nav-item {
+    min-height: 36px;
+    padding: 0.46rem 0.66rem;
+    border-radius: 0.62rem;
+    font-size: 0.89rem;
+    font-weight: 700;
+    color: #0f172a;
+    letter-spacing: 0.01em;
+}
+
+.sidebar-nav > .nav-group > .nav-item .nav-icon,
+.sidebar-nav > .nav-group > .nav-item svg {
+    color: #334155;
+}
+
+.sidebar-nav > .nav-group > .nav-item > .flex {
+    gap: 0.5rem;
+}
+
+.sidebar-nav > .nav-group > .nav-item > .flex .nav-icon {
+    width: 1.44rem;
+    height: 1.44rem;
+    padding: 0.2rem;
+    border-radius: 0.44rem;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(241, 245, 249, 0.92) 100%);
+    border: 1px solid rgba(226, 232, 240, 0.95);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+    color: #1e293b;
+}
+
+.sidebar-nav > .nav-group > .nav-item > .flex .nav-text {
+    font-size: 0.88rem;
+}
+
+.sidebar-nav > .nav-group > .nav-item > svg:last-child {
+    width: 0.8rem;
+    height: 0.8rem;
+    padding: 0.04rem;
+    border-radius: 999px;
+    color: #64748b;
+    background: rgba(255, 255, 255, 0.66);
+    border: 1px solid rgba(226, 232, 240, 0.85);
+}
+
+.sidebar-nav > .nav-group > .nav-item:hover {
+    background: rgba(255, 255, 255, 0.82);
+    color: #0f172a;
+}
+
+.sidebar-nav > .nav-group > .nav-item:hover > .flex .nav-icon {
+    background: linear-gradient(180deg, #ffffff 0%, rgba(248, 250, 252, 0.96) 100%);
+    color: #0f172a;
+}
+
+.sidebar-nav > .nav-group > .nav-item:hover > svg:last-child {
+    color: #334155;
+    background: rgba(255, 255, 255, 0.9);
+}
+
+.sidebar-nav > .nav-group > .nav-children {
+    margin-left: 0;
+    padding: 0.28rem 0.12rem 0.12rem 0.4rem;
+}
+
+.sidebar-nav > .nav-group > .nav-children::before {
+    left: 0.2rem;
+    top: 0.24rem;
+    bottom: 0.14rem;
+    background: rgba(203, 213, 225, 0.75);
+}
+
+.sidebar-nav > .nav-group.group-active > .nav-item > .flex .nav-icon,
+.sidebar-nav > .nav-group > .nav-item.nav-parent-active > .flex .nav-icon {
+    color: #2563eb;
+    border-color: rgba(191, 219, 254, 0.95);
+    background: linear-gradient(180deg, rgba(239, 246, 255, 0.96) 0%, rgba(219, 234, 254, 0.85) 100%);
+}
+
+.sidebar-nav > .nav-group.group-active > .nav-item > svg:last-child,
+.sidebar-nav > .nav-group > .nav-item.nav-parent-active > svg:last-child {
+    color: #2563eb;
+    border-color: rgba(191, 219, 254, 0.95);
+    background: rgba(239, 246, 255, 0.92);
+}
+
+/* 二级功能组 */
+.sidebar-nav > .nav-group > .nav-children > .nav-group > .nav-item {
+    min-height: 38px;
+    padding: 0.62rem 0.8rem 0.62rem 0.95rem;
+    border-radius: 0.75rem;
+    background: rgba(255, 255, 255, 0.72);
+    border: 1px solid rgba(226, 232, 240, 0.78);
+    color: #334155;
+    font-size: 0.89rem;
+    font-weight: 650;
+}
+
+.sidebar-nav > .nav-group > .nav-children > .nav-group > .nav-item:hover {
+    background: rgba(255, 255, 255, 0.96);
+    color: #0f172a;
+}
+
+.sidebar-nav > .nav-group > .nav-children > .nav-group > .nav-item::before {
+    left: 10px;
+    top: 7px;
+    bottom: 7px;
+}
+
+.sidebar-nav > .nav-group > .nav-children > .nav-group > .nav-children {
+    margin-left: 12px;
+    padding: 0.3rem 0 0 0.75rem;
+}
+
+.sidebar-nav > .nav-group > .nav-children > .nav-group > .nav-children::before {
+    left: 0;
+    background: rgba(191, 219, 254, 0.85);
+}
+
+/* 三级页面 */
+.sidebar-nav > .nav-group > .nav-children > .nav-group > .nav-children .nav-child {
+    min-height: 34px;
+    padding-top: 0.45rem;
+    padding-bottom: 0.45rem;
+    padding-left: 1.7rem;
+    font-size: 0.84rem;
+    color: #475569;
+}
+
+.sidebar-nav > .nav-group > .nav-children > .nav-group > .nav-children .nav-child:hover {
+    background: rgba(239, 246, 255, 0.72);
+    color: #1d4ed8;
+}
+
+.sidebar-nav > .nav-group > .nav-children > .nav-group > .nav-children .nav-child.active {
+    background: linear-gradient(90deg, rgba(239, 246, 255, 0.95) 0%, rgba(239, 246, 255, 0.45) 100%);
 }
 
 @media (max-width: 768px) {

@@ -21,6 +21,8 @@ export const ReceiptBills = lazyWithPreload(() => import('../pages/receipt-bills
 export const Projects = lazyWithPreload(() => import('../pages/projects'));
 export const ChargeItems = lazyWithPreload(() => import('../pages/charge-items'));
 export const Reports = lazyWithPreload(() => import('../pages/reports'));
+export const OACenterPage = lazyWithPreload(() => import('../pages/oa-center'));
+export const ReportCenterPage = lazyWithPreload(() => import('../pages/report-center'));
 export const Settings = lazyWithPreload(() => import('../pages/settings'));
 export const Users = lazyWithPreload(() => import('../pages/users'));
 export const Organizations = lazyWithPreload(() => import('../pages/organizations'));
@@ -52,6 +54,8 @@ const routePreloaders: Record<string, () => Promise<unknown>> = {
     '/residents': Residents.preload,
     '/parks': Parks.preload,
     '/reports': Reports.preload,
+    '/oa-center': OACenterPage.preload,
+    '/report-center': ReportCenterPage.preload,
     '/integrations/reports': Reports.preload,
     '/integrations/reporting': Reports.preload,
     '/accounting-subjects': AccountingSubjects.preload,

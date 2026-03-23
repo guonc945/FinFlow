@@ -15,6 +15,8 @@ import {
   Projects,
   ChargeItems,
   Reports,
+  OACenterPage,
+  ReportCenterPage,
   Settings,
   Users,
   Organizations,
@@ -98,6 +100,8 @@ function App() {
             <Route path="houses" element={<RouteElement variant="table"><Houses /></RouteElement>} />
             <Route path="residents" element={<RouteElement variant="table"><Residents /></RouteElement>} />
             <Route path="parks" element={<RouteElement variant="table"><Parks /></RouteElement>} />
+            <Route path="oa-center" element={<RouteElement variant="dashboard"><OACenterPage /></RouteElement>} />
+            <Route path="report-center" element={<RouteElement variant="dashboard"><ReportCenterPage /></RouteElement>} />
             <Route path="reports" element={<Navigate to="/integrations/reporting" replace />} />
             <Route path="integrations" element={<Navigate to="/integrations/reporting" replace />} />
             <Route path="integrations/reports" element={<Navigate to="/integrations/reporting" replace />} />
