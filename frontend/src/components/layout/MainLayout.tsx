@@ -19,6 +19,7 @@ const MainLayout = () => {
             '/oa-center': { title: '泛微协同', subtitle: '作为泛微相关能力的独立入口，承接后续协同与流程集成页面' },
             '/report-center': { title: '报表中心', subtitle: '作为最终报表查看、分析与汇总展示的统一入口' },
             '/integrations/reporting': { title: '报表设计', subtitle: '在集成中心配置数据连接、数据集与报表定义' },
+            '/integrations/sync-schedules': { title: '同步计划', subtitle: '独立管理马克与金蝶数据同步的定时计划、执行频率与运行记录' },
             '/integrations/credentials': { title: '凭证配置', subtitle: '管理跨系统认证凭据、授权信息与连接配置' },
             '/integrations/apis': { title: '接口管理', subtitle: '维护外部系统接口定义、调试参数与接入能力' },
             '/vouchers/templates': { title: '凭证模板', subtitle: '维护金蝶财务凭证管理中的模板规则与生成逻辑' },

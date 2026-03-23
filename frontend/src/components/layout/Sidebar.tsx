@@ -5,6 +5,7 @@ import {
     BarChart3,
     BookOpen,
     Building2,
+    CalendarClock,
     Car,
     ChevronDown,
     ChevronRight,
@@ -176,6 +177,7 @@ const Sidebar = () => {
             icon: Network,
             children: [
                 { path: '/integrations/reporting', label: '报表设计', icon: BarChart3 },
+                { path: '/integrations/sync-schedules', label: '同步计划', icon: CalendarClock, adminOnly: true },
                 { path: '/integrations/credentials', label: '凭证配置', icon: Settings, adminOnly: true },
                 { path: '/integrations/apis', label: '接口管理', icon: FileJson, adminOnly: true },
             ],

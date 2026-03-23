@@ -705,6 +705,68 @@ class UserTableColumnPreference(Base):
     user = relationship("User")
 
 
+class SyncSchedule(Base):
+    __tablename__ = "sync_schedules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(120), nullable=False, index=True)
+    description = Column(String(500))
+    target_codes = Column(Text, nullable=False, default="[]")
+    community_ids = Column(Text, nullable=False, default="[]")
+    account_book_number = Column(String(100))
+    account_book_name = Column(String(200))
+    schedule_type = Column(String(20), nullable=False, default="daily")
+    interval_minutes = Column(Integer)
+    daily_time = Column(String(10))
+    weekly_days = Column(Text, nullable=False, default="[]")
+    timezone = Column(String(64), nullable=False, default="Asia/Shanghai")
+    enabled = Column(Boolean, default=True, nullable=False)
+    is_running = Column(Boolean, default=False, nullable=False)
+    current_execution_id = Column(Integer, ForeignKey("sync_schedule_executions.id"), nullable=True)
+    last_run_at = Column(DateTime)
+    last_status = Column(String(20))
+    last_message = Column(Text)
+    next_run_at = Column(DateTime, index=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    creator = relationship("User", foreign_keys=[created_by])
+    updater = relationship("User", foreign_keys=[updated_by])
+    current_execution = relationship("SyncScheduleExecution", foreign_keys=[current_execution_id], post_update=True)
+    executions = relationship(
+        "SyncScheduleExecution",
+        back_populates="schedule",
+        foreign_keys="SyncScheduleExecution.schedule_id",
+        cascade="all, delete-orphan",
+        order_by="desc(SyncScheduleExecution.started_at)",
+    )
+
+
+class SyncScheduleExecution(Base):
+    __tablename__ = "sync_schedule_executions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    schedule_id = Column(Integer, ForeignKey("sync_schedules.id", ondelete="CASCADE"), nullable=False, index=True)
+    trigger_type = Column(String(20), nullable=False, default="manual")
+    triggered_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    status = Column(String(20), nullable=False, default="running")
+    started_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
+    finished_at = Column(DateTime)
+    total_targets = Column(Integer, default=0)
+    success_targets = Column(Integer, default=0)
+    failed_targets = Column(Integer, default=0)
+    summary = Column(Text)
+    error_message = Column(Text)
+    result_payload = Column(Text)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    schedule = relationship("SyncSchedule", back_populates="executions", foreign_keys=[schedule_id])
+    triggered_by_user = relationship("User", foreign_keys=[triggered_by])
+
+
 class ExternalService(Base):
     __tablename__ = "external_services"
 

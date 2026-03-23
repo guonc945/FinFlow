@@ -482,3 +482,74 @@ export interface Park {
     kingdee_house?: KingdeeHouse;
     created_at: string;
 }
+
+export interface SyncScheduleTargetMeta {
+    code: string;
+    label: string;
+    system: 'mark' | 'kingdee' | string;
+    requires_community_ids: boolean;
+}
+
+export interface SyncScheduleMeta {
+    targets: SyncScheduleTargetMeta[];
+    schedule_types: Array<{ value: 'interval' | 'daily' | 'weekly'; label: string }>;
+    weekdays: Array<{ value: string; label: string }>;
+    default_timezone: string;
+}
+
+export interface SyncSchedule {
+    id: number;
+    name: string;
+    description?: string | null;
+    target_codes: string[];
+    community_ids: number[];
+    account_book_number?: string | null;
+    account_book_name?: string | null;
+    schedule_type: 'interval' | 'daily' | 'weekly';
+    interval_minutes?: number | null;
+    daily_time?: string | null;
+    weekly_days: string[];
+    timezone: string;
+    enabled: boolean;
+    is_running: boolean;
+    current_execution_id?: number | null;
+    last_run_at?: string | null;
+    last_status?: 'success' | 'failed' | 'partial' | 'running' | string | null;
+    last_message?: string | null;
+    next_run_at?: string | null;
+    created_by?: number | null;
+    updated_by?: number | null;
+    created_at: string;
+    updated_at?: string | null;
+    creator_name?: string | null;
+    updater_name?: string | null;
+}
+
+export interface SyncScheduleExecutionTargetResult {
+    code: string;
+    status: 'success' | 'failed' | string;
+    message?: string;
+    logs?: Array<{ type?: string; message?: string; time?: string }>;
+    task_id?: string | null;
+    traceback?: string;
+}
+
+export interface SyncScheduleExecution {
+    id: number;
+    schedule_id: number;
+    schedule_name?: string;
+    trigger_type: 'manual' | 'auto' | string;
+    triggered_by?: number | null;
+    triggered_by_name?: string | null;
+    status: 'running' | 'success' | 'failed' | 'partial' | string;
+    started_at: string;
+    finished_at?: string | null;
+    total_targets: number;
+    success_targets: number;
+    failed_targets: number;
+    summary?: string | null;
+    error_message?: string | null;
+    result_payload: SyncScheduleExecutionTargetResult[];
+    created_at: string;
+    updated_at?: string | null;
+}

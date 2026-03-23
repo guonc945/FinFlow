@@ -23,6 +23,7 @@ import {
   Account,
   CredentialsManager,
   APIManager,
+  SyncSchedulesPage,
   VoucherTemplates,
   TemplateCategories,
   AccountingSubjects,
@@ -123,6 +124,7 @@ function App() {
               <Route path="organizations" element={<RouteElement variant="table"><Organizations /></RouteElement>} />
               <Route path="integrations/credentials" element={<RouteElement variant="settings"><CredentialsManager /></RouteElement>} />
               <Route path="integrations/apis" element={<RouteElement variant="table"><APIManager /></RouteElement>} />
+              <Route path="integrations/sync-schedules" element={<RouteElement variant="table"><SyncSchedulesPage /></RouteElement>} />
               <Route path="vouchers/templates" element={<RouteElement variant="settings"><VoucherTemplates /></RouteElement>} />
               <Route path="vouchers/categories" element={<RouteElement variant="settings"><TemplateCategories /></RouteElement>} />
               <Route path="settings" element={<RouteElement variant="settings"><Settings /></RouteElement>} />

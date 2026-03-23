@@ -29,6 +29,7 @@ export const Organizations = lazyWithPreload(() => import('../pages/organization
 export const Account = lazyWithPreload(() => import('../pages/account'));
 export const CredentialsManager = lazyWithPreload(() => import('../pages/integrations/credentials'));
 export const APIManager = lazyWithPreload(() => import('../pages/integrations/apis'));
+export const SyncSchedulesPage = lazyWithPreload(() => import('../pages/integrations/sync-schedules'));
 export const VoucherTemplates = lazyWithPreload(() => import('../pages/vouchers/VoucherTemplates'));
 export const TemplateCategories = lazyWithPreload(() => import('../pages/vouchers/TemplateCategories'));
 export const AccountingSubjects = lazyWithPreload(() => import('../pages/finance/AccountingSubjects'));
@@ -74,6 +75,7 @@ const routePreloaders: Record<string, () => Promise<unknown>> = {
     '/integrations': Reports.preload,
     '/integrations/credentials': CredentialsManager.preload,
     '/integrations/apis': APIManager.preload,
+    '/integrations/sync-schedules': SyncSchedulesPage.preload,
     '/vouchers/templates': VoucherTemplates.preload,
     '/vouchers/categories': TemplateCategories.preload,
     '/settings': Settings.preload,

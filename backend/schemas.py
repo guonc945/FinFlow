@@ -149,6 +149,75 @@ class UserTableColumnPreferenceResponse(BaseModel):
         from_attributes = True
 
 
+class SyncScheduleBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+    target_codes: List[str] = Field(default_factory=list)
+    community_ids: List[int] = Field(default_factory=list)
+    account_book_number: Optional[str] = None
+    account_book_name: Optional[str] = None
+    schedule_type: Literal["interval", "daily", "weekly"]
+    interval_minutes: Optional[int] = Field(None, ge=5, le=10080)
+    daily_time: Optional[str] = None
+    weekly_days: List[str] = Field(default_factory=list)
+    timezone: str = "Asia/Shanghai"
+    enabled: bool = True
+
+
+class SyncScheduleCreate(SyncScheduleBase):
+    pass
+
+
+class SyncScheduleUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    target_codes: Optional[List[str]] = None
+    community_ids: Optional[List[int]] = None
+    account_book_number: Optional[str] = None
+    account_book_name: Optional[str] = None
+    schedule_type: Optional[Literal["interval", "daily", "weekly"]] = None
+    interval_minutes: Optional[int] = Field(None, ge=5, le=10080)
+    daily_time: Optional[str] = None
+    weekly_days: Optional[List[str]] = None
+    timezone: Optional[str] = None
+    enabled: Optional[bool] = None
+
+
+class SyncScheduleResponse(SyncScheduleBase):
+    id: int
+    is_running: bool
+    current_execution_id: Optional[int] = None
+    last_run_at: Optional[datetime] = None
+    last_status: Optional[str] = None
+    last_message: Optional[str] = None
+    next_run_at: Optional[datetime] = None
+    created_by: Optional[int] = None
+    updated_by: Optional[int] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    creator_name: Optional[str] = None
+    updater_name: Optional[str] = None
+
+
+class SyncScheduleExecutionResponse(BaseModel):
+    id: int
+    schedule_id: int
+    trigger_type: str
+    triggered_by: Optional[int] = None
+    triggered_by_name: Optional[str] = None
+    status: str
+    started_at: datetime
+    finished_at: Optional[datetime] = None
+    total_targets: int = 0
+    success_targets: int = 0
+    failed_targets: int = 0
+    summary: Optional[str] = None
+    error_message: Optional[str] = None
+    result_payload: List[Dict[str, Any]] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+
 # Bill Sync Request Schema
 class BillSyncRequest(BaseModel):
     community_ids: Optional[List[int]] = None

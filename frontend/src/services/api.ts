@@ -1,5 +1,23 @@
 import axios from 'axios';
-import type { CashJournal, DepositRecord, PrepaymentRecord, PushResult, VoucherPreview, ChargeItem, House, Project, ReceiptBillDetail, Resident, BillVoucherPushStatus, ReceiptBill, VoucherSourceMetadataResponse, TableColumnPreference } from '../types';
+import type {
+    CashJournal,
+    DepositRecord,
+    PrepaymentRecord,
+    PushResult,
+    VoucherPreview,
+    ChargeItem,
+    House,
+    Project,
+    ReceiptBillDetail,
+    Resident,
+    BillVoucherPushStatus,
+    ReceiptBill,
+    VoucherSourceMetadataResponse,
+    TableColumnPreference,
+    SyncSchedule,
+    SyncScheduleExecution,
+    SyncScheduleMeta,
+} from '../types';
 
 import { API_BASE_URL } from './apiBase';
 
@@ -198,6 +216,89 @@ export const syncPrepaymentRecords = async (communityIds?: number[]) => {
 
 export const getPrepaymentRecordSyncStatus = async (taskId: string) => {
     const response = await axios.get(`${API_BASE_URL}/prepayment-records/sync/status/${taskId}`);
+    return response.data;
+};
+
+// Sync Schedule Management
+export const getSyncScheduleMeta = async (): Promise<SyncScheduleMeta> => {
+    const response = await axios.get<SyncScheduleMeta>(`${API_BASE_URL}/sync-schedules/meta`);
+    return response.data;
+};
+
+export const getSyncSchedules = async (): Promise<SyncSchedule[]> => {
+    const response = await axios.get<SyncSchedule[]>(`${API_BASE_URL}/sync-schedules`);
+    return response.data;
+};
+
+export const createSyncSchedule = async (data: {
+    name: string;
+    description?: string | null;
+    target_codes: string[];
+    community_ids: number[];
+    account_book_number?: string | null;
+    account_book_name?: string | null;
+    schedule_type: 'interval' | 'daily' | 'weekly';
+    interval_minutes?: number | null;
+    daily_time?: string | null;
+    weekly_days: string[];
+    timezone: string;
+    enabled: boolean;
+}): Promise<SyncSchedule> => {
+    const response = await axios.post<SyncSchedule>(`${API_BASE_URL}/sync-schedules`, data);
+    return response.data;
+};
+
+export const updateSyncSchedule = async (
+    id: number,
+    data: Partial<{
+        name: string;
+        description?: string | null;
+        target_codes: string[];
+        community_ids: number[];
+        account_book_number?: string | null;
+        account_book_name?: string | null;
+        schedule_type: 'interval' | 'daily' | 'weekly';
+        interval_minutes?: number | null;
+        daily_time?: string | null;
+        weekly_days: string[];
+        timezone: string;
+        enabled: boolean;
+    }>
+): Promise<SyncSchedule> => {
+    const response = await axios.put<SyncSchedule>(`${API_BASE_URL}/sync-schedules/${id}`, data);
+    return response.data;
+};
+
+export const deleteSyncSchedule = async (id: number) => {
+    const response = await axios.delete(`${API_BASE_URL}/sync-schedules/${id}`);
+    return response.data;
+};
+
+export const toggleSyncSchedule = async (id: number, enabled: boolean): Promise<SyncSchedule> => {
+    const response = await axios.post<SyncSchedule>(`${API_BASE_URL}/sync-schedules/${id}/toggle`, null, {
+        params: { enabled },
+    });
+    return response.data;
+};
+
+export const runSyncScheduleNow = async (id: number): Promise<{ execution_id: number; schedule_id: number; status: string }> => {
+    const response = await axios.post<{ execution_id: number; schedule_id: number; status: string }>(
+        `${API_BASE_URL}/sync-schedules/${id}/run`
+    );
+    return response.data;
+};
+
+export const getSyncScheduleExecutions = async (id: number, limit: number = 20): Promise<SyncScheduleExecution[]> => {
+    const response = await axios.get<SyncScheduleExecution[]>(`${API_BASE_URL}/sync-schedules/${id}/executions`, {
+        params: { limit },
+    });
+    return response.data;
+};
+
+export const getLatestSyncScheduleExecutions = async (limit: number = 30): Promise<SyncScheduleExecution[]> => {
+    const response = await axios.get<SyncScheduleExecution[]>(`${API_BASE_URL}/sync-schedules/executions/latest`, {
+        params: { limit },
+    });
     return response.data;
 };
 
