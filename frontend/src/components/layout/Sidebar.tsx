@@ -19,6 +19,7 @@ import {
     Network,
     Receipt,
     Settings,
+    ShieldCheck,
     Tags,
     Users,
     Wallet,
@@ -26,6 +27,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import classNames from 'classnames';
 import { preloadRoute } from '../../routes/lazyRoutes';
+import { getMe } from '../../services/api';
 import './Sidebar.css';
 
 interface NavItem {
@@ -34,7 +36,6 @@ interface NavItem {
     icon: LucideIcon;
     key?: string;
     adminOnly?: boolean;
-    static?: boolean;
     children?: NavItem[];
 }
 
@@ -42,6 +43,10 @@ const Sidebar = () => {
     const location = useLocation();
     const navigate = useNavigate();
     const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({});
+    const [currentUser, setCurrentUser] = useState<any>(() => {
+        const userStr = localStorage.getItem('user');
+        return userStr ? JSON.parse(userStr) : null;
+    });
 
     const warmRoute = (path?: string) => {
         if (!path) return;
@@ -65,13 +70,58 @@ const Sidebar = () => {
         }));
     };
 
-    const userStr = localStorage.getItem('user');
-    const user = userStr ? JSON.parse(userStr) : null;
-    const isAdmin = user?.role === 'admin';
+    useEffect(() => {
+        let mounted = true;
+
+        const refreshUserContext = async () => {
+            try {
+                const me = await getMe();
+                if (!mounted) return;
+
+                const persistedUser = localStorage.getItem('user');
+                const parsedUser = persistedUser ? JSON.parse(persistedUser) : {};
+                const nextUser = {
+                    ...parsedUser,
+                    ...me,
+                    role: me.role || parsedUser?.role || 'user',
+                    menu_keys: Array.isArray(me.menu_keys) ? me.menu_keys : parsedUser?.menu_keys || [],
+                    api_keys: Array.isArray(me.api_keys) ? me.api_keys : parsedUser?.api_keys || [],
+                };
+                localStorage.setItem('user', JSON.stringify(nextUser));
+                setCurrentUser(nextUser);
+            } catch (error) {
+                console.error('Failed to refresh sidebar user context:', error);
+            }
+        };
+
+        void refreshUserContext();
+        return () => {
+            mounted = false;
+        };
+    }, []);
+
+    const isAdmin = currentUser?.role === 'admin';
+    const menuKeys = useMemo(
+        () => (
+            Array.isArray(currentUser?.menu_keys)
+                ? currentUser.menu_keys.filter((item: unknown): item is string => typeof item === 'string')
+                : []
+        ),
+        [currentUser?.menu_keys]
+    );
+    const hasExplicitMenuPermissions = isAdmin || menuKeys.length > 0;
+    const allowedMenuKeySet = useMemo(() => new Set(menuKeys), [menuKeys]);
 
     const filterNavItems = (items: NavItem[]): NavItem[] =>
         items
-            .filter((item) => !item.adminOnly || isAdmin)
+            .filter((item) => {
+                if (item.children) return true;
+                if (item.adminOnly && !isAdmin) return false;
+                if (isAdmin) return true;
+                if (!item.path) return true;
+                if (!hasExplicitMenuPermissions) return !item.adminOnly;
+                return allowedMenuKeySet.has(item.path);
+            })
             .map((item) => {
                 if (!item.children) return item;
                 const filteredChildren = filterNavItems(item.children);
@@ -103,12 +153,12 @@ const Sidebar = () => {
     const rawNavItems: NavItem[] = [
         { path: '/', label: '仪表盘', icon: LayoutDashboard },
         {
-            key: 'marki-center',
+            key: 'mark-center',
             label: '马克业务',
             icon: FileText,
             children: [
                 {
-                    key: 'marki-documents',
+                    key: 'mark-documents',
                     label: '业务单据',
                     icon: Receipt,
                     children: [
@@ -119,12 +169,12 @@ const Sidebar = () => {
                     ],
                 },
                 {
-                    key: 'marki-archives',
+                    key: 'mark-archives',
                     label: '基础资料',
                     icon: Database,
                     children: [
-                        { path: '/projects', label: '园区管理', icon: Building2, adminOnly: true },
-                        { path: '/charge-items', label: '收费项目', icon: Wallet, adminOnly: true },
+                        { path: '/projects', label: '园区管理', icon: Building2 },
+                        { path: '/charge-items', label: '收费项目', icon: Wallet },
                         { path: '/houses', label: '房屋管理', icon: Home },
                         { path: '/residents', label: '住户管理', icon: Users },
                         { path: '/parks', label: '车位管理', icon: Car },
@@ -157,8 +207,8 @@ const Sidebar = () => {
                     label: '凭证管理',
                     icon: Layers,
                     children: [
-                        { path: '/vouchers/templates', label: '凭证模板', icon: Layers, adminOnly: true },
-                        { path: '/vouchers/categories', label: '模板分类', icon: Tags, adminOnly: true },
+                        { path: '/vouchers/templates', label: '凭证模板', icon: Layers },
+                        { path: '/vouchers/categories', label: '模板分类', icon: Tags },
                     ],
                 },
             ],
@@ -168,7 +218,7 @@ const Sidebar = () => {
             label: '泛微协同',
             icon: Building2,
             children: [
-                { path: '/oa-center', label: '待接入页面', icon: FileText },
+                { path: '/oa-center', label: '协同入口', icon: FileText },
             ],
         },
         {
@@ -177,9 +227,9 @@ const Sidebar = () => {
             icon: Network,
             children: [
                 { path: '/integrations/reporting', label: '报表设计', icon: BarChart3 },
-                { path: '/integrations/sync-schedules', label: '同步计划', icon: CalendarClock, adminOnly: true },
-                { path: '/integrations/credentials', label: '凭证配置', icon: Settings, adminOnly: true },
-                { path: '/integrations/apis', label: '接口管理', icon: FileJson, adminOnly: true },
+                { path: '/integrations/sync-schedules', label: '同步计划', icon: CalendarClock },
+                { path: '/integrations/credentials', label: '凭证配置', icon: Settings },
+                { path: '/integrations/apis', label: '接口管理', icon: FileJson },
             ],
         },
         { path: '/report-center', label: '报表中心', icon: BarChart3 },
@@ -187,17 +237,21 @@ const Sidebar = () => {
             key: 'system-management',
             label: '系统管理',
             icon: Settings,
-            adminOnly: true,
             children: [
                 { path: '/organizations', label: '组织管理', icon: Network },
                 { path: '/users', label: '用户管理', icon: Users },
+                { path: '/menu-permissions', label: '菜单权限', icon: ShieldCheck, adminOnly: true },
                 { path: '/settings', label: '系统设置', icon: Settings },
                 { path: '/account', label: '个人设置', icon: Users },
             ],
         },
     ];
 
-    const navItems = useMemo(() => filterNavItems(rawNavItems), [isAdmin]);
+    const navItems = useMemo(
+        () => filterNavItems(rawNavItems),
+        [allowedMenuKeySet, hasExplicitMenuPermissions, isAdmin]
+    );
+
     const activeAncestorSet = useMemo(
         () => new Set(collectAncestorKeys(navItems, location.pathname)),
         [location.pathname, navItems]
@@ -207,6 +261,10 @@ const Sidebar = () => {
         const ancestors = collectAncestorKeys(navItems, location.pathname);
         if (ancestors.length === 0) return;
         setExpandedMenus((prev) => {
+            const needsUpdate = ancestors.some((key) => !prev[key]);
+            if (!needsUpdate) {
+                return prev;
+            }
             const next = { ...prev };
             ancestors.forEach((key) => {
                 next[key] = true;
@@ -253,17 +311,7 @@ const Sidebar = () => {
             }
 
             if (!item.path) {
-                return (
-                    <div
-                        key={item.key || `static-${level}-${index}`}
-                        className={classNames('nav-item', 'nav-static', {
-                            'nav-child': level > 0,
-                        })}
-                    >
-                        {level === 0 && <item.icon className="nav-icon" size={20} />}
-                        <span className={classNames('nav-text', { 'pl-2': level > 0 })}>{item.label}</span>
-                    </div>
-                );
+                return null;
             }
 
             return (

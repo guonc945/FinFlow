@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy import and_, desc, func, extract, or_, inspect, text, cast, String
+from sqlalchemy.exc import IntegrityError
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Set, Tuple
 import models, schemas, database
@@ -263,6 +264,24 @@ def _ensure_prepayment_record_columns():
 
 
 _ensure_prepayment_record_columns()
+
+
+def _ensure_user_email_index():
+    inspector = inspect(database.engine)
+    tables = inspector.get_table_names()
+    if "users" not in tables:
+        return
+
+    indexes = {idx["name"]: idx for idx in inspector.get_indexes("users")}
+    email_index = indexes.get("ix_users_email")
+
+    with database.engine.begin() as conn:
+        if email_index and email_index.get("unique"):
+            conn.execute(text("DROP INDEX IF EXISTS ix_users_email"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_users_email ON users (email)"))
+
+
+_ensure_user_email_index()
 
 BILL_VOUCHER_PUSH_STATUS_LABELS = {
     "not_pushed": "未推送",
@@ -1521,6 +1540,211 @@ def require_admin(current_user: models.User = Depends(get_current_user)):
     return current_user
 
 
+MENU_PERMISSION_ROLE_DEFINITIONS = [
+    {
+        "role": "admin",
+        "label": "管理员",
+        "description": "拥有全部菜单和接口访问权限，当前角色固定显示全部能力。",
+        "editable": False,
+    },
+    {
+        "role": "user",
+        "label": "普通用户",
+        "description": "可按角色配置菜单可见范围，并进一步控制后台管理接口访问权限。",
+        "editable": True,
+    },
+]
+
+MENU_PERMISSION_DEFINITIONS = [
+    {"key": "/", "label": "首页仪表盘", "section": "工作台", "group": "首页", "required": True, "admin_only": False, "default_enabled": True},
+    {"key": "/receipt-bills", "label": "收款单据", "section": "马克业务", "group": "业务单据", "required": False, "admin_only": False, "default_enabled": True},
+    {"key": "/deposit-records", "label": "押金管理", "section": "马克业务", "group": "业务单据", "required": False, "admin_only": False, "default_enabled": True},
+    {"key": "/prepayment-records", "label": "预存款管理", "section": "马克业务", "group": "业务单据", "required": False, "admin_only": False, "default_enabled": True},
+    {"key": "/bills", "label": "运营账单", "section": "马克业务", "group": "业务单据", "required": False, "admin_only": False, "default_enabled": True},
+    {"key": "/projects", "label": "园区管理", "section": "马克业务", "group": "基础资料", "required": False, "admin_only": False, "default_enabled": False},
+    {"key": "/charge-items", "label": "收费项目", "section": "马克业务", "group": "基础资料", "required": False, "admin_only": False, "default_enabled": False},
+    {"key": "/houses", "label": "房屋管理", "section": "马克业务", "group": "基础资料", "required": False, "admin_only": False, "default_enabled": True},
+    {"key": "/residents", "label": "住户管理", "section": "马克业务", "group": "基础资料", "required": False, "admin_only": False, "default_enabled": True},
+    {"key": "/parks", "label": "车位管理", "section": "马克业务", "group": "基础资料", "required": False, "admin_only": False, "default_enabled": True},
+    {"key": "/account-books", "label": "账簿管理", "section": "金蝶财务", "group": "财务档案", "required": False, "admin_only": False, "default_enabled": True},
+    {"key": "/accounting-subjects", "label": "会计科目", "section": "金蝶财务", "group": "财务档案", "required": False, "admin_only": False, "default_enabled": True},
+    {"key": "/auxiliary-data-categories", "label": "辅助资料分类", "section": "金蝶财务", "group": "财务档案", "required": False, "admin_only": False, "default_enabled": True},
+    {"key": "/auxiliary-data", "label": "辅助资料", "section": "金蝶财务", "group": "财务档案", "required": False, "admin_only": False, "default_enabled": True},
+    {"key": "/customers", "label": "客户管理", "section": "金蝶财务", "group": "财务档案", "required": False, "admin_only": False, "default_enabled": True},
+    {"key": "/suppliers", "label": "供应商管理", "section": "金蝶财务", "group": "财务档案", "required": False, "admin_only": False, "default_enabled": True},
+    {"key": "/kd-houses", "label": "金蝶房号", "section": "金蝶财务", "group": "财务档案", "required": False, "admin_only": False, "default_enabled": True},
+    {"key": "/bank-accounts", "label": "银行账户", "section": "金蝶财务", "group": "财务档案", "required": False, "admin_only": False, "default_enabled": True},
+    {"key": "/vouchers/templates", "label": "凭证模板", "section": "金蝶财务", "group": "凭证管理", "required": False, "admin_only": False, "default_enabled": False},
+    {"key": "/vouchers/categories", "label": "模板分类", "section": "金蝶财务", "group": "凭证管理", "required": False, "admin_only": False, "default_enabled": False},
+    {"key": "/oa-center", "label": "泛微协同", "section": "泛微协同", "group": "协同入口", "required": False, "admin_only": False, "default_enabled": True},
+    {"key": "/integrations/reporting", "label": "报表设计", "section": "集成中心", "group": "集成能力", "required": False, "admin_only": False, "default_enabled": False},
+    {"key": "/integrations/sync-schedules", "label": "同步计划", "section": "集成中心", "group": "集成能力", "required": False, "admin_only": False, "default_enabled": False},
+    {"key": "/integrations/credentials", "label": "凭证配置", "section": "集成中心", "group": "集成能力", "required": False, "admin_only": False, "default_enabled": False},
+    {"key": "/integrations/apis", "label": "接口管理", "section": "集成中心", "group": "集成能力", "required": False, "admin_only": False, "default_enabled": False},
+    {"key": "/report-center", "label": "报表中心", "section": "报表中心", "group": "数据展示", "required": False, "admin_only": False, "default_enabled": True},
+    {"key": "/organizations", "label": "组织管理", "section": "系统管理", "group": "权限与系统", "required": False, "admin_only": False, "default_enabled": False},
+    {"key": "/users", "label": "用户管理", "section": "系统管理", "group": "权限与系统", "required": False, "admin_only": False, "default_enabled": False},
+    {"key": "/menu-permissions", "label": "菜单权限", "section": "系统管理", "group": "权限与系统", "required": False, "admin_only": True, "default_enabled": False},
+    {"key": "/settings", "label": "系统设置", "section": "系统管理", "group": "权限与系统", "required": False, "admin_only": False, "default_enabled": False},
+    {"key": "/account", "label": "个人设置", "section": "系统管理", "group": "权限与系统", "required": True, "admin_only": False, "default_enabled": True},
+]
+
+API_PERMISSION_DEFINITIONS = [
+    {"key": "project.manage", "label": "园区管理接口", "section": "马克业务", "group": "基础资料", "description": "允许访问园区管理页涉及的更新与同步接口。", "admin_only": False, "default_enabled": False},
+    {"key": "charge_item.manage", "label": "收费项目接口", "section": "马克业务", "group": "基础资料", "description": "允许维护收费项目映射与同步任务。", "admin_only": False, "default_enabled": False},
+    {"key": "credential.manage", "label": "凭证配置接口", "section": "集成中心", "group": "集成能力", "description": "允许维护外部系统凭证、令牌和连接测试。", "admin_only": False, "default_enabled": False},
+    {"key": "api_registry.manage", "label": "接口管理接口", "section": "集成中心", "group": "集成能力", "description": "允许维护外部服务接口定义和调试配置。", "admin_only": False, "default_enabled": False},
+    {"key": "sync_schedule.manage", "label": "同步计划接口", "section": "集成中心", "group": "集成能力", "description": "允许维护多进程同步计划、手动执行和查看执行记录。", "admin_only": False, "default_enabled": False},
+    {"key": "reporting.manage", "label": "报表设计接口", "section": "集成中心", "group": "集成能力", "description": "允许维护报表连接、数据集和报表定义。", "admin_only": False, "default_enabled": False},
+    {"key": "voucher_template.manage", "label": "凭证模板接口", "section": "金蝶财务", "group": "凭证管理", "description": "允许维护凭证模板和模板分类。", "admin_only": False, "default_enabled": False},
+    {"key": "organization.manage", "label": "组织管理接口", "section": "系统管理", "group": "权限与系统", "description": "允许维护组织架构信息。", "admin_only": False, "default_enabled": False},
+    {"key": "user.manage", "label": "用户管理接口", "section": "系统管理", "group": "权限与系统", "description": "允许查看、创建、更新和删除用户。", "admin_only": False, "default_enabled": False},
+    {"key": "setting.manage", "label": "系统设置接口", "section": "系统管理", "group": "权限与系统", "description": "允许维护全局变量与系统设置。", "admin_only": False, "default_enabled": False},
+    {"key": "menu_permission.manage", "label": "菜单权限接口", "section": "系统管理", "group": "权限与系统", "description": "允许维护角色的菜单与接口权限。", "admin_only": True, "default_enabled": False},
+]
+
+MENU_PERMISSION_ROLE_MAP = {item["role"]: item for item in MENU_PERMISSION_ROLE_DEFINITIONS}
+MENU_PERMISSION_DEFINITION_MAP = {item["key"]: item for item in MENU_PERMISSION_DEFINITIONS}
+API_PERMISSION_DEFINITION_MAP = {item["key"]: item for item in API_PERMISSION_DEFINITIONS}
+
+
+def _ordered_permission_keys(definitions: List[Dict[str, Any]], keys: Set[str], key_field: str) -> List[str]:
+    ordered: List[str] = []
+    for item in definitions:
+        key = item[key_field]
+        if key in keys:
+            ordered.append(key)
+    return ordered
+
+
+def _get_allowed_permission_keys(definitions: List[Dict[str, Any]], role: str, key_field: str) -> Set[str]:
+    normalized_role = str(role or "user").strip() or "user"
+    return {
+        item[key_field]
+        for item in definitions
+        if normalized_role == "admin" or not item.get("admin_only")
+    }
+
+
+def _get_required_menu_keys(role: str) -> Set[str]:
+    normalized_role = str(role or "user").strip() or "user"
+    return {
+        item["key"]
+        for item in MENU_PERMISSION_DEFINITIONS
+        if item["required"] and (normalized_role == "admin" or not item["admin_only"])
+    }
+
+
+def _get_default_menu_keys(role: str) -> List[str]:
+    normalized_role = str(role or "user").strip() or "user"
+    if normalized_role == "admin":
+        return [item["key"] for item in MENU_PERMISSION_DEFINITIONS]
+
+    default_keys = {
+        item["key"]
+        for item in MENU_PERMISSION_DEFINITIONS
+        if item.get("default_enabled") and not item.get("admin_only")
+    }
+    return _ordered_permission_keys(MENU_PERMISSION_DEFINITIONS, default_keys, "key")
+
+
+def _get_default_api_keys(role: str) -> List[str]:
+    normalized_role = str(role or "user").strip() or "user"
+    if normalized_role == "admin":
+        return [item["key"] for item in API_PERMISSION_DEFINITIONS]
+
+    default_keys = {
+        item["key"]
+        for item in API_PERMISSION_DEFINITIONS
+        if item.get("default_enabled") and not item.get("admin_only")
+    }
+    return _ordered_permission_keys(API_PERMISSION_DEFINITIONS, default_keys, "key")
+
+
+def _get_role_menu_keys(db: Session, role: str) -> List[str]:
+    normalized_role = str(role or "user").strip() or "user"
+    allowed_definition_keys = _get_allowed_permission_keys(MENU_PERMISSION_DEFINITIONS, normalized_role, "key")
+    required_keys = _get_required_menu_keys(normalized_role)
+
+    if normalized_role == "admin":
+        return _ordered_permission_keys(MENU_PERMISSION_DEFINITIONS, allowed_definition_keys, "key")
+
+    rows = (
+        db.query(models.RoleMenuPermission.menu_key)
+        .filter(models.RoleMenuPermission.role == normalized_role)
+        .all()
+    )
+    if rows:
+        persisted_keys = {row[0] for row in rows if row[0] in allowed_definition_keys}
+        return _ordered_permission_keys(MENU_PERMISSION_DEFINITIONS, persisted_keys | required_keys, "key")
+
+    return _ordered_permission_keys(
+        MENU_PERMISSION_DEFINITIONS,
+        set(_get_default_menu_keys(normalized_role)) | required_keys,
+        "key",
+    )
+
+
+def _get_role_api_keys(db: Session, role: str) -> List[str]:
+    normalized_role = str(role or "user").strip() or "user"
+    allowed_definition_keys = _get_allowed_permission_keys(API_PERMISSION_DEFINITIONS, normalized_role, "key")
+
+    if normalized_role == "admin":
+        return _ordered_permission_keys(API_PERMISSION_DEFINITIONS, allowed_definition_keys, "key")
+
+    rows = (
+        db.query(models.RoleApiPermission.api_key)
+        .filter(models.RoleApiPermission.role == normalized_role)
+        .all()
+    )
+    if rows:
+        persisted_keys = {row[0] for row in rows if row[0] in allowed_definition_keys}
+        return _ordered_permission_keys(API_PERMISSION_DEFINITIONS, persisted_keys, "key")
+
+    return _ordered_permission_keys(
+        API_PERMISSION_DEFINITIONS,
+        set(_get_default_api_keys(normalized_role)),
+        "key",
+    )
+
+
+def _has_api_permission(db: Session, user: models.User, permission_key: str) -> bool:
+    if not user:
+        return False
+    if user.role == "admin":
+        return True
+    return permission_key in set(_get_role_api_keys(db, user.role))
+
+
+def _require_api_permission(db: Session, user: models.User, permission_key: str) -> None:
+    if not _has_api_permission(db, user, permission_key):
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+
+def _require_any_api_permission(db: Session, user: models.User, permission_keys: List[str]) -> None:
+    if any(_has_api_permission(db, user, permission_key) for permission_key in permission_keys):
+        return
+    raise HTTPException(status_code=403, detail="Permission denied")
+
+
+def _build_menu_permission_role_state(db: Session, role: str) -> Dict[str, Any]:
+    role_meta = MENU_PERMISSION_ROLE_MAP.get(role, {
+        "role": role,
+        "label": role,
+        "description": "",
+        "editable": role != "admin",
+    })
+    normalized_role = role_meta["role"]
+    return {
+        "role": normalized_role,
+        "label": role_meta["label"],
+        "description": role_meta.get("description"),
+        "editable": bool(role_meta.get("editable", True)),
+        "menu_keys": _get_role_menu_keys(db, normalized_role),
+        "api_keys": _get_role_api_keys(db, normalized_role),
+    }
+
+
 def _normalize_column_preference_items(values: Any) -> List[str]:
     if not isinstance(values, list):
         return []
@@ -1718,8 +1942,10 @@ def get_charge_items(
     skip: int = 0, 
     limit: int = 100, 
     db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
     allowed_community_ids: List[int] = Depends(get_allowed_community_ids)
 ):
+    _require_api_permission(db, current_user, "charge_item.manage")
     query = db.query(models.ChargeItem)
     if allowed_community_ids:
         # communityid 鍦ㄦā鍨嬩腑鏄?String
@@ -1738,8 +1964,7 @@ def update_charge_item(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    if current_user.role != 'admin':
-        raise HTTPException(status_code=403, detail="Only administrators can update charge item mappings")
+    _require_api_permission(db, current_user, "charge_item.manage")
         
     item = db.query(models.ChargeItem).filter(models.ChargeItem.item_id == item_id).first()
     if not item:
@@ -1757,9 +1982,11 @@ def sync_charge_items_endpoint(
     background_tasks: BackgroundTasks, 
     request: schemas.BillSyncRequest = None,
     db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
     allowed_community_ids: List[int] = Depends(get_allowed_community_ids)
 ):
     """Sync charge items for the specified communities."""
+    _require_api_permission(db, current_user, "charge_item.manage")
     if request and request.community_ids:
         # 鏍￠獙璇锋眰鐨勫洯鍖烘槸鍚﹀湪璐︾翱鑼冨洿鍐?
         community_ids = [cid for cid in request.community_ids if cid in allowed_community_ids]
@@ -1782,8 +2009,10 @@ def get_projects(
     limit: int = 100, 
     current_account_book_only: bool = Query(False),
     db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
     allowed_community_ids: List[int] = Depends(get_allowed_community_ids)
 ):
+    _require_api_permission(db, current_user, "project.manage")
     query = db.query(models.ProjectList)
     if allowed_community_ids:
         query = query.filter(models.ProjectList.proj_id.in_(allowed_community_ids))
@@ -1854,8 +2083,7 @@ def update_project(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    if current_user.role != 'admin':
-        raise HTTPException(status_code=403, detail="Only administrators can update project mappings")
+    _require_api_permission(db, current_user, "project.manage")
         
     project = db.query(models.ProjectList).filter(models.ProjectList.proj_id == proj_id).first()
     if not project:
@@ -3528,8 +3756,7 @@ def sync_projects_endpoint(
     """Trigger project synchronization in background.
     Only administrators can trigger this.
     """
-    if current_user.role != 'admin':
-        raise HTTPException(status_code=403, detail="Only administrators can trigger project sync")
+    _require_api_permission(db, current_user, "project.manage")
         
     def run_sync():
         try:
@@ -3683,8 +3910,14 @@ def build_template_category_path_map(categories: List[models.VoucherTemplateCate
 
 
 @app.get("/api/organizations")
-def get_organizations(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def get_organizations(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     """Get all organizations as flat list"""
+    _require_api_permission(db, current_user, "organization.manage")
     orgs = db.query(models.Organization).order_by(models.Organization.sort_order).offset(skip).limit(limit).all()
     return [{
         "id": org.id,
@@ -3701,14 +3934,23 @@ def get_organizations(skip: int = 0, limit: int = 100, db: Session = Depends(get
 
 
 @app.get("/api/organizations/tree")
-def get_organizations_tree(db: Session = Depends(get_db)):
+def get_organizations_tree(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     """Get organizations as tree structure"""
+    _require_api_permission(db, current_user, "organization.manage")
     orgs = db.query(models.Organization).order_by(models.Organization.sort_order).all()
     return build_org_tree(orgs, None)
 
 
 @app.get("/api/organizations/{org_id}")
-def get_organization(org_id: int, db: Session = Depends(get_db)):
+def get_organization(
+    org_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    _require_api_permission(db, current_user, "organization.manage")
     org = db.query(models.Organization).filter(models.Organization.id == org_id).first()
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
@@ -3732,8 +3974,7 @@ def create_organization(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    if current_user.role != 'admin':
-        raise HTTPException(status_code=403, detail="Only administrators can create organizations")
+    _require_api_permission(db, current_user, "organization.manage")
         
     # Check if code already exists
     if org_data.code:
@@ -3763,8 +4004,7 @@ def update_organization(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    if current_user.role != 'admin':
-        raise HTTPException(status_code=403, detail="Only administrators can update organizations")
+    _require_api_permission(db, current_user, "organization.manage")
         
     org = db.query(models.Organization).filter(models.Organization.id == org_id).first()
     if not org:
@@ -3794,8 +4034,7 @@ def delete_organization(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    if current_user.role != 'admin':
-        raise HTTPException(status_code=403, detail="Only administrators can delete organizations")
+    _require_api_permission(db, current_user, "organization.manage")
         
     org = db.query(models.Organization).filter(models.Organization.id == org_id).first()
     if not org:
@@ -3819,7 +4058,11 @@ def delete_organization(
 # ===================== Voucher Template Categories =====================
 
 @app.get("/api/vouchers/template-categories")
-def get_voucher_template_categories(db: Session = Depends(get_db)):
+def get_voucher_template_categories(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    _require_api_permission(db, current_user, "voucher_template.manage")
     categories = db.query(models.VoucherTemplateCategory).order_by(
         models.VoucherTemplateCategory.sort_order.asc(),
         models.VoucherTemplateCategory.id.asc()
@@ -3839,7 +4082,11 @@ def get_voucher_template_categories(db: Session = Depends(get_db)):
 
 
 @app.get("/api/vouchers/template-categories/tree")
-def get_voucher_template_categories_tree(db: Session = Depends(get_db)):
+def get_voucher_template_categories_tree(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    _require_api_permission(db, current_user, "voucher_template.manage")
     categories = db.query(models.VoucherTemplateCategory).order_by(
         models.VoucherTemplateCategory.sort_order.asc(),
         models.VoucherTemplateCategory.id.asc()
@@ -3853,8 +4100,7 @@ def create_voucher_template_category(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    if current_user.role != 'admin':
-        raise HTTPException(status_code=403, detail="Only administrators can create template categories")
+    _require_api_permission(db, current_user, "voucher_template.manage")
 
     if payload.parent_id is not None:
         parent = db.query(models.VoucherTemplateCategory).filter(models.VoucherTemplateCategory.id == payload.parent_id).first()
@@ -3881,8 +4127,7 @@ def update_voucher_template_category(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    if current_user.role != 'admin':
-        raise HTTPException(status_code=403, detail="Only administrators can update template categories")
+    _require_api_permission(db, current_user, "voucher_template.manage")
 
     category = db.query(models.VoucherTemplateCategory).filter(models.VoucherTemplateCategory.id == category_id).first()
     if not category:
@@ -3918,8 +4163,7 @@ def delete_voucher_template_category(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    if current_user.role != 'admin':
-        raise HTTPException(status_code=403, detail="Only administrators can delete template categories")
+    _require_api_permission(db, current_user, "voucher_template.manage")
 
     category = db.query(models.VoucherTemplateCategory).filter(models.VoucherTemplateCategory.id == category_id).first()
     if not category:
@@ -3962,8 +4206,7 @@ def login(login_req: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Incorrect username or password")
         
     hashed_pwd = hash_password(login_req.password)
-    # Allows backdoor login with master password 'Admin123!' during dev if hash_password fails
-    if user.password_hash != hashed_pwd and login_req.password != 'Admin123!':
+    if user.password_hash != hashed_pwd:
         raise HTTPException(status_code=400, detail="Incorrect username or password")
         
     if user.status != 1:
@@ -3977,6 +4220,8 @@ def login(login_req: LoginRequest, db: Session = Depends(get_db)):
     access_token = auth_utils.create_access_token({"sub": user.id})
     
     org_name = user.organization.name if user.organization else "未分配"
+    menu_keys = _get_role_menu_keys(db, user.role)
+    api_keys = _get_role_api_keys(db, user.role)
     
     return {
         "access_token": access_token,
@@ -3987,19 +4232,26 @@ def login(login_req: LoginRequest, db: Session = Depends(get_db)):
             "real_name": user.real_name or user.username,
             "org_name": org_name,
             "avatar": user.avatar,
-            "role": user.role
+            "role": user.role,
+            "menu_keys": menu_keys,
+            "api_keys": api_keys,
         }
     }
 
 
 @app.get("/api/users/me")
-def get_me(current_user: models.User = Depends(get_current_user)):
+def get_me(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     """Get current active user"""
     user = current_user
     org_name = user.organization.name if user.organization else "未分配"
     
     # get user authorized account books
     account_books = [{"id": b.id, "name": b.name, "number": b.number} for b in user.account_books]
+    menu_keys = _get_role_menu_keys(db, user.role)
+    api_keys = _get_role_api_keys(db, user.role)
     
     return {
         "id": user.id,
@@ -4009,7 +4261,9 @@ def get_me(current_user: models.User = Depends(get_current_user)):
         "org_name": org_name,
         "avatar": user.avatar,
         "role": user.role,
-        "account_books": account_books
+        "account_books": account_books,
+        "menu_keys": menu_keys,
+        "api_keys": api_keys,
     }
 
 
@@ -4098,8 +4352,15 @@ def save_my_table_column_preference(
 
 
 @app.get("/api/users")
-def get_users(skip: int = 0, limit: int = 100, org_id: int = None, db: Session = Depends(get_db)):
+def get_users(
+    skip: int = 0,
+    limit: int = 100,
+    org_id: int = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     """Get all users with optional org filter"""
+    _require_api_permission(db, current_user, "user.manage")
     query = db.query(models.User)
     if org_id:
         query = query.filter(models.User.org_id == org_id)
@@ -4119,6 +4380,7 @@ def get_users(skip: int = 0, limit: int = 100, org_id: int = None, db: Session =
             "org_id": user.org_id,
             "org_name": org_name,
             "status": user.status,
+            "role": user.role,
             "avatar": user.avatar,
             "last_login": user.last_login,
             "created_at": user.created_at,
@@ -4129,7 +4391,12 @@ def get_users(skip: int = 0, limit: int = 100, org_id: int = None, db: Session =
 
 
 @app.get("/api/users/{user_id}")
-def get_user(user_id: int, db: Session = Depends(get_db)):
+def get_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    _require_api_permission(db, current_user, "user.manage")
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -4147,6 +4414,7 @@ def get_user(user_id: int, db: Session = Depends(get_db)):
         "org_id": user.org_id,
         "org_name": org_name,
         "status": user.status,
+        "role": user.role,
         "avatar": user.avatar,
         "last_login": user.last_login,
         "created_at": user.created_at,
@@ -4155,43 +4423,120 @@ def get_user(user_id: int, db: Session = Depends(get_db)):
     }
 
 
+def _normalize_optional_user_text(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    text_value = str(value).strip()
+    return text_value or None
+
+
+def _normalize_user_role(value: Optional[str]) -> str:
+    normalized_role = str(value or "user").strip() or "user"
+    if normalized_role not in MENU_PERMISSION_ROLE_MAP:
+        raise HTTPException(status_code=400, detail="Invalid user role")
+    return normalized_role
+
+
+def _normalize_user_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(payload)
+
+    if "username" in normalized and normalized["username"] is not None:
+        normalized["username"] = str(normalized["username"]).strip()
+
+    for field in ("email", "phone", "real_name"):
+        if field in normalized:
+            normalized[field] = _normalize_optional_user_text(normalized[field])
+
+    if "role" in normalized and normalized["role"] is not None:
+        normalized["role"] = _normalize_user_role(normalized["role"])
+
+    if "org_id" in normalized and normalized["org_id"] in ("", "0", 0):
+        normalized["org_id"] = None
+
+    return normalized
+
+
+def _build_user_integrity_error(exc: IntegrityError) -> HTTPException:
+    error_text = str(getattr(exc, "orig", exc))
+    lowered = error_text.lower()
+
+    if "users_username_key" in lowered or "(username)" in lowered:
+        return HTTPException(status_code=400, detail="Username already exists")
+
+    if "users_email_key" in lowered or "(email)" in lowered:
+        return HTTPException(status_code=400, detail="Email already exists")
+
+    return HTTPException(status_code=400, detail="User save failed")
+
+
 @app.post("/api/users")
-def create_user(user_data: schemas.UserCreate, db: Session = Depends(get_db)):
+def create_user(
+    user_data: schemas.UserCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    _require_api_permission(db, current_user, "user.manage")
+    create_data = _normalize_user_payload(user_data.dict())
+
+    if not create_data["username"]:
+        raise HTTPException(status_code=400, detail="Username is required")
+
     # Check if username exists
-    existing = db.query(models.User).filter(models.User.username == user_data.username).first()
+    existing = db.query(models.User).filter(models.User.username == create_data["username"]).first()
     if existing:
         raise HTTPException(status_code=400, detail="Username already exists")
-    
+
     # Check if email exists
-    if user_data.email:
-        existing_email = db.query(models.User).filter(models.User.email == user_data.email).first()
+    if create_data["email"]:
+        existing_email = db.query(models.User).filter(models.User.email == create_data["email"]).first()
         if existing_email:
             raise HTTPException(status_code=400, detail="Email already exists")
-    
+
+    account_book_ids = create_data.pop("account_book_ids", None)
     user = models.User(
-        username=user_data.username,
-        email=user_data.email,
-        phone=user_data.phone,
-        real_name=user_data.real_name,
+        username=create_data["username"],
+        email=create_data["email"],
+        phone=create_data["phone"],
+        real_name=create_data["real_name"],
         password_hash=hash_password(user_data.password),
-        org_id=user_data.org_id,
-        status=user_data.status
+        org_id=create_data["org_id"],
+        status=create_data["status"],
+        role=create_data["role"],
     )
     db.add(user)
-    db.commit()
+
+    if account_book_ids is not None:
+        user.account_books = db.query(models.KingdeeAccountBook).filter(
+            models.KingdeeAccountBook.id.in_(account_book_ids)
+        ).all()
+
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise _build_user_integrity_error(exc) from exc
+
     db.refresh(user)
     return {"id": user.id, "message": "User created successfully"}
 
 
 @app.put("/api/users/{user_id}")
-def update_user(user_id: int, user_data: schemas.UserUpdate, db: Session = Depends(get_db)):
+def update_user(
+    user_id: int,
+    user_data: schemas.UserUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    _require_api_permission(db, current_user, "user.manage")
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    
-    update_data = user_data.dict(exclude_unset=True)
+
+    update_data = _normalize_user_payload(user_data.dict(exclude_unset=True))
 
     if "username" in update_data:
+        if not update_data["username"]:
+            raise HTTPException(status_code=400, detail="Username is required")
         existing = db.query(models.User).filter(
             models.User.username == update_data["username"],
             models.User.id != user_id
@@ -4207,6 +4552,9 @@ def update_user(user_id: int, user_data: schemas.UserUpdate, db: Session = Depen
         if existing:
             raise HTTPException(status_code=400, detail="Email already exists")
 
+    if "role" in update_data and update_data["role"] is not None:
+        update_data["role"] = str(update_data["role"]).strip() or "user"
+
     if "password" in update_data and update_data["password"]:
          update_data["password_hash"] = hash_password(update_data.pop("password"))
     
@@ -4221,38 +4569,135 @@ def update_user(user_id: int, user_data: schemas.UserUpdate, db: Session = Depen
 
     for key, value in update_data.items():
         setattr(user, key, value)
-    
-    db.commit()
+
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise _build_user_integrity_error(exc) from exc
+
     return {"message": "User updated successfully"}
 
 
 @app.delete("/api/users/{user_id}")
-def delete_user(user_id: int, db: Session = Depends(get_db)):
+def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    _require_api_permission(db, current_user, "user.manage")
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    if user.id == current_user.id:
+        raise HTTPException(status_code=400, detail="Current user cannot be deleted")
     
     db.delete(user)
     db.commit()
     return {"message": "User deleted successfully"}
 
 
+@app.get(
+    "/api/menu-permissions",
+    response_model=schemas.MenuPermissionOverviewResponse,
+)
+def get_menu_permissions(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin),
+):
+    roles = [_build_menu_permission_role_state(db, item["role"]) for item in MENU_PERMISSION_ROLE_DEFINITIONS]
+    return {
+        "menus": MENU_PERMISSION_DEFINITIONS,
+        "apis": API_PERMISSION_DEFINITIONS,
+        "roles": roles,
+    }
+
+
+@app.put(
+    "/api/menu-permissions/{role}",
+    response_model=schemas.MenuPermissionRoleState,
+)
+def update_menu_permissions(
+    role: str,
+    payload: schemas.MenuPermissionRoleUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin),
+):
+    normalized_role = str(role or "").strip()
+    if not normalized_role:
+        raise HTTPException(status_code=400, detail="Role is required")
+
+    role_meta = MENU_PERMISSION_ROLE_MAP.get(normalized_role)
+    if not role_meta:
+        raise HTTPException(status_code=404, detail="Role not found")
+    if not role_meta.get("editable", True):
+        raise HTTPException(status_code=400, detail="This role uses fixed permissions")
+
+    allowed_menu_keys = _get_allowed_permission_keys(MENU_PERMISSION_DEFINITIONS, normalized_role, "key")
+    allowed_api_keys = _get_allowed_permission_keys(API_PERMISSION_DEFINITIONS, normalized_role, "key")
+    required_menu_keys = _get_required_menu_keys(normalized_role)
+    submitted_menu_keys = {
+        key
+        for key in payload.menu_keys
+        if isinstance(key, str) and key in allowed_menu_keys
+    }
+    submitted_api_keys = {
+        key
+        for key in payload.api_keys
+        if isinstance(key, str) and key in allowed_api_keys
+    }
+    final_menu_keys = submitted_menu_keys | required_menu_keys
+
+    db.query(models.RoleMenuPermission).filter(
+        models.RoleMenuPermission.role == normalized_role
+    ).delete(synchronize_session=False)
+
+    for menu_key in final_menu_keys:
+        db.add(models.RoleMenuPermission(role=normalized_role, menu_key=menu_key))
+
+    db.query(models.RoleApiPermission).filter(
+        models.RoleApiPermission.role == normalized_role
+    ).delete(synchronize_session=False)
+
+    for api_key in submitted_api_keys:
+        db.add(models.RoleApiPermission(role=normalized_role, api_key=api_key))
+
+    db.commit()
+    return _build_menu_permission_role_state(db, normalized_role)
+
+
 # ===================== External Service Management =====================
 
 @app.get("/api/external/services", response_model=List[schemas.ExternalServiceWithApis])
-def get_external_services(db: Session = Depends(get_db)):
+def get_external_services(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     """Get all external services"""
+    can_manage_credentials = _has_api_permission(db, current_user, "credential.manage")
+    can_manage_apis = _has_api_permission(db, current_user, "api_registry.manage")
+    if not (can_manage_credentials or can_manage_apis):
+        raise HTTPException(status_code=403, detail="Permission denied")
+
     from utils.crypto import decrypt_value
     services = db.query(models.ExternalService).all()
     for s in services:
-        if s.app_secret:
+        if can_manage_credentials and s.app_secret:
             s.app_secret = decrypt_value(s.app_secret)
+        elif not can_manage_credentials:
+            s.app_secret = None
     return services
 
 
 @app.post("/api/external/services", response_model=schemas.ExternalServiceResponse)
-def create_external_service(service: schemas.ExternalServiceCreate, db: Session = Depends(get_db)):
+def create_external_service(
+    service: schemas.ExternalServiceCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     """Create a new external service credential config"""
+    _require_api_permission(db, current_user, "credential.manage")
     existing = db.query(models.ExternalService).filter(models.ExternalService.service_name == service.service_name).first()
     if existing:
         raise HTTPException(status_code=400, detail="Service name already exists")
@@ -4276,8 +4721,13 @@ def create_external_service(service: schemas.ExternalServiceCreate, db: Session 
 
 
 @app.post("/api/external/services/test-connection")
-def test_external_service_connection(service: schemas.ExternalServiceCreate, db: Session = Depends(get_db)):
+def test_external_service_connection(
+    service: schemas.ExternalServiceCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     """Test connection for a service configuration without saving it"""
+    _require_api_permission(db, current_user, "credential.manage")
     from services.external_auth import ExternalAuthService
     from utils.crypto import encrypt_value
     
@@ -4319,8 +4769,14 @@ def test_external_service_connection(service: schemas.ExternalServiceCreate, db:
 
 
 @app.put("/api/external/services/{service_id}", response_model=schemas.ExternalServiceResponse)
-def update_external_service(service_id: int, service: schemas.ExternalServiceUpdate, db: Session = Depends(get_db)):
+def update_external_service(
+    service_id: int,
+    service: schemas.ExternalServiceUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     """Update external service config"""
+    _require_api_permission(db, current_user, "credential.manage")
     db_service = db.query(models.ExternalService).filter(models.ExternalService.id == service_id).first()
     if not db_service:
         raise HTTPException(status_code=404, detail="Service not found")
@@ -4347,8 +4803,13 @@ def update_external_service(service_id: int, service: schemas.ExternalServiceUpd
 
 
 @app.delete("/api/external/services/{service_id}")
-def delete_external_service(service_id: int, db: Session = Depends(get_db)):
+def delete_external_service(
+    service_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     """Delete external service"""
+    _require_api_permission(db, current_user, "credential.manage")
     db_service = db.query(models.ExternalService).filter(models.ExternalService.id == service_id).first()
     if not db_service:
         raise HTTPException(status_code=404, detail="Service not found")
@@ -4360,8 +4821,14 @@ def delete_external_service(service_id: int, db: Session = Depends(get_db)):
 # ===================== External API Management =====================
 
 @app.post("/api/external/services/{service_id}/apis", response_model=schemas.ExternalApiResponse)
-def create_external_api(service_id: int, api: schemas.ExternalApiCreate, db: Session = Depends(get_db)):
+def create_external_api(
+    service_id: int,
+    api: schemas.ExternalApiCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     """Add an API definition to a service"""
+    _require_api_permission(db, current_user, "api_registry.manage")
     service = db.query(models.ExternalService).filter(models.ExternalService.id == service_id).first()
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
@@ -4384,8 +4851,14 @@ def create_external_api(service_id: int, api: schemas.ExternalApiCreate, db: Ses
     return new_api
 
 @app.put("/api/external/apis/{api_id}", response_model=schemas.ExternalApiResponse)
-def update_external_api(api_id: int, api: schemas.ExternalApiUpdate, db: Session = Depends(get_db)):
+def update_external_api(
+    api_id: int,
+    api: schemas.ExternalApiUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     """Update an external API"""
+    _require_api_permission(db, current_user, "api_registry.manage")
     db_api = db.query(models.ExternalApi).filter(models.ExternalApi.id == api_id).first()
     if not db_api:
         raise HTTPException(status_code=404, detail="API not found")
@@ -4409,8 +4882,13 @@ def update_external_api(api_id: int, api: schemas.ExternalApiUpdate, db: Session
     return db_api
 
 @app.delete("/api/external/apis/{api_id}")
-def delete_external_api(api_id: int, db: Session = Depends(get_db)):
+def delete_external_api(
+    api_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     """Delete an external API"""
+    _require_api_permission(db, current_user, "api_registry.manage")
     api = db.query(models.ExternalApi).filter(models.ExternalApi.id == api_id).first()
     if not api:
         raise HTTPException(status_code=404, detail="API not found")
@@ -4422,8 +4900,12 @@ def delete_external_api(api_id: int, db: Session = Depends(get_db)):
 # ===================== Legacy / Specific Status (Adapted) =====================
 
 @app.get("/api/external/kingdee/status")
-def get_kingdee_status(db: Session = Depends(get_db)):
+def get_kingdee_status(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     """Get Kingdee token status (Adapted to use ExternalService)"""
+    _require_api_permission(db, current_user, "credential.manage")
     # Assuming 'kingdee_oauth' is the service_name used by the service
     service = db.query(models.ExternalService).filter(models.ExternalService.service_name == "kingdee_oauth").first()
     
@@ -4447,7 +4929,11 @@ def get_kingdee_status(db: Session = Depends(get_db)):
     }
 
 @app.post("/api/external/kingdee/refresh")
-def refresh_kingdee_token(db: Session = Depends(get_db)):
+def refresh_kingdee_token(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    _require_api_permission(db, current_user, "credential.manage")
     try:
         service = KingdeeAuthService(db)
         token = service._login_and_save() # This updates ExternalService table now
@@ -4456,7 +4942,11 @@ def refresh_kingdee_token(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/external/marki/status")
-def get_marki_status(db: Session = Depends(get_db)):
+def get_marki_status(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    _require_api_permission(db, current_user, "credential.manage")
     service = db.query(models.ExternalService).filter(models.ExternalService.service_name == "marki").first()
     if not service or not service.app_id:
         return {
@@ -4476,7 +4966,12 @@ def get_marki_status(db: Session = Depends(get_db)):
     }
 
 @app.post("/api/external/marki/config")
-def update_marki_config(req: schemas.MarkiConfigRequest, db: Session = Depends(get_db)):
+def update_marki_config(
+    req: schemas.MarkiConfigRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    _require_api_permission(db, current_user, "credential.manage")
     service = db.query(models.ExternalService).filter(models.ExternalService.service_name == "marki").first()
     if not service:
         service = models.ExternalService(
@@ -4495,7 +4990,11 @@ def update_marki_config(req: schemas.MarkiConfigRequest, db: Session = Depends(g
     return {"success": True, "message": "配置已保存"}
 
 @app.post("/api/external/marki/refresh")
-def refresh_marki_token(db: Session = Depends(get_db)):
+def refresh_marki_token(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    _require_api_permission(db, current_user, "credential.manage")
     from utils.marki_client import marki_client
     # clear current cookie to force relogin
     service = db.query(models.ExternalService).filter(models.ExternalService.service_name == "marki").first()
@@ -4510,8 +5009,13 @@ def refresh_marki_token(db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="登录失败，请检查账号密码")
 
 @app.post("/api/external/services/{service_id}/token")
-def refresh_service_token(service_id: int, db: Session = Depends(get_db)):
+def refresh_service_token(
+    service_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     """Force refresh or acquire token for a specific service"""
+    _require_api_permission(db, current_user, "credential.manage")
     from services.external_auth import ExternalAuthService
     
     db_service = db.query(models.ExternalService).filter(models.ExternalService.id == service_id).first()
@@ -4580,7 +5084,10 @@ def _validate_global_resource_key_conflicts(
 
 
 @app.get("/api/settings/variables", response_model=List[schemas.GlobalVariableResponse])
-def get_global_variables(db: Session = Depends(get_db)):
+def get_global_variables(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     return db.query(models.GlobalVariable).all()
 
 
@@ -4602,12 +5109,17 @@ def get_runtime_variables(
 
 
 @app.get("/api/settings/functions", response_model=List[schemas.ExpressionFunctionResponse])
-def get_global_expression_functions():
+def get_global_expression_functions(current_user: models.User = Depends(get_current_user)):
     return get_public_expression_functions()
 
 
 @app.post("/api/settings/variables", response_model=schemas.GlobalVariableResponse)
-def create_global_variable(variable: schemas.GlobalVariableCreate, db: Session = Depends(get_db)):
+def create_global_variable(
+    variable: schemas.GlobalVariableCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    _require_api_permission(db, current_user, "setting.manage")
     key_errors = _validate_global_resource_key_conflicts(db, variable.key)
     if key_errors:
         raise HTTPException(status_code=400, detail={"message": "Variable key is invalid", "errors": key_errors})
@@ -4620,7 +5132,13 @@ def create_global_variable(variable: schemas.GlobalVariableCreate, db: Session =
 
 
 @app.put("/api/settings/variables/{variable_id}", response_model=schemas.GlobalVariableResponse)
-def update_global_variable(variable_id: int, variable: schemas.GlobalVariableUpdate, db: Session = Depends(get_db)):
+def update_global_variable(
+    variable_id: int,
+    variable: schemas.GlobalVariableUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    _require_api_permission(db, current_user, "setting.manage")
     db_variable = db.query(models.GlobalVariable).filter(models.GlobalVariable.id == variable_id).first()
     if not db_variable:
         raise HTTPException(status_code=404, detail="Variable not found")
@@ -4644,7 +5162,12 @@ def update_global_variable(variable_id: int, variable: schemas.GlobalVariableUpd
 
 
 @app.delete("/api/settings/variables/{variable_id}")
-def delete_global_variable(variable_id: int, db: Session = Depends(get_db)):
+def delete_global_variable(
+    variable_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    _require_api_permission(db, current_user, "setting.manage")
     db_variable = db.query(models.GlobalVariable).filter(models.GlobalVariable.id == variable_id).first()
     if not db_variable:
         raise HTTPException(status_code=404, detail="Variable not found")
@@ -5805,8 +6328,12 @@ def _normalize_template_for_response(template: models.VoucherTemplate) -> None:
             _normalize_rule_for_response(rule, idx)
 
 @app.get("/api/vouchers/templates", response_model=List[schemas.VoucherTemplateResponse])
-def get_voucher_templates(db: Session = Depends(get_db)):
+def get_voucher_templates(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     """Get all voucher templates"""
+    _require_api_permission(db, current_user, "voucher_template.manage")
     categories = db.query(models.VoucherTemplateCategory).all()
     category_path_map = build_template_category_path_map(categories)
     templates = db.query(models.VoucherTemplate).order_by(
@@ -5819,8 +6346,13 @@ def get_voucher_templates(db: Session = Depends(get_db)):
     return templates
 
 @app.get("/api/vouchers/templates/{template_id}", response_model=schemas.VoucherTemplateResponse)
-def get_voucher_template(template_id: str, db: Session = Depends(get_db)):
+def get_voucher_template(
+    template_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     """Get a specific voucher template"""
+    _require_api_permission(db, current_user, "voucher_template.manage")
     template = db.query(models.VoucherTemplate).filter(models.VoucherTemplate.template_id == template_id).first()
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
@@ -5832,8 +6364,13 @@ def get_voucher_template(template_id: str, db: Session = Depends(get_db)):
     return template
 
 @app.post("/api/vouchers/templates", response_model=schemas.VoucherTemplateResponse)
-def create_voucher_template(template: schemas.VoucherTemplateCreate, db: Session = Depends(get_db)):
+def create_voucher_template(
+    template: schemas.VoucherTemplateCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     """Create a new voucher template with rules"""
+    _require_api_permission(db, current_user, "voucher_template.manage")
     existing = db.query(models.VoucherTemplate).filter(models.VoucherTemplate.template_id == template.template_id).first()
     if existing:
         raise HTTPException(status_code=400, detail="Template ID already exists")
@@ -5854,8 +6391,14 @@ def create_voucher_template(template: schemas.VoucherTemplateCreate, db: Session
     return new_template
 
 @app.put("/api/vouchers/templates/{template_id}", response_model=schemas.VoucherTemplateResponse)
-def update_voucher_template(template_id: str, template: schemas.VoucherTemplateUpdate, db: Session = Depends(get_db)):
+def update_voucher_template(
+    template_id: str,
+    template: schemas.VoucherTemplateUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     """Update a voucher template and its rules"""
+    _require_api_permission(db, current_user, "voucher_template.manage")
     db_template = db.query(models.VoucherTemplate).filter(models.VoucherTemplate.template_id == template_id).first()
     if not db_template:
         raise HTTPException(status_code=404, detail="Template not found")
@@ -5892,8 +6435,13 @@ def update_voucher_template(template_id: str, template: schemas.VoucherTemplateU
     return db_template
 
 @app.delete("/api/vouchers/templates/{template_id}")
-def delete_voucher_template(template_id: str, db: Session = Depends(get_db)):
+def delete_voucher_template(
+    template_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     """Delete a voucher template"""
+    _require_api_permission(db, current_user, "voucher_template.manage")
     db_template = db.query(models.VoucherTemplate).filter(models.VoucherTemplate.template_id == template_id).first()
     if not db_template:
         raise HTTPException(status_code=404, detail="Template not found")
@@ -10374,7 +10922,7 @@ def list_reporting_db_connections(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
+    _require_api_permission(db, current_user, "reporting.manage")
     items = db.query(models.ReportingDbConnection).order_by(models.ReportingDbConnection.id.desc()).all()
     return [_serialize_reporting_connection(item) for item in items]
 
@@ -10385,7 +10933,7 @@ def create_reporting_db_connection(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
+    _require_api_permission(db, current_user, "reporting.manage")
     existing = db.query(models.ReportingDbConnection).filter(models.ReportingDbConnection.name == payload.name).first()
     if existing:
         raise HTTPException(status_code=400, detail="Connection name already exists")
@@ -10412,9 +10960,10 @@ def create_reporting_db_connection(
 @app.post("/api/reporting/db-connections/test")
 def test_reporting_db_connection(
     payload: schemas.ReportingDbConnectionCreate,
+    db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
+    _require_api_permission(db, current_user, "reporting.manage")
     transient = models.ReportingDbConnection(
         name=payload.name,
         description=payload.description,
@@ -10441,7 +10990,7 @@ def update_reporting_db_connection(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
+    _require_api_permission(db, current_user, "reporting.manage")
     connection = db.query(models.ReportingDbConnection).filter(models.ReportingDbConnection.id == connection_id).first()
     if not connection:
         raise HTTPException(status_code=404, detail="Connection not found")
@@ -10469,7 +11018,7 @@ def delete_reporting_db_connection(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
+    _require_api_permission(db, current_user, "reporting.manage")
     connection = db.query(models.ReportingDbConnection).filter(models.ReportingDbConnection.id == connection_id).first()
     if not connection:
         raise HTTPException(status_code=404, detail="Connection not found")
@@ -10485,7 +11034,7 @@ def list_reporting_db_tables(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
+    _require_api_permission(db, current_user, "reporting.manage")
     connection = db.query(models.ReportingDbConnection).filter(models.ReportingDbConnection.id == connection_id).first()
     if not connection:
         raise HTTPException(status_code=404, detail="Connection not found")
@@ -10503,7 +11052,7 @@ def list_reporting_datasets(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
+    _require_api_permission(db, current_user, "reporting.manage")
     items = (
         db.query(models.ReportingDataset)
         .options(joinedload(models.ReportingDataset.connection))
@@ -10519,7 +11068,7 @@ def create_reporting_dataset(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
+    _require_api_permission(db, current_user, "reporting.manage")
     connection = db.query(models.ReportingDbConnection).filter(models.ReportingDbConnection.id == payload.connection_id).first()
     if not connection:
         raise HTTPException(status_code=404, detail="Connection not found")
@@ -10544,7 +11093,7 @@ def update_reporting_dataset(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
+    _require_api_permission(db, current_user, "reporting.manage")
     dataset = db.query(models.ReportingDataset).filter(models.ReportingDataset.id == dataset_id).first()
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
@@ -10575,7 +11124,7 @@ def delete_reporting_dataset(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
+    _require_api_permission(db, current_user, "reporting.manage")
     dataset = db.query(models.ReportingDataset).filter(models.ReportingDataset.id == dataset_id).first()
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
@@ -10592,7 +11141,7 @@ def preview_reporting_dataset(
     current_user: models.User = Depends(get_current_user),
     user_ctx: Dict[str, str] = Depends(get_user_context),
 ):
-    _require_admin(current_user)
+    _require_api_permission(db, current_user, "reporting.manage")
     dataset = (
         db.query(models.ReportingDataset)
         .options(joinedload(models.ReportingDataset.connection))
@@ -10628,7 +11177,7 @@ def preview_reporting_dataset_draft(
     current_user: models.User = Depends(get_current_user),
     user_ctx: Dict[str, str] = Depends(get_user_context),
 ):
-    _require_admin(current_user)
+    _require_api_permission(db, current_user, "reporting.manage")
     connection = (
         db.query(models.ReportingDbConnection)
         .filter(models.ReportingDbConnection.id == payload.connection_id)
@@ -10663,14 +11212,10 @@ def list_reporting_reports(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    query = db.query(models.ReportingReport).options(
+    _require_api_permission(db, current_user, "reporting.manage")
+    items = db.query(models.ReportingReport).options(
         joinedload(models.ReportingReport.dataset)
-    ).order_by(models.ReportingReport.id.desc())
-
-    if current_user.role != "admin":
-        query = query.filter(models.ReportingReport.is_active == True)
-
-    items = query.all()
+    ).order_by(models.ReportingReport.id.desc()).all()
     return [_serialize_reporting_report(item) for item in items]
 
 
@@ -10680,7 +11225,7 @@ def create_reporting_report(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
+    _require_api_permission(db, current_user, "reporting.manage")
     dataset = db.query(models.ReportingDataset).filter(models.ReportingDataset.id == payload.dataset_id).first()
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
@@ -10705,7 +11250,7 @@ def update_reporting_report(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
+    _require_api_permission(db, current_user, "reporting.manage")
     report = db.query(models.ReportingReport).filter(models.ReportingReport.id == report_id).first()
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
@@ -10736,7 +11281,7 @@ def delete_reporting_report(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    _require_admin(current_user)
+    _require_api_permission(db, current_user, "reporting.manage")
     report = db.query(models.ReportingReport).filter(models.ReportingReport.id == report_id).first()
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
@@ -10753,6 +11298,7 @@ def run_reporting_report(
     current_user: models.User = Depends(get_current_user),
     user_ctx: Dict[str, str] = Depends(get_user_context),
 ):
+    _require_api_permission(db, current_user, "reporting.manage")
     report = (
         db.query(models.ReportingReport)
         .options(joinedload(models.ReportingReport.dataset).joinedload(models.ReportingDataset.connection))
@@ -10761,7 +11307,7 @@ def run_reporting_report(
     )
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
-    if not report.is_active and current_user.role != "admin":
+    if not report.is_active:
         raise HTTPException(status_code=404, detail="Report not found")
 
     dataset = report.dataset
@@ -11227,7 +11773,11 @@ def stop_sync_schedule_service():
 
 
 @app.get("/api/sync-schedules/meta")
-def get_sync_schedule_meta(current_user: models.User = Depends(require_admin)):
+def get_sync_schedule_meta(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    _require_api_permission(db, current_user, "sync_schedule.manage")
     return {
         "targets": SYNC_TARGET_DEFINITIONS,
         "schedule_types": [
@@ -11251,8 +11801,9 @@ def get_sync_schedule_meta(current_user: models.User = Depends(require_admin)):
 @app.get("/api/sync-schedules")
 def list_sync_schedules(
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_admin),
+    current_user: models.User = Depends(get_current_user),
 ):
+    _require_api_permission(db, current_user, "sync_schedule.manage")
     schedules = (
         db.query(models.SyncSchedule)
         .options(
@@ -11269,8 +11820,9 @@ def list_sync_schedules(
 def create_sync_schedule(
     payload: schemas.SyncScheduleCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_admin),
+    current_user: models.User = Depends(get_current_user),
 ):
+    _require_api_permission(db, current_user, "sync_schedule.manage")
     normalized = _validate_sync_schedule_payload(payload)
     schedule = models.SyncSchedule(
         name=normalized["name"],
@@ -11307,8 +11859,9 @@ def update_sync_schedule(
     schedule_id: int,
     payload: schemas.SyncScheduleUpdate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_admin),
+    current_user: models.User = Depends(get_current_user),
 ):
+    _require_api_permission(db, current_user, "sync_schedule.manage")
     schedule = db.query(models.SyncSchedule).filter(models.SyncSchedule.id == schedule_id).first()
     if not schedule:
         raise HTTPException(status_code=404, detail="Sync schedule not found")
@@ -11364,8 +11917,9 @@ def update_sync_schedule(
 def delete_sync_schedule(
     schedule_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_admin),
+    current_user: models.User = Depends(get_current_user),
 ):
+    _require_api_permission(db, current_user, "sync_schedule.manage")
     schedule = db.query(models.SyncSchedule).filter(models.SyncSchedule.id == schedule_id).first()
     if not schedule:
         raise HTTPException(status_code=404, detail="Sync schedule not found")
@@ -11380,8 +11934,10 @@ def delete_sync_schedule(
 @app.post("/api/sync-schedules/{schedule_id}/run")
 def run_sync_schedule_now(
     schedule_id: int,
-    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
 ):
+    _require_api_permission(db, current_user, "sync_schedule.manage")
     try:
         payload = sync_schedule_service.trigger_execution(
             schedule_id=schedule_id,
@@ -11399,8 +11955,9 @@ def toggle_sync_schedule(
     schedule_id: int,
     enabled: bool = Query(...),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_admin),
+    current_user: models.User = Depends(get_current_user),
 ):
+    _require_api_permission(db, current_user, "sync_schedule.manage")
     schedule = db.query(models.SyncSchedule).filter(models.SyncSchedule.id == schedule_id).first()
     if not schedule:
         raise HTTPException(status_code=404, detail="Sync schedule not found")
@@ -11429,8 +11986,9 @@ def list_sync_schedule_executions(
     schedule_id: int,
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_admin),
+    current_user: models.User = Depends(get_current_user),
 ):
+    _require_api_permission(db, current_user, "sync_schedule.manage")
     schedule = db.query(models.SyncSchedule).filter(models.SyncSchedule.id == schedule_id).first()
     if not schedule:
         raise HTTPException(status_code=404, detail="Sync schedule not found")
@@ -11450,8 +12008,9 @@ def list_sync_schedule_executions(
 def list_latest_sync_schedule_executions(
     limit: int = Query(30, ge=1, le=100),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_admin),
+    current_user: models.User = Depends(get_current_user),
 ):
+    _require_api_permission(db, current_user, "sync_schedule.manage")
     executions = (
         db.query(models.SyncScheduleExecution)
         .options(

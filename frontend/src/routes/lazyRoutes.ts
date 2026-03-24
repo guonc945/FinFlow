@@ -25,6 +25,7 @@ export const OACenterPage = lazyWithPreload(() => import('../pages/oa-center'));
 export const ReportCenterPage = lazyWithPreload(() => import('../pages/report-center'));
 export const Settings = lazyWithPreload(() => import('../pages/settings'));
 export const Users = lazyWithPreload(() => import('../pages/users'));
+export const MenuPermissions = lazyWithPreload(() => import('../pages/menu-permissions'));
 export const Organizations = lazyWithPreload(() => import('../pages/organizations'));
 export const Account = lazyWithPreload(() => import('../pages/account'));
 export const CredentialsManager = lazyWithPreload(() => import('../pages/integrations/credentials'));
@@ -70,6 +71,7 @@ const routePreloaders: Record<string, () => Promise<unknown>> = {
     '/projects': Projects.preload,
     '/charge-items': ChargeItems.preload,
     '/users': Users.preload,
+    '/menu-permissions': MenuPermissions.preload,
     '/organizations': Organizations.preload,
     '/account': Account.preload,
     '/integrations': Reports.preload,

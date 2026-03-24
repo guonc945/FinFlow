@@ -28,6 +28,15 @@ const Header = () => {
             try {
                 const data = await getMe();
                 setUser(data);
+                const persistedUser = localStorage.getItem('user');
+                const parsedUser = persistedUser ? JSON.parse(persistedUser) : {};
+                localStorage.setItem('user', JSON.stringify({
+                    ...parsedUser,
+                    ...data,
+                    role: data.role || parsedUser?.role || 'user',
+                    menu_keys: Array.isArray(data.menu_keys) ? data.menu_keys : parsedUser?.menu_keys || [],
+                    api_keys: Array.isArray(data.api_keys) ? data.api_keys : parsedUser?.api_keys || [],
+                }));
 
                 // 将用户上下文信息写入 localStorage 供全局使用
                 localStorage.setItem('current_user_id', String(data.id));

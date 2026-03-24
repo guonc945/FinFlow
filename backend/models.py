@@ -672,7 +672,7 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String(50), unique=True, nullable=False, index=True)
-    email = Column(String(100), unique=True, index=True)
+    email = Column(String(100), index=True)
     phone = Column(String(20))
     real_name = Column(String(50))
     password_hash = Column(String(255), nullable=False)
@@ -703,6 +703,32 @@ class UserTableColumnPreference(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     user = relationship("User")
+
+
+class RoleMenuPermission(Base):
+    __tablename__ = "role_menu_permissions"
+    __table_args__ = (
+        Index("ux_role_menu_permissions_role_key", "role", "menu_key", unique=True),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    role = Column(String(50), nullable=False, index=True)
+    menu_key = Column(String(200), nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class RoleApiPermission(Base):
+    __tablename__ = "role_api_permissions"
+    __table_args__ = (
+        Index("ux_role_api_permissions_role_key", "role", "api_key", unique=True),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    role = Column(String(50), nullable=False, index=True)
+    api_key = Column(String(200), nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
 class SyncSchedule(Base):

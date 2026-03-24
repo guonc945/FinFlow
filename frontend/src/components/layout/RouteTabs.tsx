@@ -9,7 +9,6 @@ interface Tab {
     key: string;
     path: string;
     title: string;
-    element: React.ReactNode;
 }
 
 const RouteTabs: React.FC<{ getPageTitle: (path: string) => { title: string } }> = ({ getPageTitle }) => {
@@ -35,13 +34,11 @@ const RouteTabs: React.FC<{ getPageTitle: (path: string) => { title: string } }>
                     key: pathname,
                     path: pathname,
                     title,
-                    element: outlet
                 }];
             }
-            // Update the element of the active tab to the latest outlet so it receives router context updates
-            return prev.map(t => t.path === pathname ? { ...t, element: outlet } : t);
+            return prev;
         });
-    }, [location.pathname, location.search, getPageTitle]); // we must update the active tab's outlet when it changes
+    }, [location.pathname, location.search, getPageTitle]);
 
     const closeTab = (e: React.MouseEvent, key: string) => {
         e.stopPropagation();
@@ -80,15 +77,9 @@ const RouteTabs: React.FC<{ getPageTitle: (path: string) => { title: string } }>
                 ))}
             </div>
             <main className="page-content route-tabs-content">
-                {tabs.map(tab => (
-                    <div
-                        key={tab.key}
-                        className={classNames('route-tab-pane', { 'pane-active': location.pathname === tab.path })}
-                        style={{ display: location.pathname === tab.path ? 'flex' : 'none' }}
-                    >
-                        {tab.path === location.pathname ? outlet : tab.element}
-                    </div>
-                ))}
+                <div className={classNames('route-tab-pane', { 'pane-active': true })}>
+                    {outlet}
+                </div>
             </main>
         </div>
     );

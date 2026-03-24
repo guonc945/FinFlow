@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*.log
+*.err.log
+
+backend/__pycache__/
+backend/**/*.pyc
+backend/**/*.pyo
+backend/**/*.log
+
+frontend/dist/

@@ -17,6 +17,8 @@ import type {
     SyncSchedule,
     SyncScheduleExecution,
     SyncScheduleMeta,
+    MenuPermissionOverview,
+    MenuPermissionRoleState,
 } from '../types';
 
 import { API_BASE_URL } from './apiBase';
@@ -44,7 +46,7 @@ axios.interceptors.request.use((config) => {
 axios.interceptors.response.use(
     (response) => response,
     (error) => {
-        if (error.response?.status === 401 || error.response?.status === 403) {
+        if (error.response?.status === 401) {
             localStorage.removeItem('token');
             localStorage.removeItem('user');
             if (!window.location.pathname.startsWith('/login')) {
@@ -126,6 +128,9 @@ export const createUser = async (data: {
     phone?: string;
     real_name?: string;
     org_id?: number;
+    status?: number;
+    role?: string;
+    account_book_ids?: string[];
 }) => {
     const response = await axios.post(`${API_BASE_URL}/users`, data);
     return response.data;
@@ -136,9 +141,11 @@ export const updateUser = async (id: number, data: {
     email?: string | null;
     phone?: string | null;
     real_name?: string | null;
-    org_id?: number;
+    org_id?: number | null;
     status?: number;
+    role?: string;
     password?: string;
+    account_book_ids?: string[];
 }) => {
     const response = await axios.put(`${API_BASE_URL}/users/${id}`, data);
     return response.data;
@@ -151,6 +158,19 @@ export const deleteUser = async (id: number) => {
 
 export const getMe = async () => {
     const response = await axios.get(`${API_BASE_URL}/users/me`);
+    return response.data;
+};
+
+export const getMenuPermissions = async (): Promise<MenuPermissionOverview> => {
+    const response = await axios.get<MenuPermissionOverview>(`${API_BASE_URL}/menu-permissions`);
+    return response.data;
+};
+
+export const updateMenuPermissions = async (
+    role: string,
+    data: { menu_keys: string[]; api_keys: string[] }
+): Promise<MenuPermissionRoleState> => {
+    const response = await axios.put<MenuPermissionRoleState>(`${API_BASE_URL}/menu-permissions/${encodeURIComponent(role)}`, data);
     return response.data;
 };
 

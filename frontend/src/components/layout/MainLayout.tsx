@@ -1,9 +1,10 @@
+import { useCallback } from 'react';
 import Sidebar from './Sidebar';
 import Header from './Header';
 import RouteTabs from './RouteTabs';
 
 const MainLayout = () => {
-    const getPageTitle = (pathname: string) => {
+    const getPageTitle = useCallback((pathname: string) => {
         const titles: Record<string, { title: string; subtitle?: string }> = {
             '/': { title: '首页仪表盘', subtitle: '查看系统运行状态与核心业务概览' },
             '/bills': { title: '运营账单', subtitle: '马克业务中运营账单的统一查询与处理入口' },
@@ -35,11 +36,12 @@ const MainLayout = () => {
             '/settings': { title: '系统设置', subtitle: '维护系统级参数、默认规则与运行配置' },
             '/account': { title: '个人设置', subtitle: '维护个人资料、密码与个人偏好设置' },
             '/users': { title: '用户管理', subtitle: '管理系统用户、角色与访问权限' },
+            '/menu-permissions': { title: '菜单权限', subtitle: '按角色配置系统菜单可见范围，统一管理前台导航访问入口' },
             '/organizations': { title: '组织管理', subtitle: '维护组织架构、层级关系与归属信息' },
         };
 
         return titles[pathname] || { title: '控制台' };
-    };
+    }, []);
 
     return (
         <div className="app-wrapper">

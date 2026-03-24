@@ -361,10 +361,12 @@ function FormModal({
 }
 
 export default function Reports() {
-    const user = parseJson<{ role?: string }>(localStorage.getItem('user'), {});
+    const user = parseJson<{ role?: string; api_keys?: string[] }>(localStorage.getItem('user'), {});
     const isAdmin = user?.role === 'admin';
+    const apiKeys = Array.isArray(user?.api_keys) ? user.api_keys : [];
+    const canManageReporting = isAdmin || apiKeys.includes('reporting.manage');
 
-    const [tab, setTab] = useState<TabKey>(isAdmin ? 'connections' : 'reports');
+    const [tab, setTab] = useState<TabKey>(canManageReporting ? 'connections' : 'reports');
     const [loading, setLoading] = useState(false);
 
     const [connections, setConnections] = useState<Connection[]>([]);
@@ -430,7 +432,7 @@ export default function Reports() {
     const loadData = async () => {
         setLoading(true);
         try {
-            if (isAdmin) {
+            if (canManageReporting) {
                 const [connectionData, datasetData, reportData] = await Promise.all([
                     getReportingConnections(),
                     getReportingDatasets(),
@@ -879,13 +881,13 @@ export default function Reports() {
     return (
         <div className="page-container fade-in reporting-page">
             <div className="reporting-tabs">
-                {isAdmin && (
+                    {canManageReporting && (
                     <button className={`reporting-tab ${tab === 'connections' ? 'active' : ''}`} onClick={() => setTab('connections')}>
                         <Database size={16} />
                         数据源连接
                     </button>
                 )}
-                {isAdmin && (
+                    {canManageReporting && (
                     <button className={`reporting-tab ${tab === 'datasets' ? 'active' : ''}`} onClick={() => setTab('datasets')}>
                         <FileCode2 size={16} />
                         SQL 数据集
@@ -901,7 +903,7 @@ export default function Reports() {
                 </button>
             </div>
 
-            {tab === 'connections' && isAdmin && (
+                    {tab === 'connections' && canManageReporting && (
                 <div className="reporting-grid">
                     <div className="card glass reporting-panel">
                         <div className="section-head">
@@ -969,7 +971,7 @@ export default function Reports() {
                 </div>
             )}
 
-            {tab === 'datasets' && isAdmin && (
+                    {tab === 'datasets' && canManageReporting && (
                 <div className="reporting-grid reporting-grid-two">
                     <div className="card glass reporting-panel">
                         <div className="section-head">
@@ -1038,7 +1040,7 @@ export default function Reports() {
                     <div className="card glass reporting-panel">
                         <div className="section-head">
                             <h3>报表目录</h3>
-                            {isAdmin && <button className="btn-primary" onClick={openReportCreateModal}><Plus size={14} />新建报表</button>}
+                                    {canManageReporting && <button className="btn-primary" onClick={openReportCreateModal}><Plus size={14} />新建报表</button>}
                         </div>
                         <div className="resource-list">
                             {reports.map((item) => (
@@ -1049,8 +1051,8 @@ export default function Reports() {
                                     </div>
                                     <div className="resource-actions">
                                         <button onClick={() => openReport(item)}>运行</button>
-                                        {isAdmin && <button onClick={() => editReport(item)}>设计</button>}
-                                        {isAdmin && (
+                                                {canManageReporting && <button onClick={() => editReport(item)}>设计</button>}
+                                                {canManageReporting && (
                                             <button
                                                 className="danger"
                                                 onClick={() => {

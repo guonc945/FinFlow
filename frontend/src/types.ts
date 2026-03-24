@@ -332,8 +332,47 @@ export interface User {
     last_login?: string;
     created_at: string;
     updated_at?: string;
+    role?: 'admin' | 'user' | string;
+    menu_keys?: string[];
+    api_keys?: string[];
     account_book_ids?: string[];
     account_books?: { id: string; name: string }[];
+}
+
+export interface MenuPermissionMenuItem {
+    key: string;
+    label: string;
+    section: string;
+    group?: string | null;
+    description?: string | null;
+    admin_only: boolean;
+    required: boolean;
+    default_enabled: boolean;
+}
+
+export interface ApiPermissionItem {
+    key: string;
+    label: string;
+    section: string;
+    group?: string | null;
+    description?: string | null;
+    admin_only: boolean;
+    default_enabled: boolean;
+}
+
+export interface MenuPermissionRoleState {
+    role: string;
+    label: string;
+    description?: string | null;
+    editable: boolean;
+    menu_keys: string[];
+    api_keys: string[];
+}
+
+export interface MenuPermissionOverview {
+    menus: MenuPermissionMenuItem[];
+    apis: ApiPermissionItem[];
+    roles: MenuPermissionRoleState[];
 }
 
 

@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
-import { TrendingUp, ArrowRight } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { ArrowRight, TrendingUp } from 'lucide-react';
 import RevenueChart from '../../components/charts/RevenueChart';
 import ExpenseChart from '../../components/charts/ExpenseChart';
-import { getIncomeTrend, getChargeItemsRanking, getBills, getProjects } from '../../services/api';
+import { getBills, getChargeItemsRanking, getIncomeTrend, getProjects } from '../../services/api';
 import type { Bill, Project } from '../../types';
 import './Dashboard.css';
 
@@ -13,51 +13,83 @@ const Dashboard = () => {
     const [projects, setProjects] = useState<Project[]>([]);
     const [isLoading, setIsLoading] = useState(true);
 
+    const currentUser = useMemo(() => {
+        try {
+            const raw = localStorage.getItem('user');
+            return raw ? JSON.parse(raw) : null;
+        } catch {
+            return null;
+        }
+    }, []);
+
+    const canReadProjects = useMemo(() => {
+        if (currentUser?.role === 'admin') return true;
+        const apiKeys = Array.isArray(currentUser?.api_keys)
+            ? currentUser.api_keys.filter((item: unknown): item is string => typeof item === 'string')
+            : [];
+        return apiKeys.includes('project.manage');
+    }, [currentUser]);
+
     useEffect(() => {
         const fetchData = async () => {
             setIsLoading(true);
             try {
-                const [trendData, rankingData, billsData, projectsData] = await Promise.all([
+                const [trendResult, rankingResult, billsResult, projectsResult] = await Promise.allSettled([
                     getIncomeTrend(),
                     getChargeItemsRanking(5),
                     getBills({ limit: 5 }),
-                    getProjects()
+                    canReadProjects ? getProjects() : Promise.resolve({ items: [] }),
                 ]);
 
-                // Format trend data for RevenueChart
-                const formattedTrend = trendData.labels.map((label: number, index: number) => ({
-                    name: `${label}月`,
-                    income: trendData.data[index]
-                }));
-                setIncomeTrend(formattedTrend);
+                if (trendResult.status === 'fulfilled') {
+                    const trendData = trendResult.value;
+                    const formattedTrend = (trendData.labels || []).map((label: number, index: number) => ({
+                        name: `${label}月`,
+                        income: trendData.data?.[index] || 0,
+                    }));
+                    setIncomeTrend(formattedTrend);
+                } else {
+                    console.error('Failed to fetch income trend:', trendResult.reason);
+                    setIncomeTrend([]);
+                }
 
-                // Format ranking data for ExpenseChart
-                const formattedRanking = rankingData.map((item: any) => ({
-                    name: item.item_name,
-                    value: item.percentage
-                }));
-                setRanking(formattedRanking);
+                if (rankingResult.status === 'fulfilled') {
+                    const formattedRanking = (rankingResult.value || []).map((item: any) => ({
+                        name: item.item_name,
+                        value: item.percentage,
+                    }));
+                    setRanking(formattedRanking);
+                } else {
+                    console.error('Failed to fetch charge items ranking:', rankingResult.reason);
+                    setRanking([]);
+                }
 
-                setRecentBills(billsData || []);
-                setProjects((projectsData.items || projectsData).slice(0, 3)); // Only show top 3
-            } catch (error) {
-                console.error('Failed to fetch dashboard data:', error);
+                if (billsResult.status === 'fulfilled') {
+                    setRecentBills(billsResult.value || []);
+                } else {
+                    console.error('Failed to fetch recent bills:', billsResult.reason);
+                    setRecentBills([]);
+                }
+
+                if (projectsResult.status === 'fulfilled') {
+                    const payload = projectsResult.value;
+                    const items = Array.isArray(payload) ? payload : payload.items || [];
+                    setProjects(items.slice(0, 3));
+                } else {
+                    console.error('Failed to fetch projects overview:', projectsResult.reason);
+                    setProjects([]);
+                }
             } finally {
                 setIsLoading(false);
             }
         };
 
-        fetchData();
-    }, []);
+        void fetchData();
+    }, [canReadProjects]);
 
     return (
         <div className="dashboard-container">
-            {/* Headers row instead of stats grid */}
-
-
-            {/* Main Content Grid */}
             <div className="dashboard-main-grid">
-                {/* Revenue Trend Chart */}
                 <div className="card glass chart-section">
                     <div className="card-header">
                         <h3>收入趋势</h3>
@@ -70,7 +102,6 @@ const Dashboard = () => {
                     </div>
                 </div>
 
-                {/* Expense Distribution */}
                 <div className="card glass chart-section">
                     <div className="card-header">
                         <h3>收入构成 (Top 5)</h3>
@@ -84,7 +115,6 @@ const Dashboard = () => {
                 </div>
             </div>
 
-            {/* Recent Bills & Project Status */}
             <div className="dashboard-bottom-grid">
                 <div className="card glass recent-bills">
                     <div className="card-header">
@@ -113,7 +143,7 @@ const Dashboard = () => {
                                             <td>{index + 1}</td>
                                             <td>{bill.id}</td>
                                             <td>{bill.charge_item_name}</td>
-                                            <td>¥{bill.amount?.toLocaleString()}</td>
+                                            <td>{bill.amount?.toLocaleString()}</td>
                                             <td>
                                                 <span className={`badge ${bill.pay_status_str === '已缴' ? 'success' : 'warning'}`}>
                                                     {bill.pay_status_str}
@@ -132,7 +162,11 @@ const Dashboard = () => {
                 <div className="card glass project-status">
                     <div className="card-header">
                         <h3>项目概览</h3>
-                        <a href="/projects" className="btn-link">查看详情</a>
+                        {canReadProjects ? (
+                            <a href="/projects" className="btn-link">查看详情</a>
+                        ) : (
+                            <span className="btn-link" style={{ cursor: 'default', opacity: 0.6 }}>只读概览</span>
+                        )}
                     </div>
                     <div className="card-body">
                         {isLoading ? (
@@ -150,7 +184,9 @@ const Dashboard = () => {
                                 ))}
                             </div>
                         ) : (
-                            <div className="empty-placeholder">暂无项目数据</div>
+                            <div className="empty-placeholder">
+                                {canReadProjects ? '暂无项目数据' : '当前账号无项目管理权限'}
+                            </div>
                         )}
                     </div>
                 </div>

@@ -107,6 +107,7 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     password: str
+    account_book_ids: Optional[List[str]] = None
 
 
 class UserUpdate(BaseModel):
@@ -116,6 +117,7 @@ class UserUpdate(BaseModel):
     real_name: Optional[str] = None
     org_id: Optional[int] = None
     status: Optional[int] = None
+    role: Optional[str] = None
     password: Optional[str] = None
     account_book_ids: Optional[List[str]] = None
 
@@ -147,6 +149,47 @@ class UserTableColumnPreferenceResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class MenuPermissionMenuItem(BaseModel):
+    key: str
+    label: str
+    section: str
+    group: Optional[str] = None
+    description: Optional[str] = None
+    admin_only: bool = False
+    required: bool = False
+    default_enabled: bool = False
+
+
+class ApiPermissionItem(BaseModel):
+    key: str
+    label: str
+    section: str
+    group: Optional[str] = None
+    description: Optional[str] = None
+    admin_only: bool = False
+    default_enabled: bool = False
+
+
+class MenuPermissionRoleState(BaseModel):
+    role: str
+    label: str
+    description: Optional[str] = None
+    editable: bool = True
+    menu_keys: List[str] = Field(default_factory=list)
+    api_keys: List[str] = Field(default_factory=list)
+
+
+class MenuPermissionOverviewResponse(BaseModel):
+    menus: List[MenuPermissionMenuItem] = Field(default_factory=list)
+    apis: List[ApiPermissionItem] = Field(default_factory=list)
+    roles: List[MenuPermissionRoleState] = Field(default_factory=list)
+
+
+class MenuPermissionRoleUpdate(BaseModel):
+    menu_keys: List[str] = Field(default_factory=list)
+    api_keys: List[str] = Field(default_factory=list)
 
 
 class SyncScheduleBase(BaseModel):
