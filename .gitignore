@@ -2,10 +2,19 @@ __pycache__/
 *.py[cod]
 *.log
 *.err.log
+.env
+.env.*
+!.env.example
+!.env.*.example
+.encryption.key
+.venv/
+venv/
+node_modules/
 
 backend/__pycache__/
 backend/**/*.pyc
 backend/**/*.pyo
 backend/**/*.log
+backend/.venv/
 
 frontend/dist/

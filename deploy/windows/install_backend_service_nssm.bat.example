@@ -1,0 +1,30 @@
+@echo off
+setlocal
+
+set NSSM_EXE=C:\tools\nssm\nssm.exe
+set SERVICE_NAME=FinFlowBackend
+set APP_DIR=D:\FinFlow\backend
+set START_CMD=D:\FinFlow\deploy\windows\start_backend_prod.bat
+
+if not exist "%NSSM_EXE%" (
+  echo [ERROR] NSSM not found: %NSSM_EXE%
+  exit /b 1
+)
+
+if not exist "%START_CMD%" (
+  echo [ERROR] Start script not found: %START_CMD%
+  exit /b 1
+)
+
+"%NSSM_EXE%" install %SERVICE_NAME% "%START_CMD%"
+"%NSSM_EXE%" set %SERVICE_NAME% AppDirectory "%APP_DIR%"
+"%NSSM_EXE%" set %SERVICE_NAME% Start SERVICE_AUTO_START
+"%NSSM_EXE%" set %SERVICE_NAME% AppStdout "%APP_DIR%\logs\service.out.log"
+"%NSSM_EXE%" set %SERVICE_NAME% AppStderr "%APP_DIR%\logs\service.err.log"
+"%NSSM_EXE%" set %SERVICE_NAME% AppRotateFiles 1
+"%NSSM_EXE%" set %SERVICE_NAME% AppRotateOnline 1
+"%NSSM_EXE%" set %SERVICE_NAME% AppRotateSeconds 86400
+
+net start %SERVICE_NAME%
+
+endlocal

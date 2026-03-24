@@ -8,9 +8,10 @@ from datetime import datetime, timedelta
 from urllib.parse import quote
 from utils.crypto import encrypt_value
 from fastapi import FastAPI, Depends, HTTPException, Query, Request, status, BackgroundTasks, Header
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy import and_, desc, func, extract, or_, inspect, text, cast, String
 from sqlalchemy.exc import IntegrityError
@@ -39,9 +40,10 @@ from utils.expression_functions import (
 from sync_tracker import tracker
 import logging
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent / ".env")
 from scripts.fetch_projects import main as fetch_projects_main
 from services.kingdee_auth import KingdeeAuthService
 from services.reporting_database import (
@@ -1482,6 +1484,9 @@ def _reset_bill_voucher_binding_impl(
 origins_raw = os.getenv("ALLOWED_ORIGINS", "")
 origins = [o.strip() for o in origins_raw.split(",") if o.strip()]
 allow_all_origins = "*" in origins
+allow_lan_origins = (
+    os.getenv("ALLOW_LAN_ORIGINS", "").strip().lower() in {"1", "true", "yes", "on"}
+)
 if not origins:
     origins = [
         "http://localhost:5273",
@@ -1495,10 +1500,11 @@ if not origins:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"] if allow_all_origins else origins,
-    # Support dev access via LAN IP without having to enumerate it in ALLOWED_ORIGINS.
-    allow_origin_regex=None
-    if allow_all_origins
-    else r"^http://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$",
+    allow_origin_regex=(
+        None
+        if allow_all_origins or not allow_lan_origins
+        else r"^http://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$"
+    ),
     # This project uses Authorization header (Bearer token) instead of cookies.
     allow_credentials=False,
     allow_methods=["*"],
@@ -12029,10 +12035,45 @@ def list_latest_sync_schedule_executions(
         result.append(item)
     return result
 
+
+FRONTEND_DIST_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+
+if (FRONTEND_DIST_DIR / "assets").is_dir():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST_DIR / "assets"), name="frontend-assets")
+
+
+def _frontend_file_response(relative_path: str) -> FileResponse:
+    return FileResponse(FRONTEND_DIST_DIR / relative_path)
+
+
+@app.get("/")
+def serve_frontend_index():
+    if not (FRONTEND_DIST_DIR / "index.html").is_file():
+        raise HTTPException(status_code=404, detail="Frontend dist not found")
+    return _frontend_file_response("index.html")
+
+
+@app.get("/{full_path:path}")
+def serve_frontend_spa(full_path: str):
+    normalized_path = (full_path or "").strip().lstrip("/")
+    if not normalized_path:
+        return serve_frontend_index()
+    if normalized_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    candidate = (FRONTEND_DIST_DIR / normalized_path).resolve()
+    if FRONTEND_DIST_DIR.exists() and candidate.is_file() and FRONTEND_DIST_DIR in candidate.parents:
+        return FileResponse(candidate)
+
+    if not (FRONTEND_DIST_DIR / "index.html").is_file():
+        raise HTTPException(status_code=404, detail="Frontend dist not found")
+    return _frontend_file_response("index.html")
+
 if __name__ == "__main__":
     import uvicorn
     
     host = os.getenv("APP_HOST", "0.0.0.0")
     port = int(os.getenv("APP_PORT", 8100))
+    reload_enabled = os.getenv("APP_RELOAD", "").strip().lower() in {"1", "true", "yes", "on"}
     
-    uvicorn.run("main:app", host=host, port=port, reload=True)
+    uvicorn.run("main:app", host=host, port=port, reload=reload_enabled)

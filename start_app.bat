@@ -1,7 +1,7 @@
 @echo off
 echo Starting FinFlow Platform...
 
-start "FinFlow Backend" cmd /k "cd backend && call .venv\Scripts\activate && python main.py"
+start "FinFlow Backend" cmd /k "cd backend && call .venv\Scripts\activate && set APP_RELOAD=true && python main.py"
 start "FinFlow Frontend" cmd /k "cd frontend && npm run dev"
 
 echo Services starting based on .env configurations...

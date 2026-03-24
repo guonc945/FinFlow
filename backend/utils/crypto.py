@@ -2,23 +2,26 @@ import os
 import base64
 from cryptography.fernet import Fernet
 import logging
+from pathlib import Path
 
 logger = logging.getLogger("crypto")
 
 # Try to load key from file, or generate new one
-KEY_FILE = ".encryption.key"
+BASE_DIR = Path(__file__).resolve().parents[1]
+KEY_FILE = Path(os.getenv("ENCRYPTION_KEY_FILE", str(BASE_DIR / ".encryption.key")))
 
 def _get_key():
     key = os.getenv("ENCRYPTION_KEY")
     if key:
         return key.encode() if isinstance(key, str) else key
     
-    if os.path.exists(KEY_FILE):
+    if KEY_FILE.exists():
         with open(KEY_FILE, "rb") as f:
             return f.read().strip()
             
     # Generate new key
     key = Fernet.generate_key()
+    KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(KEY_FILE, "wb") as f:
         f.write(key)
     logger.warning(f"Generated new encryption key and saved to {KEY_FILE}. Keep this safe!")
