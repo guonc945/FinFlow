@@ -72,7 +72,7 @@ def _infer_value_type(value: Any) -> str:
 class ReportingDatabaseService:
     @staticmethod
     def build_url(connection: models.ReportingDbConnection) -> str:
-        db_type = (connection.db_type or "postgresql").strip().lower()
+        db_type = (connection.db_type or "sqlserver").strip().lower()
         if db_type == "sqlite":
             db_name = (connection.database_name or "").strip() or ":memory:"
             if db_name == ":memory:":

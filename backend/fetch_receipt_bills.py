@@ -3,12 +3,16 @@ import os
 import time
 from datetime import datetime
 
-import psycopg2
 from dotenv import load_dotenv
+from sqlalchemy import func
 
+from database import SessionLocal
+from models import ExternalApi, ProjectList, ReceiptBill, ReceiptBillUser
 from receipt_bill_deposit_links import rebuild_receipt_bill_deposit_refund_links
 from sync_tracker import tracker
-from utils.marki_client import marki_client, get_api_url_by_id
+from utils.db_compat import fetch_all_project_ids, upsert_model_rows
+from utils.marki_client import get_api_url_by_id, marki_client
+from utils.sqlserver_partitions import ensure_default_financial_partitions
 
 load_dotenv()
 
@@ -16,24 +20,13 @@ load_dotenv()
 RECEIPT_BILL_API_ID = int(os.getenv("MARKI_RECEIPT_BILL_API_ID", "29"))
 
 
-def get_db_connection():
-    return psycopg2.connect(
-        host=os.getenv("DB_HOST", "localhost"),
-        port=os.getenv("DB_PORT", "5432"),
-        database=os.getenv("DB_NAME", "finflow"),
-        user=os.getenv("DB_USER", "postgres"),
-        password=os.getenv("DB_PASSWORD", ""),
-    )
-
-
 def validate_timestamp(timestamp):
-    if timestamp and int(timestamp) > 0:
+    if timestamp and str(timestamp).isdigit() and int(timestamp) > 0:
         return int(timestamp)
     return None
 
 
 def format_amount(val):
-    """Convert cents to Yuan (Decimal -> float), keeping 2 decimals."""
     if val is None:
         return None
     try:
@@ -46,47 +39,40 @@ def format_amount(val):
         return val
 
 
-def _to_json_str(v):
-    if v is None:
+def _to_json_str(value):
+    if value is None:
         return None
-    if isinstance(v, str):
-        return v
+    if isinstance(value, str):
+        return value
     try:
-        return json.dumps(v, ensure_ascii=False)
+        return json.dumps(value, ensure_ascii=False)
     except Exception:
-        return str(v)
+        return str(value)
 
 
+
+def _iter_chunks(items, size: int):
+    if size <= 0:
+        raise ValueError("size must be positive")
+    for idx in range(0, len(items), size):
+        yield items[idx : idx + size]
 def insert_receipt_bills_data(data_list, community_id_context: int):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
+    db = SessionLocal()
     inserted_count = 0
     skipped_count = 0
+    unchanged_count = 0
+    touched_receipt_bill_ids = set()
+    receipt_user_rows = []
+    staged_entries = []
 
     try:
+        community_id = int(community_id_context)
+
         for item in data_list:
             receipt_bill_id = item.get("id")
-            community_id = int(community_id_context)
             if receipt_bill_id is None:
                 skipped_count += 1
                 continue
-
-            deal_type = item.get("dealType")
-            asset_type = item.get("assetType")
-            asset_name = item.get("assetName")
-            asset_id = item.get("assetId")
-
-            income_amount = format_amount(item.get("incomeAmount"))
-            amount = format_amount(item.get("amount"))
-            discount_amount = format_amount(item.get("discountAmount"))
-            late_money_amount = format_amount(item.get("lateMoneyAmount"))
-            bill_amount = format_amount(item.get("billAmount"))
-            deposit_amount = format_amount(item.get("depositAmount"))
-
-            pay_channel = item.get("payChannel")
-            pay_channel_list = _to_json_str(item.get("payChannelList"))
-            pay_channel_str = item.get("payChannelStr")
 
             deal_time = validate_timestamp(item.get("dealTime"))
             deal_date = None
@@ -96,156 +82,126 @@ def insert_receipt_bills_data(data_list, community_id_context: int):
                 except Exception:
                     deal_date = None
 
-            remark = item.get("remark")
-            fk_id = item.get("fkId")
+            values = {
+                "deal_type": item.get("dealType"),
+                "asset_type": item.get("assetType"),
+                "asset_name": item.get("assetName"),
+                "asset_id": item.get("assetId"),
+                "income_amount": format_amount(item.get("incomeAmount")),
+                "amount": format_amount(item.get("amount")),
+                "discount_amount": format_amount(item.get("discountAmount")),
+                "late_money_amount": format_amount(item.get("lateMoneyAmount")),
+                "bill_amount": format_amount(item.get("billAmount")),
+                "deposit_amount": format_amount(item.get("depositAmount")),
+                "pay_channel": item.get("payChannel"),
+                "pay_channel_list": _to_json_str(item.get("payChannelList")),
+                "pay_channel_str": item.get("payChannelStr"),
+                "deal_time": deal_time,
+                "deal_date": deal_date,
+                "remark": item.get("remark"),
+                "fk_id": item.get("fkId"),
+                "receipt_id": item.get("receiptId"),
+                "receipt_record_id": item.get("receiptRecordId"),
+                "receipt_version": item.get("receiptVersion"),
+                "invoice_number": item.get("invoiceNumber"),
+                "invoice_urls": _to_json_str(item.get("invoiceUrls")),
+                "invoice_status": item.get("invoiceStatus"),
+                "open_invoice": item.get("openInvoice"),
+                "payee": item.get("payee"),
+                "bind_users_raw": _to_json_str(item.get("bindUsers")),
+            }
 
-            receipt_id = item.get("receiptId")
-            receipt_record_id = item.get("receiptRecordId")
-            receipt_version = item.get("receiptVersion")
+            receipt_bill_id = int(receipt_bill_id)
+            normalized_row = {
+                "id": receipt_bill_id,
+                "community_id": community_id,
+                **values,
+            }
+            staged_entries.append((item, normalized_row))
 
-            invoice_number = item.get("invoiceNumber")
-            invoice_urls = _to_json_str(item.get("invoiceUrls"))
-            invoice_status = item.get("invoiceStatus")
-            open_invoice = item.get("openInvoice")
-
-            payee = item.get("payee")
-
-            bind_users_raw = _to_json_str(item.get("bindUsers"))
-
-            cursor.execute(
-                """
-                INSERT INTO receipt_bills (
-                    id, community_id,
-                    deal_type, asset_type, asset_name, asset_id,
-                    income_amount, amount, discount_amount, late_money_amount, bill_amount, deposit_amount,
-                    pay_channel, pay_channel_list, pay_channel_str,
-                    deal_time, deal_date,
-                    remark, fk_id,
-                    receipt_id, receipt_record_id, receipt_version,
-                    invoice_number, invoice_urls, invoice_status, open_invoice,
-                    payee, bind_users_raw
-                ) VALUES (
-                    %s, %s,
-                    %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s,
-                    %s, %s,
-                    %s, %s,
-                    %s, %s, %s,
-                    %s, %s, %s, %s,
-                    %s, %s
+        existing_rows = {}
+        receipt_bill_ids = sorted({int(row["id"]) for _, row in staged_entries})
+        for receipt_bill_id_chunk in _iter_chunks(receipt_bill_ids, 900):
+            rows = (
+                db.query(
+                    ReceiptBill.id,
+                    ReceiptBill.community_id,
+                    ReceiptBill.receipt_version,
+                    ReceiptBill.deal_time,
+                    ReceiptBill.bind_users_raw,
                 )
-                ON CONFLICT (id, community_id) DO UPDATE SET
-                    deal_type = EXCLUDED.deal_type,
-                    asset_type = EXCLUDED.asset_type,
-                    asset_name = EXCLUDED.asset_name,
-                    asset_id = EXCLUDED.asset_id,
-                    income_amount = EXCLUDED.income_amount,
-                    amount = EXCLUDED.amount,
-                    discount_amount = EXCLUDED.discount_amount,
-                    late_money_amount = EXCLUDED.late_money_amount,
-                    bill_amount = EXCLUDED.bill_amount,
-                    deposit_amount = EXCLUDED.deposit_amount,
-                    pay_channel = EXCLUDED.pay_channel,
-                    pay_channel_list = EXCLUDED.pay_channel_list,
-                    pay_channel_str = EXCLUDED.pay_channel_str,
-                    deal_time = EXCLUDED.deal_time,
-                    deal_date = EXCLUDED.deal_date,
-                    remark = EXCLUDED.remark,
-                    fk_id = EXCLUDED.fk_id,
-                    receipt_id = EXCLUDED.receipt_id,
-                    receipt_record_id = EXCLUDED.receipt_record_id,
-                    receipt_version = EXCLUDED.receipt_version,
-                    invoice_number = EXCLUDED.invoice_number,
-                    invoice_urls = EXCLUDED.invoice_urls,
-                    invoice_status = EXCLUDED.invoice_status,
-                    open_invoice = EXCLUDED.open_invoice,
-                    payee = EXCLUDED.payee,
-                    bind_users_raw = EXCLUDED.bind_users_raw,
-                    updated_at = NOW()
-                """,
-                (
-                    receipt_bill_id,
-                    community_id,
-                    deal_type,
-                    asset_type,
-                    asset_name,
-                    asset_id,
-                    income_amount,
-                    amount,
-                    discount_amount,
-                    late_money_amount,
-                    bill_amount,
-                    deposit_amount,
-                    pay_channel,
-                    pay_channel_list,
-                    pay_channel_str,
-                    deal_time,
-                    deal_date,
-                    remark,
-                    fk_id,
-                    receipt_id,
-                    receipt_record_id,
-                    receipt_version,
-                    invoice_number,
-                    invoice_urls,
-                    invoice_status,
-                    open_invoice,
-                    payee,
-                    bind_users_raw,
-                ),
+                .filter(
+                    ReceiptBill.community_id == community_id,
+                    ReceiptBill.id.in_(receipt_bill_id_chunk),
+                )
+                .all()
             )
+            for row in rows:
+                existing_rows[(int(row.id), int(row.community_id))] = row
 
-            cursor.execute(
-                "DELETE FROM receipt_bill_users WHERE receipt_bill_id = %s AND community_id = %s",
-                (receipt_bill_id, community_id),
+        changed_rows = []
+        for item, normalized_row in staged_entries:
+            key = (int(normalized_row["id"]), int(normalized_row["community_id"]))
+            existing = existing_rows.get(key)
+            same_snapshot = (
+                existing is not None
+                and existing.receipt_version == normalized_row.get("receipt_version")
+                and existing.deal_time == normalized_row.get("deal_time")
+                and (existing.bind_users_raw or None) == (normalized_row.get("bind_users_raw") or None)
             )
+            if same_snapshot:
+                unchanged_count += 1
+                continue
+
+            changed_rows.append(normalized_row)
+            touched_receipt_bill_ids.add(key[0])
 
             bind_users = item.get("bindUsers") or []
             if isinstance(bind_users, list):
-                for u in bind_users:
-                    if not isinstance(u, dict):
+                for user in bind_users:
+                    if not isinstance(user, dict):
                         continue
-                    cursor.execute(
-                        """
-                        INSERT INTO receipt_bill_users (
-                            receipt_bill_id, community_id, user_id, user_name, phone
-                        ) VALUES (
-                            %s, %s, %s, %s, %s
-                        )
-                        ON CONFLICT (receipt_bill_id, community_id, user_id) DO UPDATE SET
-                            user_name = EXCLUDED.user_name,
-                            phone = EXCLUDED.phone
-                        """,
-                        (
-                            receipt_bill_id,
-                            community_id,
-                            u.get("id"),
-                            u.get("name") or "",
-                            u.get("phone") or "",
-                        ),
+                    receipt_user_rows.append(
+                        {
+                            "receipt_bill_id": key[0],
+                            "community_id": key[1],
+                            "user_id": user.get("id"),
+                            "user_name": user.get("name") or "",
+                            "phone": user.get("phone") or "",
+                        }
                     )
 
-            inserted_count += 1
+        if changed_rows:
+            upsert_model_rows(
+                db,
+                ReceiptBill,
+                changed_rows,
+                key_fields=("id", "community_id"),
+            )
+            inserted_count = len(changed_rows)
 
-        conn.commit()
-        return {"inserted": inserted_count, "skipped": skipped_count}
-    except Exception as e:
-        conn.rollback()
-        raise e
+        receipt_bill_ids = sorted(touched_receipt_bill_ids)
+        for receipt_bill_id_chunk in _iter_chunks(receipt_bill_ids, 900):
+            db.query(ReceiptBillUser).filter(
+                ReceiptBillUser.community_id == community_id,
+                ReceiptBillUser.receipt_bill_id.in_(receipt_bill_id_chunk),
+            ).delete(synchronize_session=False)
+
+        if receipt_user_rows:
+            db.bulk_insert_mappings(ReceiptBillUser, receipt_user_rows)
+
+        db.commit()
+        return {"inserted": inserted_count, "unchanged": unchanged_count, "skipped": skipped_count}
+    except Exception:
+        db.rollback()
+        raise
     finally:
-        cursor.close()
-        conn.close()
-
+        db.close()
 
 def _load_api_config():
-    from database import SessionLocal
-    from models import ExternalApi
-
     db = SessionLocal()
     try:
-        api = db.query(ExternalApi).filter(ExternalApi.id == RECEIPT_BILL_API_ID).first()
-        return api
+        return db.query(ExternalApi).filter(ExternalApi.id == RECEIPT_BILL_API_ID).first()
     finally:
         db.close()
 
@@ -282,26 +238,24 @@ def _coerce_common_ints(payload: dict):
     if not isinstance(payload, dict):
         return payload
 
-    for k in list(payload.keys()):
-        v = payload.get(k)
-        if isinstance(v, str) and v.isdigit():
-            if k.lower() in {
-                "communityid",
-                "community_id",
-                "page",
-                "pageno",
-                "page_no",
-                "pagesize",
-                "page_size",
-                "nextid",
-                "index",
-            }:
-                payload[k] = int(v)
+    for key in list(payload.keys()):
+        value = payload.get(key)
+        if isinstance(value, str) and value.isdigit() and key.lower() in {
+            "communityid",
+            "community_id",
+            "page",
+            "pageno",
+            "page_no",
+            "pagesize",
+            "page_size",
+            "nextid",
+            "index",
+        }:
+            payload[key] = int(value)
     return payload
 
 
 def _ensure_community_id(payload: dict, community_id: int):
-    """Marki endpoints are inconsistent: communityId vs communityID."""
     if not isinstance(payload, dict):
         return payload
 
@@ -312,7 +266,6 @@ def _ensure_community_id(payload: dict, community_id: int):
     if "community_id" in payload and not payload.get("community_id"):
         payload["community_id"] = int(community_id)
 
-    # If none of the keys exist in template, still inject the most common one.
     if "communityId" not in payload and "communityID" not in payload and "community_id" not in payload:
         payload["communityId"] = int(community_id)
 
@@ -320,12 +273,11 @@ def _ensure_community_id(payload: dict, community_id: int):
 
 
 def sync_receipt_bills_for_community(community_id: int, task_id: str = None):
-    from database import SessionLocal
-    from utils.variable_parser import resolve_dict_variables, build_variable_map
+    from utils.variable_parser import build_variable_map, resolve_dict_variables
 
     api_config = _load_api_config()
     if not api_config:
-        msg = f"未找到收款明细接口配置: external_apis.id={RECEIPT_BILL_API_ID}"
+        msg = f"Receipt bill API config not found: external_apis.id={RECEIPT_BILL_API_ID}"
         if task_id:
             tracker.add_log(task_id, msg, "error")
         raise RuntimeError(msg)
@@ -333,6 +285,15 @@ def sync_receipt_bills_for_community(community_id: int, task_id: str = None):
     db = SessionLocal()
     try:
         base_vars = build_variable_map(db)
+        max_deal_time_local = (
+            db.query(func.max(ReceiptBill.deal_time))
+            .filter(ReceiptBill.community_id == int(community_id))
+            .scalar()
+        )
+        max_deal_time_local = int(max_deal_time_local or 0)
+        # Automatic overlap window (no manual tuning required).
+        overlap_seconds = 600
+
         base_vars.update(
             {
                 "communityID": str(community_id),
@@ -346,7 +307,6 @@ def sync_receipt_bills_for_community(community_id: int, task_id: str = None):
             }
         )
 
-        # URL may also contain variables
         url = get_api_url_by_id(RECEIPT_BILL_API_ID, preloaded_vars=base_vars)
 
         method = (api_config.method or "POST").upper()
@@ -363,12 +323,7 @@ def sync_receipt_bills_for_community(community_id: int, task_id: str = None):
 
         while True:
             current_vars = dict(base_vars)
-            current_vars.update(
-                {
-                    "page": str(page),
-                    "pageNo": str(page),
-                }
-            )
+            current_vars.update({"page": str(page), "pageNo": str(page)})
             if next_id is not None:
                 current_vars["nextId"] = str(next_id)
                 current_vars["index"] = str(next_id)
@@ -377,12 +332,12 @@ def sync_receipt_bills_for_community(community_id: int, task_id: str = None):
             request_data = _coerce_common_ints(request_data)
             request_data = _ensure_community_id(request_data, community_id)
 
-            # If API supports cursor pagination, send nextId when we have it,
-            # even if the interface center request_body didn't include it.
+            if max_deal_time_local > 0:
+                request_data["minDealTime"] = max(0, max_deal_time_local - overlap_seconds)
+
             if next_id is not None:
                 request_data.setdefault("nextId", int(next_id))
 
-            # If no configured body, fall back to the common Marki params.
             if not request_data:
                 request_data = {"communityID": int(community_id), "page": page, "pageSize": 500}
                 if next_id is not None:
@@ -393,8 +348,8 @@ def sync_receipt_bills_for_community(community_id: int, task_id: str = None):
 
             try:
                 result = marki_client.request(method, url, params=params, json_data=json_body)
-            except Exception as e:
-                msg = f"收款明细请求失败: community={community_id} page={page} err={e}"
+            except Exception as exc:
+                msg = f"Receipt bill request failed: community={community_id} page={page} err={exc}"
                 if task_id:
                     tracker.add_log(task_id, msg, "error")
                 break
@@ -406,31 +361,30 @@ def sync_receipt_bills_for_community(community_id: int, task_id: str = None):
             counts = insert_receipt_bills_data(data_list, community_id_context=community_id)
             total_processed += counts["inserted"]
 
-            msg = f"community {community_id} page {page}: processed {len(data_list)} (inserted {counts['inserted']})"
+            msg = (
+                f"community {community_id} page {page}: processed {len(data_list)} rows "
+                f"(upserted {counts.get('inserted', 0)} unchanged {counts.get('unchanged', 0)} "
+                f"skipped {counts.get('skipped', 0)})"
+            )
             if task_id:
                 tracker.add_log(task_id, msg, "info")
 
-            # Cursor pagination: if response includes nextId (docs/1.json does),
-            # we keep fetching by nextId regardless of request_body template.
             if resp_next_id is not None:
                 try:
                     resp_next_id_int = int(resp_next_id)
                 except Exception:
                     resp_next_id_int = None
 
-                # Marki uses nextId=-1 when no more.
                 if not has_more or resp_next_id_int in (-1, 0, None):
                     break
 
                 next_id = resp_next_id_int
                 page += 1
-                time.sleep(0.8)
+                time.sleep(0.01)
                 continue
 
-            # Page-based pagination
             page += 1
-            time.sleep(0.8)
-
+            time.sleep(0.01)
     finally:
         db.close()
 
@@ -439,58 +393,59 @@ def sync_receipt_bills_for_community(community_id: int, task_id: str = None):
 
 def sync_receipt_bills(community_ids: list = None, task_id: str = None):
     if not community_ids:
-        conn = get_db_connection()
+        db = SessionLocal()
         try:
-            cur = conn.cursor()
-            cur.execute("SELECT proj_id FROM projects_lists")
-            community_ids = [str(row[0]) for row in cur.fetchall()]
+            community_ids = [str(cid) for cid in fetch_all_project_ids(db, ProjectList)]
         except Exception:
             community_ids = []
         finally:
-            try:
-                cur.close()
-            except Exception:
-                pass
-            conn.close()
+            db.close()
 
     if not community_ids:
         return 0
 
     if task_id:
         tracker.update_status(task_id, "running")
-        tracker.add_log(task_id, f"开始同步收款账单: {len(community_ids)} 个园区", "info")
+        tracker.add_log(task_id, f"Start syncing receipt bills for {len(community_ids)} communities", "info")
+
+    try:
+        ensure_default_financial_partitions(community_ids)
+    except Exception as exc:
+        if task_id:
+            tracker.add_log(task_id, f"Auto partition expansion skipped: {exc}", "warning")
 
     total_all = 0
-    for i, cid in enumerate(community_ids):
+    for index, cid in enumerate(community_ids):
         try:
             if task_id:
-                tracker.update_progress(task_id, i, f"园区 ID: {cid}")
+                tracker.update_progress(task_id, index, f"Community ID: {cid}")
+
             total_all += sync_receipt_bills_for_community(int(cid), task_id)
             link_counts = rebuild_receipt_bill_deposit_refund_links([int(cid)])
             if task_id:
                 tracker.add_log(
                     task_id,
                     (
-                        f"Community {cid}: rebuilt receipt/deposit refund links "
+                        f"Community {cid}: rebuilt links "
                         f"{link_counts['total_links']} total, "
                         f"{link_counts['transfer_to_prepayment_links']} transfer-to-prepayment, "
                         f"{link_counts['actual_refund_links']} actual refunds"
                     ),
                     "info",
                 )
-        except Exception as e:
+        except Exception as exc:
             if task_id:
-                tracker.add_log(task_id, f"同步失败: community={cid} err={e}", "error")
+                tracker.add_log(task_id, f"Sync failed: community={cid} err={exc}", "error")
             continue
 
     if task_id:
-        tracker.update_progress(task_id, len(community_ids), "同步完成")
+        tracker.update_progress(task_id, len(community_ids), "sync completed")
         tracker.update_status(task_id, "completed")
-        tracker.add_log(task_id, f"同步完成，共处理 {total_all} 条收款明细", "info")
+        tracker.add_log(task_id, f"Receipt bill sync completed. Processed {total_all} rows", "info")
 
     return total_all
 
 
 if __name__ == "__main__":
-    # For manual testing
     sync_receipt_bills(["10956"])
+

@@ -1,0 +1,91 @@
+{
+  "summary": {
+    "source_table_count": 53,
+    "target_table_count": 42,
+    "common_table_count": 42,
+    "schema_issue_table_count": 2,
+    "pk_issue_table_count": 0,
+    "data_issue_table_count": 0
+  },
+  "schema_issues": {
+    "bill_users": {
+      "type_mismatch_cols": [
+        "community_id"
+      ]
+    },
+    "bills": {
+      "type_mismatch_cols": [
+        "asset_type",
+        "bad_bill_state",
+        "bill_type",
+        "can_revoke",
+        "charge_item_type",
+        "create_time",
+        "deal_log_id",
+        "end_time",
+        "meter_type",
+        "pay_status",
+        "pay_time",
+        "pay_type",
+        "second_pay_channel",
+        "start_time",
+        "visible_type"
+      ]
+    }
+  },
+  "pk_issues": {},
+  "data_issues": {},
+  "json_storage_differences": {
+    "bills": {
+      "source_json_target_text_cols": [
+        "bind_toll",
+        "user_list"
+      ]
+    }
+  },
+  "json_semantic_check": {
+    "table": "bills",
+    "checked_columns": [
+      "bind_toll",
+      "user_list"
+    ],
+    "source_rows": 8773,
+    "target_rows": 8773,
+    "missing_in_target_pk": 0,
+    "missing_in_source_pk": 0,
+    "value_mismatch_rows": 0,
+    "sample_mismatch": null
+  },
+  "partition_status": {
+    "bills": {
+      "expected_partition_scheme": "ps_bills_community_id",
+      "actual_partition_scheme": "ps_bills_community_id",
+      "is_partitioned": true,
+      "boundary_count": 18
+    },
+    "receipt_bills": {
+      "expected_partition_scheme": "ps_receipt_bills_community_id",
+      "actual_partition_scheme": "ps_receipt_bills_community_id",
+      "is_partitioned": true,
+      "boundary_count": 18
+    }
+  },
+  "model_alignment": {
+    "missing_in_target": [],
+    "missing_in_source": [],
+    "extra_in_target": [],
+    "extra_in_source": [
+      "bills_proj_cmysg",
+      "bills_proj_cxthgc",
+      "bills_proj_cxwlsl",
+      "bills_proj_cxyhyx",
+      "bills_proj_default",
+      "bills_proj_mzgz",
+      "bills_proj_sbwlsl",
+      "bills_proj_ztpgxz",
+      "bills_proj_ztwlsl",
+      "financial_institutions",
+      "global_formulas"
+    ]
+  }
+}

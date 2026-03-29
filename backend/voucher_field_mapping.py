@@ -382,13 +382,28 @@ def _lookup_house_resident_name(
         func.nullif(models.HouseUser.owner_name, ""),
         func.nullif(models.HouseUser.name, ""),
     )
-    query = (
-        db.query(func.string_agg(func.distinct(resident_display), ", "))
-        .select_from(models.House)
-        .join(models.HouseUser, models.HouseUser.house_fk == models.House.id)
-        .filter(models.House.house_id == house_id)
-        .filter(resident_display.isnot(None))
-    )
+    dialect_name = ""
+    try:
+        dialect_name = (db.bind.dialect.name or "").lower() if db and db.bind else ""
+    except Exception:
+        dialect_name = ""
+
+    if dialect_name == "mssql":
+        query = (
+            db.query(func.max(resident_display))
+            .select_from(models.House)
+            .join(models.HouseUser, models.HouseUser.house_fk == models.House.id)
+            .filter(models.House.house_id == house_id)
+            .filter(resident_display.isnot(None))
+        )
+    else:
+        query = (
+            db.query(func.string_agg(func.distinct(resident_display), ", "))
+            .select_from(models.House)
+            .join(models.HouseUser, models.HouseUser.house_fk == models.House.id)
+            .filter(models.House.house_id == house_id)
+            .filter(resident_display.isnot(None))
+        )
     if community_id:
         query = query.filter(models.House.community_id == community_id)
     return str(query.scalar() or "").strip()

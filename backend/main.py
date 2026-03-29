@@ -84,6 +84,71 @@ if not logger.handlers:
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
 
+
+def _is_mssql() -> bool:
+    return database.engine.dialect.name == "mssql"
+
+
+def _index_names(table_name: str) -> set[str]:
+    inspector_obj = inspect(database.engine)
+    try:
+        return {idx["name"] for idx in inspector_obj.get_indexes(table_name)}
+    except Exception:
+        return set()
+
+
+def _create_index_if_missing(conn, table_name: str, index_name: str, columns_sql: str) -> None:
+    if index_name in _index_names(table_name):
+        return
+    conn.execute(text(f"CREATE INDEX {index_name} ON {table_name} ({columns_sql})"))
+
+
+def _drop_index_if_exists(conn, table_name: str, index_name: str) -> None:
+    if index_name not in _index_names(table_name):
+        return
+    if _is_mssql():
+        conn.execute(text(f"DROP INDEX {index_name} ON {table_name}"))
+    else:
+        conn.execute(text(f"DROP INDEX IF EXISTS {index_name}"))
+
+
+def _upsert_rows(
+    db_session: Session,
+    model: Any,
+    rows: List[Dict[str, Any]],
+    conflict_fields: List[str],
+    immutable_fields: Optional[Set[str]] = None,
+    batch_size: int = 100,
+) -> int:
+    immutable = set(immutable_fields or set())
+    processed = 0
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if any(row.get(field) is None for field in conflict_fields):
+            continue
+
+        filters = [getattr(model, field) == row[field] for field in conflict_fields]
+        existing = db_session.query(model).filter(and_(*filters)).one_or_none()
+
+        if existing:
+            for key, value in row.items():
+                if key in immutable:
+                    continue
+                setattr(existing, key, value)
+        else:
+            db_session.add(model(**row))
+
+        processed += 1
+        if processed % batch_size == 0:
+            db_session.commit()
+
+    if processed % batch_size != 0:
+        db_session.commit()
+
+    return processed
+
 # Create tables
 models.Base.metadata.create_all(bind=database.engine)
 
@@ -153,7 +218,10 @@ def _ensure_house_columns():
         if "create_uid" not in existing_cols:
             conn.execute(text("ALTER TABLE houses ADD COLUMN create_uid BIGINT"))
         if "disable" not in existing_cols:
-            conn.execute(text("ALTER TABLE houses ADD COLUMN disable BOOLEAN DEFAULT FALSE"))
+            if _is_mssql():
+                conn.execute(text("ALTER TABLE houses ADD disable BIT DEFAULT 0"))
+            else:
+                conn.execute(text("ALTER TABLE houses ADD COLUMN disable BOOLEAN DEFAULT FALSE"))
 
         if "expand" not in existing_cols:
             conn.execute(text("ALTER TABLE houses ADD COLUMN expand TEXT"))
@@ -195,45 +263,84 @@ def _ensure_bill_columns():
     if "bills" not in tables:
         return
 
-    existing_cols = {c["name"] for c in inspector.get_columns("bills")}
+    columns_info = {c["name"]: c for c in inspector.get_columns("bills")}
+    existing_cols = set(columns_info.keys())
     added_receive_date = False
 
     with database.engine.begin() as conn:
         if "receive_date" not in existing_cols:
-            conn.execute(text("ALTER TABLE bills ADD COLUMN receive_date DATE"))
+            if _is_mssql():
+                conn.execute(text("ALTER TABLE bills ADD receive_date DATETIME2 NULL"))
+            else:
+                conn.execute(text("ALTER TABLE bills ADD COLUMN receive_date TIMESTAMP"))
             added_receive_date = True
+        elif _is_mssql():
+            receive_type = str(columns_info["receive_date"].get("type", "")).upper()
+            if receive_type.startswith("DATE") and "TIME" not in receive_type:
+                conn.execute(text("ALTER TABLE bills ALTER COLUMN receive_date DATETIME2 NULL"))
+
+        if "bill_month" in existing_cols and _is_mssql():
+            bill_month_type = str(columns_info["bill_month"].get("type", "")).upper()
+            if "DATETIME" in bill_month_type or bill_month_type.startswith("TIMESTAMP"):
+                conn.execute(text("ALTER TABLE bills ALTER COLUMN bill_month DATE NULL"))
+
+        # Keep bigint-width fields consistent with PostgreSQL to avoid 32-bit truncation risk.
+        if _is_mssql():
+            bigint_cols = ["start_time", "end_time", "pay_time", "deal_log_id", "create_time"]
+            for col_name in bigint_cols:
+                if col_name not in existing_cols:
+                    continue
+                col_type = str(columns_info[col_name].get("type", "")).upper()
+                if "BIGINT" in col_type:
+                    continue
+                conn.execute(text(f"ALTER TABLE bills ALTER COLUMN [{col_name}] BIGINT NULL"))
 
         # Backfill receive_date from pay_time (unix timestamp seconds)
         if added_receive_date or "receive_date" in existing_cols:
-            dialect = database.engine.dialect.name
-            if dialect == "postgresql":
-                conn.execute(text("""
-                    UPDATE bills
-                    SET receive_date = to_timestamp(pay_time)::date
-                    WHERE receive_date IS NULL
-                      AND pay_time IS NOT NULL
-                      AND pay_time > 0
-                """))
-            else:
-                rows = conn.execute(text("""
-                    SELECT id, community_id, pay_time
-                    FROM bills
-                    WHERE receive_date IS NULL
-                      AND pay_time IS NOT NULL
-                      AND pay_time > 0
-                """)).fetchall()
-                for row in rows:
-                    try:
-                        dt = datetime.fromtimestamp(int(row.pay_time)).date()
-                    except Exception:
-                        continue
-                    conn.execute(
-                        text("UPDATE bills SET receive_date = :d WHERE id = :id AND community_id = :cid"),
-                        {"d": dt, "id": row.id, "cid": row.community_id},
-                    )
+            rows = conn.execute(text("""
+                SELECT id, community_id, pay_time
+                FROM bills
+                WHERE receive_date IS NULL
+                  AND pay_time IS NOT NULL
+                  AND pay_time > 0
+            """)).fetchall()
+            for row in rows:
+                try:
+                    dt = datetime.fromtimestamp(int(row.pay_time))
+                except Exception:
+                    continue
+                conn.execute(
+                    text("UPDATE bills SET receive_date = :d WHERE id = :id AND community_id = :cid"),
+                    {"d": dt, "id": row.id, "cid": row.community_id},
+                )
 
 
 _ensure_bill_columns()
+
+
+def _ensure_charge_and_project_columns():
+    inspector = inspect(database.engine)
+    tables = set(inspector.get_table_names())
+
+    with database.engine.begin() as conn:
+        if "charge_items" in tables:
+            charge_cols = {c["name"] for c in inspector.get_columns("charge_items")}
+            if "updated_at" not in charge_cols:
+                if _is_mssql():
+                    conn.execute(text("ALTER TABLE charge_items ADD updated_at DATETIME2 NULL"))
+                else:
+                    conn.execute(text("ALTER TABLE charge_items ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
+
+        if "projects_lists" in tables:
+            project_cols = {c["name"] for c in inspector.get_columns("projects_lists")}
+            if "updated_at" not in project_cols:
+                if _is_mssql():
+                    conn.execute(text("ALTER TABLE projects_lists ADD updated_at DATETIME2 NULL"))
+                else:
+                    conn.execute(text("ALTER TABLE projects_lists ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
+
+
+_ensure_charge_and_project_columns()
 
 
 def _ensure_deposit_record_columns():
@@ -246,7 +353,7 @@ def _ensure_deposit_record_columns():
     with database.engine.begin() as conn:
         if "payment_id" not in existing_cols:
             conn.execute(text("ALTER TABLE deposit_records ADD COLUMN payment_id BIGINT"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_deposit_records_payment_id ON deposit_records (payment_id)"))
+        _create_index_if_missing(conn, "deposit_records", "ix_deposit_records_payment_id", "payment_id")
 
 
 _ensure_deposit_record_columns()
@@ -262,7 +369,7 @@ def _ensure_prepayment_record_columns():
     with database.engine.begin() as conn:
         if "payment_id" not in existing_cols:
             conn.execute(text("ALTER TABLE prepayment_records ADD COLUMN payment_id BIGINT"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_prepayment_records_payment_id ON prepayment_records (payment_id)"))
+        _create_index_if_missing(conn, "prepayment_records", "ix_prepayment_records_payment_id", "payment_id")
 
 
 _ensure_prepayment_record_columns()
@@ -279,8 +386,8 @@ def _ensure_user_email_index():
 
     with database.engine.begin() as conn:
         if email_index and email_index.get("unique"):
-            conn.execute(text("DROP INDEX IF EXISTS ix_users_email"))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_users_email ON users (email)"))
+            _drop_index_if_exists(conn, "users", "ix_users_email")
+            _create_index_if_missing(conn, "users", "ix_users_email", "email")
 
 
 _ensure_user_email_index()
@@ -2045,7 +2152,7 @@ def get_projects(
         joinedload(models.ProjectList.default_receive_bank),
         joinedload(models.ProjectList.default_pay_bank),
         joinedload(models.ProjectList.kingdee_account_book)
-    ).offset(skip).limit(limit).all()
+    ).order_by(models.ProjectList.proj_id.asc()).offset(skip).limit(limit).all()
     
     items = [{
         "proj_id": project.proj_id,
@@ -2481,15 +2588,26 @@ def get_bills(
     from datetime import datetime
     
     # 瀛愭煡璇細鑱氬悎姣忎釜璐﹀崟鐨勫鎴峰悕绉?
-    customer_subq = (
-        db.query(
-            models.BillUser.bill_id,
-            models.BillUser.community_id,
-            sa_func.string_agg(models.BillUser.user_name, ', ').label('customer_name')
+    if _is_mssql():
+        customer_subq = (
+            db.query(
+                models.BillUser.bill_id,
+                models.BillUser.community_id,
+                sa_func.max(models.BillUser.user_name).label('customer_name')
+            )
+            .group_by(models.BillUser.bill_id, models.BillUser.community_id)
+            .subquery()
         )
-        .group_by(models.BillUser.bill_id, models.BillUser.community_id)
-        .subquery()
-    )
+    else:
+        customer_subq = (
+            db.query(
+                models.BillUser.bill_id,
+                models.BillUser.community_id,
+                sa_func.string_agg(models.BillUser.user_name, ', ').label('customer_name')
+            )
+            .group_by(models.BillUser.bill_id, models.BillUser.community_id)
+            .subquery()
+        )
     
     query = db.query(
         models.Bill,
@@ -2705,15 +2823,26 @@ def export_bills(
     db: Session = Depends(get_db),
     allowed_community_ids: List[int] = Depends(get_allowed_community_ids)
 ):
-    customer_subq = (
-        db.query(
-            models.BillUser.bill_id,
-            models.BillUser.community_id,
-            func.string_agg(models.BillUser.user_name, ', ').label('customer_name')
+    if _is_mssql():
+        customer_subq = (
+            db.query(
+                models.BillUser.bill_id,
+                models.BillUser.community_id,
+                func.max(models.BillUser.user_name).label('customer_name')
+            )
+            .group_by(models.BillUser.bill_id, models.BillUser.community_id)
+            .subquery()
         )
-        .group_by(models.BillUser.bill_id, models.BillUser.community_id)
-        .subquery()
-    )
+    else:
+        customer_subq = (
+            db.query(
+                models.BillUser.bill_id,
+                models.BillUser.community_id,
+                func.string_agg(models.BillUser.user_name, ', ').label('customer_name')
+            )
+            .group_by(models.BillUser.bill_id, models.BillUser.community_id)
+            .subquery()
+        )
 
     query = db.query(
         models.Bill,
@@ -3152,6 +3281,19 @@ def _build_house_resident_name_subquery(db: Session):
         func.nullif(models.HouseUser.owner_name, ""),
         func.nullif(models.HouseUser.name, ""),
     )
+    if _is_mssql():
+        # SQL Server 2016 has no STRING_AGG; keep one representative resident name.
+        return (
+            db.query(
+                models.House.house_id.label("house_id"),
+                models.House.community_id.label("community_id"),
+                func.max(resident_display).label("resident_name"),
+            )
+            .join(models.HouseUser, models.HouseUser.house_fk == models.House.id)
+            .filter(resident_display.isnot(None))
+            .group_by(models.House.house_id, models.House.community_id)
+            .subquery()
+        )
     return (
         db.query(
             models.House.house_id.label("house_id"),
@@ -3261,7 +3403,7 @@ def get_prepayment_records(
     total = query.count()
     total_amount = query.with_entities(sa_func.sum(models.PrepaymentRecord.amount)).scalar()
     rows = (
-        query.order_by(models.PrepaymentRecord.operate_time.desc().nullslast(), models.PrepaymentRecord.id.desc())
+        query.order_by(models.PrepaymentRecord.operate_time.desc(), models.PrepaymentRecord.id.desc())
         .offset(skip)
         .limit(limit)
         .all()
@@ -3409,7 +3551,7 @@ def get_deposit_records(
     total = query.count()
     total_amount = query.with_entities(sa_func.sum(models.DepositRecord.amount)).scalar()
     rows = (
-        query.order_by(models.DepositRecord.operate_time.desc().nullslast(), models.DepositRecord.id.desc())
+        query.order_by(models.DepositRecord.operate_time.desc(), models.DepositRecord.id.desc())
         .offset(skip)
         .limit(limit)
         .all()
@@ -3478,15 +3620,27 @@ def get_receipt_bills(
 ):
     from sqlalchemy import func as sa_func, cast, String as SAString
 
-    payer_subq = (
-        db.query(
-            models.ReceiptBillUser.receipt_bill_id,
-            models.ReceiptBillUser.community_id,
-            sa_func.string_agg(models.ReceiptBillUser.user_name, ", ").label("payer_name"),
+    if _is_mssql():
+        # SQL Server 2016 has no STRING_AGG; keep one representative payer name.
+        payer_subq = (
+            db.query(
+                models.ReceiptBillUser.receipt_bill_id,
+                models.ReceiptBillUser.community_id,
+                sa_func.max(models.ReceiptBillUser.user_name).label("payer_name"),
+            )
+            .group_by(models.ReceiptBillUser.receipt_bill_id, models.ReceiptBillUser.community_id)
+            .subquery()
         )
-        .group_by(models.ReceiptBillUser.receipt_bill_id, models.ReceiptBillUser.community_id)
-        .subquery()
-    )
+    else:
+        payer_subq = (
+            db.query(
+                models.ReceiptBillUser.receipt_bill_id,
+                models.ReceiptBillUser.community_id,
+                sa_func.string_agg(models.ReceiptBillUser.user_name, ", ").label("payer_name"),
+            )
+            .group_by(models.ReceiptBillUser.receipt_bill_id, models.ReceiptBillUser.community_id)
+            .subquery()
+        )
 
     query = (
         db.query(
@@ -3555,7 +3709,7 @@ def get_receipt_bills(
     total_income = query.with_entities(sa_func.sum(models.ReceiptBill.income_amount)).scalar()
 
     results = (
-        query.order_by(models.ReceiptBill.deal_time.desc().nullslast(), models.ReceiptBill.id.desc())
+        query.order_by(models.ReceiptBill.deal_time.desc(), models.ReceiptBill.id.desc())
         .offset(skip)
         .limit(limit)
         .all()
@@ -3672,7 +3826,7 @@ def get_receipt_bill(
 
     rb = (
         db.query(models.ReceiptBill)
-        .options(selectinload(models.ReceiptBill.users))
+        .options(joinedload(models.ReceiptBill.users))
         .filter(models.ReceiptBill.id == int(receipt_bill_id), models.ReceiptBill.community_id == int(community_id))
         .first()
     )
@@ -3786,26 +3940,22 @@ def get_income_trend(
         return {"labels": [], "data": []}
     
     if period == "month":
-        # Since pay_time is and Integer (unix timestamp), we need to convert it before extraction
-        from sqlalchemy import cast, DateTime
-        
-        # PostgreSQL specific conversion: to_timestamp(pay_time)
-        # Or generic SQL way if possible, but pay_time is int.
-        
-        data = db.query(
-            func.extract('month', func.to_timestamp(models.Bill.pay_time)).label('month'),
-            func.sum(models.Bill.amount).label('total')
+        rows = db.query(
+            models.Bill.pay_time,
+            models.Bill.amount,
         ).filter(
             models.Bill.pay_status_str == '已缴',
             models.Bill.pay_time != None,
             models.Bill.community_id.in_(allowed_community_ids)
-        ).group_by(
-            func.extract('month', func.to_timestamp(models.Bill.pay_time))
         ).all()
-        
+
         months = {i: 0 for i in range(1, 13)}
-        for row in data:
-            months[int(row.month)] = float(row.total) if row.total else 0
+        for row in rows:
+            try:
+                month_value = datetime.fromtimestamp(int(row.pay_time)).month
+            except Exception:
+                continue
+            months[month_value] += float(row.amount or 0)
         
         return {"labels": list(range(1, 13)), "data": list(months.values())}
 
@@ -6627,7 +6777,7 @@ def _preview_voucher_for_bill_via_receipt_templates(
 
     receipt_bill = (
         db.query(models.ReceiptBill)
-        .options(selectinload(models.ReceiptBill.users))
+        .options(joinedload(models.ReceiptBill.users))
         .filter(
             models.ReceiptBill.id == int(bill.deal_log_id),
             models.ReceiptBill.community_id == int(bill.community_id),
@@ -6879,7 +7029,7 @@ def preview_voucher_for_receipt(
 
     receipt_bill = (
         db.query(models.ReceiptBill)
-        .options(selectinload(models.ReceiptBill.users))
+        .options(joinedload(models.ReceiptBill.users))
         .filter(
             models.ReceiptBill.id == int(receipt_bill_id),
             models.ReceiptBill.community_id == int(community_id),
@@ -8930,7 +9080,6 @@ def sync_accounting_subjects(
                     rows = data
                 
                 if isinstance(rows, list) and rows:
-                    from sqlalchemy.dialects.postgresql import insert
                     count = 0
                     current_page_ids = []
                     unique_rows = {} # Python 娓氀勭壌閹?number 閸樺鍣?
@@ -8970,18 +9119,14 @@ def sync_accounting_subjects(
                     
                     # 閹靛綊鍣洪崚鍡?Upsert
                     unique_list = list(unique_rows.values())
-                    for i in range(0, len(unique_list), 50):
-                        batch = unique_list[i : i + 50]
-                        if not batch: continue
-                        
-                        stmt = insert(models.AccountingSubject).values(batch)
-                        stmt = stmt.on_conflict_do_update(
-                            index_elements=['id'],
-                            set_={k: v for k, v in stmt.excluded.items() if k not in ['id', 'created_at']}
-                        )
-                        db_session.execute(stmt)
-                        db_session.commit()
-                        count += len(batch)
+                    count += _upsert_rows(
+                        db_session=db_session,
+                        model=models.AccountingSubject,
+                        rows=unique_list,
+                        conflict_fields=["id"],
+                        immutable_fields={"id", "created_at"},
+                        batch_size=50,
+                    )
 
                     total_synced += count
                     
@@ -9194,7 +9339,6 @@ def sync_customers(
                     rows = data
                     
                 if isinstance(rows, list) and rows:
-                    from sqlalchemy.dialects.postgresql import insert
                     
                     count = 0
                     current_page_ids = []
@@ -9232,19 +9376,14 @@ def sync_customers(
                     
                     # 閸戝棗閸掑棙澹?Upsert 閸忋儱绨?
                     unique_list = list(unique_rows.values())
-                    for i in range(0, len(unique_list), 50):
-                        batch = unique_list[i : i + 50]
-                        if not batch: continue
-                        
-                        stmt = insert(models.Customer).values(batch)
-                        # 鐠佸墽鐤嗛崘鑼崐鐟欏嫬鍨敍姘冲 ID/number 閸愯尙鐛婇敍灞藉灟閺囧瓨鏌婇幍鈧張澶夌炊閸ョ偟娈戞稉姘鐎涙
-                        stmt = stmt.on_conflict_do_update(
-                            index_elements=['id'],
-                            set_={k: v for k, v in stmt.excluded.items() if k not in ['id', 'created_at']}
-                        )
-                        db_session.execute(stmt)
-                        db_session.commit()
-                        count += len(batch)
+                    count += _upsert_rows(
+                        db_session=db_session,
+                        model=models.Customer,
+                        rows=unique_list,
+                        conflict_fields=["id"],
+                        immutable_fields={"id", "created_at"},
+                        batch_size=50,
+                    )
                             
                     total_synced += count
                     
@@ -9458,7 +9597,6 @@ def sync_suppliers(
                     rows = data
                     
                 if isinstance(rows, list) and rows:
-                    from sqlalchemy.dialects.postgresql import insert
                     
                     count = 0
                     current_page_ids = []
@@ -9488,18 +9626,14 @@ def sync_suppliers(
                         unique_rows[number] = supplier_data
                     
                     unique_list = list(unique_rows.values())
-                    for i in range(0, len(unique_list), 50):
-                        batch = unique_list[i : i + 50]
-                        if not batch: continue
-                        
-                        stmt = insert(models.Supplier).values(batch)
-                        stmt = stmt.on_conflict_do_update(
-                            index_elements=['id'],
-                            set_={k: v for k, v in stmt.excluded.items() if k not in ['id', 'created_at']}
-                        )
-                        db_session.execute(stmt)
-                        db_session.commit()
-                        count += len(batch)
+                    count += _upsert_rows(
+                        db_session=db_session,
+                        model=models.Supplier,
+                        rows=unique_list,
+                        conflict_fields=["id"],
+                        immutable_fields={"id", "created_at"},
+                        batch_size=50,
+                    )
                             
                     total_synced += count
                     
@@ -9708,7 +9842,6 @@ def sync_kd_houses(
                     rows = data
                     
                 if isinstance(rows, list) and rows:
-                    from sqlalchemy.dialects.postgresql import insert
                     
                     count = 0
                     current_page_ids = []
@@ -9744,18 +9877,14 @@ def sync_kd_houses(
                         unique_rows[api_native_id] = kdhouse_data
                     
                     unique_list = list(unique_rows.values())
-                    for i in range(0, len(unique_list), 50):
-                        batch = unique_list[i : i + 50]
-                        if not batch: continue
-                        
-                        stmt = insert(models.KingdeeHouse).values(batch)
-                        stmt = stmt.on_conflict_do_update(
-                            index_elements=['id'],
-                            set_={k: v for k, v in stmt.excluded.items() if k not in ['id', 'created_at']}
-                        )
-                        db_session.execute(stmt)
-                        db_session.commit()
-                        count += len(batch)
+                    count += _upsert_rows(
+                        db_session=db_session,
+                        model=models.KingdeeHouse,
+                        rows=unique_list,
+                        conflict_fields=["id"],
+                        immutable_fields={"id", "created_at"},
+                        batch_size=50,
+                    )
                             
                     total_synced += count
                     
@@ -9965,7 +10094,6 @@ def sync_kd_account_books(
                     rows = data
                     
                 if isinstance(rows, list) and rows:
-                    from sqlalchemy.dialects.postgresql import insert
                     
                     count = 0
                     current_page_ids = []
@@ -10000,18 +10128,14 @@ def sync_kd_account_books(
                         unique_rows[api_native_id] = account_book_data
                     
                     unique_list = list(unique_rows.values())
-                    for i in range(0, len(unique_list), 50):
-                        batch = unique_list[i : i + 50]
-                        if not batch: continue
-                        
-                        stmt = insert(models.KingdeeAccountBook).values(batch)
-                        stmt = stmt.on_conflict_do_update(
-                            index_elements=['id'],
-                            set_={k: v for k, v in stmt.excluded.items() if k not in ['id', 'created_at']}
-                        )
-                        db_session.execute(stmt)
-                        db_session.commit()
-                        count += len(batch)
+                    count += _upsert_rows(
+                        db_session=db_session,
+                        model=models.KingdeeAccountBook,
+                        rows=unique_list,
+                        conflict_fields=["id"],
+                        immutable_fields={"id", "created_at"},
+                        batch_size=50,
+                    )
                             
                     total_synced += count
                     
@@ -10265,7 +10389,6 @@ def sync_auxiliary_data(
                     rows = data
                     
                 if isinstance(rows, list) and rows:
-                    from sqlalchemy.dialects.postgresql import insert
                     count = 0
                     current_page_ids = []
                     unique_rows = {}
@@ -10302,18 +10425,14 @@ def sync_auxiliary_data(
                         unique_rows[api_native_id or number] = aux_data
                     
                     unique_list = list(unique_rows.values())
-                    for i in range(0, len(unique_list), 50):
-                        batch = unique_list[i : i + 50]
-                        if not batch: continue
-                        
-                        stmt = insert(models.AuxiliaryData).values(batch)
-                        stmt = stmt.on_conflict_do_update(
-                            index_elements=['id'],
-                            set_={k: v for k, v in stmt.excluded.items() if k not in ['id', 'created_at']}
-                        )
-                        db_session.execute(stmt)
-                        db_session.commit()
-                        count += len(batch)
+                    count += _upsert_rows(
+                        db_session=db_session,
+                        model=models.AuxiliaryData,
+                        rows=unique_list,
+                        conflict_fields=["id"],
+                        immutable_fields={"id", "created_at"},
+                        batch_size=50,
+                    )
                             
                     total_synced += count
                     
@@ -10524,7 +10643,6 @@ def sync_auxiliary_data_categories(
                     rows = data
                     
                 if isinstance(rows, list) and rows:
-                    from sqlalchemy.dialects.postgresql import insert
                     count = 0
                     current_page_ids = []
                     unique_rows = {}
@@ -10554,18 +10672,14 @@ def sync_auxiliary_data_categories(
                         unique_rows[api_native_id or number] = cat_data
                     
                     unique_list = list(unique_rows.values())
-                    for i in range(0, len(unique_list), 100):
-                        batch = unique_list[i : i + 100]
-                        if not batch: continue
-                        
-                        stmt = insert(models.AuxiliaryDataCategory).values(batch)
-                        stmt = stmt.on_conflict_do_update(
-                            index_elements=['id'],
-                            set_={k: v for k, v in stmt.excluded.items() if k not in ['id', 'created_at']}
-                        )
-                        db_session.execute(stmt)
-                        db_session.commit()
-                        count += len(batch)
+                    count += _upsert_rows(
+                        db_session=db_session,
+                        model=models.AuxiliaryDataCategory,
+                        rows=unique_list,
+                        conflict_fields=["id"],
+                        immutable_fields={"id", "created_at"},
+                        batch_size=100,
+                    )
                             
                     total_synced += count
                     
@@ -10780,7 +10894,6 @@ def sync_kd_bank_accounts(
                     rows = data
                     
                 if isinstance(rows, list) and rows:
-                    from sqlalchemy.dialects.postgresql import insert
                     
                     count = 0
                     current_page_ids = []
@@ -10825,18 +10938,14 @@ def sync_kd_bank_accounts(
                         unique_rows[api_native_id] = bank_account_data
                     
                     unique_list = list(unique_rows.values())
-                    for i in range(0, len(unique_list), 50):
-                        batch = unique_list[i : i + 50]
-                        if not batch: continue
-                        
-                        stmt = insert(models.KingdeeBankAccount).values(batch)
-                        stmt = stmt.on_conflict_do_update(
-                            index_elements=['id'],
-                            set_={k: v for k, v in stmt.excluded.items() if k not in ['id', 'created_at']}
-                        )
-                        db_session.execute(stmt)
-                        db_session.commit()
-                        count += len(batch)
+                    count += _upsert_rows(
+                        db_session=db_session,
+                        model=models.KingdeeBankAccount,
+                        rows=unique_list,
+                        conflict_fields=["id"],
+                        immutable_fields={"id", "created_at"},
+                        batch_size=50,
+                    )
                             
                     total_synced += count
                     

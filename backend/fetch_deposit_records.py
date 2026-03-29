@@ -1,13 +1,15 @@
-import json
+﻿import json
 import os
 import time
 from datetime import datetime
 
-import psycopg2
 from dotenv import load_dotenv
 
+from database import SessionLocal
+from models import DepositRecord, ExternalApi, House, ProjectList, ReceiptBill
 from receipt_bill_deposit_links import rebuild_receipt_bill_deposit_refund_links
 from sync_tracker import tracker
+from utils.db_compat import upsert_model_row
 from utils.marki_client import get_api_url_by_id, marki_client
 
 load_dotenv()
@@ -17,24 +19,13 @@ DEPOSIT_RECORD_API_ID = int(os.getenv("MARKI_DEPOSIT_RECORD_API_ID", "30"))
 DEFAULT_PAGE_SIZE = int(os.getenv("MARKI_DEPOSIT_RECORD_PAGE_SIZE", "1000"))
 
 
-def get_db_connection():
-    return psycopg2.connect(
-        host=os.getenv("DB_HOST", "localhost"),
-        port=os.getenv("DB_PORT", "5432"),
-        database=os.getenv("DB_NAME", "finflow"),
-        user=os.getenv("DB_USER", "postgres"),
-        password=os.getenv("DB_PASSWORD", ""),
-    )
-
-
 def validate_timestamp(timestamp):
-    if timestamp and int(timestamp) > 0:
+    if timestamp and str(timestamp).isdigit() and int(timestamp) > 0:
         return int(timestamp)
     return None
 
 
 def format_amount(val):
-    """Convert cents to Yuan and keep two decimals."""
     if val is None:
         return None
     try:
@@ -59,9 +50,6 @@ def _to_json_str(value):
 
 
 def _load_api_config():
-    from database import SessionLocal
-    from models import ExternalApi
-
     db = SessionLocal()
     try:
         return db.query(ExternalApi).filter(ExternalApi.id == DEPOSIT_RECORD_API_ID).first()
@@ -82,9 +70,6 @@ def _parse_json_object(value):
 
 
 def _load_house_context_map(house_ids):
-    from database import SessionLocal
-    from models import House, ProjectList
-
     normalized_house_ids = sorted({str(hid).strip() for hid in house_ids if str(hid).strip()})
     if not normalized_house_ids:
         return {}
@@ -128,9 +113,7 @@ def _load_house_context_map(house_ids):
 
 
 def insert_deposit_records(data_list, community_ids_filter=None):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
+    db = SessionLocal()
     inserted_count = 0
     skipped_count = 0
     allowed_community_ids = {int(cid) for cid in (community_ids_filter or [])}
@@ -156,11 +139,6 @@ def insert_deposit_records(data_list, community_ids_filter=None):
                 skipped_count += 1
                 continue
 
-            house_name = item.get("houseName") or house_context.get("house_name")
-            amount = format_amount(item.get("amount"))
-            operate_type = item.get("operateType")
-            operator = item.get("operator")
-            operator_name = item.get("operatorName")
             operate_time = validate_timestamp(item.get("operateTime"))
             operate_date = None
             if operate_time:
@@ -168,9 +146,6 @@ def insert_deposit_records(data_list, community_ids_filter=None):
                     operate_date = datetime.fromtimestamp(int(operate_time)).date()
                 except Exception:
                     operate_date = None
-
-            cash_pledge_name = item.get("cashPledgeName")
-            remark = item.get("remark")
 
             pay_time = validate_timestamp(item.get("payTime"))
             pay_date = None
@@ -180,82 +155,37 @@ def insert_deposit_records(data_list, community_ids_filter=None):
                 except Exception:
                     pay_date = None
 
-            has_refund_receipt = bool(item.get("hasRefundReceipt"))
-            refund_receipt_id = item.get("refundReceiptId")
-            pay_channel_str = item.get("payChannelStr")
-            raw_data = _to_json_str(item)
+            values = {
+                "community_id": community_id,
+                "community_name": community_name,
+                "house_id": house_id,
+                "house_name": item.get("houseName") or house_context.get("house_name"),
+                "amount": format_amount(item.get("amount")),
+                "operate_type": item.get("operateType"),
+                "operator": item.get("operator"),
+                "operator_name": item.get("operatorName"),
+                "operate_time": operate_time,
+                "operate_date": operate_date,
+                "cash_pledge_name": item.get("cashPledgeName"),
+                "remark": item.get("remark"),
+                "pay_time": pay_time,
+                "pay_date": pay_date,
+                "has_refund_receipt": bool(item.get("hasRefundReceipt")),
+                "refund_receipt_id": item.get("refundReceiptId"),
+                "pay_channel_str": item.get("payChannelStr"),
+                "raw_data": _to_json_str(item),
+            }
 
-            cursor.execute(
-                """
-                INSERT INTO deposit_records (
-                    id, community_id, community_name,
-                    house_id, house_name,
-                    amount, operate_type, operator, operator_name, operate_time, operate_date,
-                    cash_pledge_name, remark,
-                    pay_time, pay_date, has_refund_receipt, refund_receipt_id, pay_channel_str,
-                    raw_data
-                ) VALUES (
-                    %s, %s, %s,
-                    %s, %s,
-                    %s, %s, %s, %s, %s, %s,
-                    %s, %s,
-                    %s, %s, %s, %s, %s,
-                    %s
-                )
-                ON CONFLICT (id) DO UPDATE SET
-                    community_id = EXCLUDED.community_id,
-                    community_name = EXCLUDED.community_name,
-                    house_id = EXCLUDED.house_id,
-                    house_name = EXCLUDED.house_name,
-                    amount = EXCLUDED.amount,
-                    operate_type = EXCLUDED.operate_type,
-                    operator = EXCLUDED.operator,
-                    operator_name = EXCLUDED.operator_name,
-                    operate_time = EXCLUDED.operate_time,
-                    operate_date = EXCLUDED.operate_date,
-                    cash_pledge_name = EXCLUDED.cash_pledge_name,
-                    remark = EXCLUDED.remark,
-                    pay_time = EXCLUDED.pay_time,
-                    pay_date = EXCLUDED.pay_date,
-                    has_refund_receipt = EXCLUDED.has_refund_receipt,
-                    refund_receipt_id = EXCLUDED.refund_receipt_id,
-                    pay_channel_str = EXCLUDED.pay_channel_str,
-                    raw_data = EXCLUDED.raw_data,
-                    updated_at = NOW()
-                """,
-                (
-                    record_id,
-                    community_id,
-                    community_name,
-                    house_id,
-                    house_name,
-                    amount,
-                    operate_type,
-                    operator,
-                    operator_name,
-                    operate_time,
-                    operate_date,
-                    cash_pledge_name,
-                    remark,
-                    pay_time,
-                    pay_date,
-                    has_refund_receipt,
-                    refund_receipt_id,
-                    pay_channel_str,
-                    raw_data,
-                ),
-            )
-
+            upsert_model_row(db, DepositRecord, {"id": int(record_id)}, values)
             inserted_count += 1
 
-        conn.commit()
+        db.commit()
         return {"inserted": inserted_count, "skipped": skipped_count}
     except Exception:
-        conn.rollback()
+        db.rollback()
         raise
     finally:
-        cursor.close()
-        conn.close()
+        db.close()
 
 
 def _parse_list_response(result):
@@ -317,90 +247,61 @@ def _resolve_request_headers(headers_template, db_session, preloaded_vars):
 
 
 def _sync_deposit_payment_ids(community_id: int):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
+    db = SessionLocal()
     try:
-        cursor.execute(
-            """
-            UPDATE deposit_records
-            SET payment_id = NULL,
-                updated_at = NOW()
-            WHERE community_id = %s
-              AND (operate_type <> 1 OR payment_id IS NOT NULL)
-            """,
-            (community_id,),
-        )
+        db.query(DepositRecord).filter(
+            DepositRecord.community_id == community_id,
+            (DepositRecord.operate_type != 1) | (DepositRecord.payment_id.isnot(None)),
+        ).update({DepositRecord.payment_id: None}, synchronize_session=False)
 
-        # If multiple receipt bills share the same matching key, keep the highest ID.
-        cursor.execute(
-            """
-            WITH matched_receipts AS (
-                SELECT DISTINCT ON (community_id, deal_time, asset_id)
-                    id,
-                    community_id,
-                    deal_time,
-                    asset_id
-                FROM receipt_bills
-                WHERE community_id = %s
-                  AND deal_time IS NOT NULL
-                  AND deal_type = 5
-                  AND asset_id IS NOT NULL
-                ORDER BY community_id, deal_time, asset_id, id DESC
+        receipt_rows = (
+            db.query(ReceiptBill.id, ReceiptBill.deal_time, ReceiptBill.asset_id)
+            .filter(
+                ReceiptBill.community_id == community_id,
+                ReceiptBill.deal_time.isnot(None),
+                ReceiptBill.deal_type == 5,
+                ReceiptBill.asset_id.isnot(None),
             )
-            UPDATE deposit_records AS d
-            SET payment_id = matched_receipts.id,
-                updated_at = NOW()
-            FROM matched_receipts
-            WHERE d.community_id = matched_receipts.community_id
-              AND d.pay_time = matched_receipts.deal_time
-              AND d.house_id = matched_receipts.asset_id
-              AND d.operate_type = 1
-              AND d.pay_time IS NOT NULL
-              AND d.house_id IS NOT NULL
-              AND d.community_id = %s
-            """,
-            (community_id, community_id),
+            .order_by(ReceiptBill.id.desc())
+            .all()
         )
 
-        cursor.execute(
-            """
-            SELECT COUNT(*)
-            FROM deposit_records
-            WHERE community_id = %s
-              AND operate_type = 1
-            """,
-            (community_id,),
-        )
-        collected_total = int(cursor.fetchone()[0] or 0)
+        payment_id_map = {}
+        for row in receipt_rows:
+            key = (int(row.deal_time), int(row.asset_id))
+            if key not in payment_id_map:
+                payment_id_map[key] = int(row.id)
 
-        cursor.execute(
-            """
-            SELECT COUNT(*)
-            FROM deposit_records
-            WHERE community_id = %s
-              AND operate_type = 1
-              AND payment_id IS NOT NULL
-            """,
-            (community_id,),
+        deposits = (
+            db.query(DepositRecord)
+            .filter(
+                DepositRecord.community_id == community_id,
+                DepositRecord.operate_type == 1,
+                DepositRecord.pay_time.isnot(None),
+                DepositRecord.house_id.isnot(None),
+            )
+            .all()
         )
-        matched_total = int(cursor.fetchone()[0] or 0)
 
-        conn.commit()
-        return {
-            "collected_total": collected_total,
-            "matched_total": matched_total,
-        }
+        matched_total = 0
+        for deposit in deposits:
+            key = (int(deposit.pay_time), int(deposit.house_id))
+            payment_id = payment_id_map.get(key)
+            deposit.payment_id = payment_id
+            if payment_id is not None:
+                matched_total += 1
+
+        collected_total = len(deposits)
+        db.commit()
+        return {"collected_total": collected_total, "matched_total": matched_total}
     except Exception:
-        conn.rollback()
+        db.rollback()
         raise
     finally:
-        cursor.close()
-        conn.close()
+        db.close()
 
 
 def sync_deposit_records(community_ids=None, task_id=None):
-    from database import SessionLocal
     from utils.variable_parser import build_variable_map, resolve_dict_variables
 
     api_config = _load_api_config()
@@ -430,11 +331,7 @@ def sync_deposit_records(community_ids=None, task_id=None):
 
         if task_id:
             tracker.update_status(task_id, "running")
-            tracker.add_log(
-                task_id,
-                f"Starting deposit record sync with api_id={DEPOSIT_RECORD_API_ID}",
-                "info",
-            )
+            tracker.add_log(task_id, f"Starting deposit record sync with api_id={DEPOSIT_RECORD_API_ID}", "info")
 
         for index, community_id in enumerate(community_ids, start=1):
             if task_id:
@@ -520,8 +417,7 @@ def sync_deposit_records(community_ids=None, task_id=None):
                     task_id,
                     (
                         f"Community {community_id}: linked payment IDs for "
-                        f"{payment_sync_counts['matched_total']}/{payment_sync_counts['collected_total']} "
-                        "collected deposits"
+                        f"{payment_sync_counts['matched_total']}/{payment_sync_counts['collected_total']} collected deposits"
                     ),
                     "info",
                 )
@@ -531,7 +427,7 @@ def sync_deposit_records(community_ids=None, task_id=None):
                 tracker.add_log(
                     task_id,
                     (
-                        f"Community {community_id}: rebuilt receipt/deposit refund links "
+                        f"Community {community_id}: rebuilt links "
                         f"{link_counts['total_links']} total, "
                         f"{link_counts['transfer_to_prepayment_links']} transfer-to-prepayment, "
                         f"{link_counts['actual_refund_links']} actual refunds"

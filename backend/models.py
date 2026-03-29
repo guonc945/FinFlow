@@ -83,7 +83,7 @@ class ChargeItem(Base):
     communityid = Column(String(50), nullable=False)
     item_name = Column(String(200), nullable=False)
     
-    # 新增马克联返回的补充字段
+    # 鏂板椹厠鑱旇繑鍥炵殑琛ュ厖瀛楁
     charge_type = Column(Integer, nullable=True)
     charge_type_str = Column(String(50), nullable=True)
     category_id = Column(Integer, nullable=True)
@@ -91,13 +91,14 @@ class ChargeItem(Base):
     period_type_str = Column(String(200), nullable=True)
     remark = Column(Text, nullable=True)
 
-    # 映射会计科目
+    # 鏄犲皠浼氳绉戠洰
     current_account_subject_id = Column(String(50), ForeignKey("accounting_subjects.id"), nullable=True)
     profit_loss_subject_id = Column(String(50), ForeignKey("accounting_subjects.id"), nullable=True)
 
     created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
-    # 关系映射
+    # 鍏崇郴鏄犲皠
     current_account_subject = relationship("AccountingSubject", foreign_keys=[current_account_subject_id])
     profit_loss_subject = relationship("AccountingSubject", foreign_keys=[profit_loss_subject_id])
 
@@ -107,13 +108,14 @@ class ProjectList(Base):
     proj_id = Column(Integer, primary_key=True, index=True)
     proj_name = Column(String(200), nullable=False)
     kingdee_project_id = Column(String(50), ForeignKey("auxiliary_data.id"), nullable=True)
-    # 默认收款银行账户
+    # 榛樿鏀舵閾惰璐︽埛
     default_receive_bank_id = Column(String(50), ForeignKey("kd_bank_accounts.id"), nullable=True)
-    # 默认付款银行账户
+    # 榛樿浠樻閾惰璐︽埛
     default_pay_bank_id = Column(String(50), ForeignKey("kd_bank_accounts.id"), nullable=True)
-    # 金蝶核算账簿
+    # 閲戣澏鏍哥畻璐︾翱
     kingdee_account_book_id = Column(String(50), ForeignKey("kd_account_books.id"), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     kingdee_project = relationship("AuxiliaryData", foreign_keys=[kingdee_project_id])
     default_receive_bank = relationship("KingdeeBankAccount", foreign_keys=[default_receive_bank_id])
@@ -128,7 +130,7 @@ class House(Base):
     community_id = Column(String(50), nullable=False, index=True)
     community_name = Column(String(255))
     house_name = Column(String(255), nullable=False)
-    # Mark 系统字段补齐（参考 backend/docs/1.json）
+    # Mark 绯荤粺瀛楁琛ラ綈锛堝弬鑰?backend/docs/1.json锛?
     building_id = Column(BigInteger, nullable=True, index=True)
     building_name = Column(String(255))
     unit_id = Column(BigInteger, nullable=True, index=True)
@@ -145,8 +147,8 @@ class House(Base):
     combina_name = Column(String(255))
     create_uid = Column(BigInteger)
     disable = Column(Boolean, default=False)
-    expand = Column(Text)  # Mark 返回的 expand（通常是 JSON 字符串）
-    expand_info = Column(Text)  # Mark 返回的 ExpandInfo（JSON）
+    expand = Column(Text)  # Mark 杩斿洖鐨?expand锛堥€氬父鏄?JSON 瀛楃涓诧級
+    expand_info = Column(Text)  # Mark 杩斿洖鐨?ExpandInfo锛圝SON锛?
     tag_list = Column(Text)  # JSON
     attachment_list = Column(Text)  # JSON
     house_type_name = Column(String(100))
@@ -169,12 +171,12 @@ class House(Base):
 
     @property
     def park_list(self):
-        # 兼容前端/接口字段命名（park_list），实际数据来自 parks 表的外键关系
+        # 鍏煎鍓嶇/鎺ュ彛瀛楁鍛藉悕锛坧ark_list锛夛紝瀹為檯鏁版嵁鏉ヨ嚜 parks 琛ㄧ殑澶栭敭鍏崇郴
         return self.parks
 
 
 class HouseUser(Base):
-    """房屋绑定住户（来自 Mark 房屋返回的 userList 分支）"""
+    """House user binding records."""
 
     __tablename__ = "house_users"
 
@@ -235,7 +237,7 @@ class Park(Base):
     state = Column(Integer)
     user_name = Column(String(255))
     house_name = Column(String(255))
-    house_id = Column(String(50), nullable=True, index=True)  # Mark 房屋ID（与 houses.house_id 对应）
+    house_id = Column(String(50), nullable=True, index=True)  # Mark 鎴垮眿ID锛堜笌 houses.house_id 瀵瑰簲锛?
     house_fk = Column(Integer, ForeignKey("houses.id"), nullable=True, index=True)
     kingdee_house_id = Column(String(50), ForeignKey("kd_houses.id"), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
@@ -244,7 +246,7 @@ class Park(Base):
     house = relationship("House", back_populates="parks", foreign_keys=[house_fk])
 
 class CommunityMapping(Base):
-    """园区映射配置表"""
+    """Community mapping configuration."""
     __tablename__ = "community_mapping"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -258,43 +260,43 @@ class CommunityMapping(Base):
 
 
 class Bill(Base):
-    """账单表（按园区分区）"""
+    """璐﹀崟琛紙鎸夊洯鍖哄垎鍖猴級"""
     __tablename__ = "bills"
 
-    # 复合主键：id + community_id（分区键）
+    # 澶嶅悎涓婚敭锛歩d + community_id锛堝垎鍖洪敭锛?
     id = Column(BigInteger, primary_key=True)
-    community_id = Column(Integer, primary_key=True, nullable=False)  # 分区键
+    community_id = Column(BigInteger, primary_key=True, nullable=False)
     
-    # 收费项目信息
+    # 鏀惰垂椤圭洰淇℃伅
     charge_item_id = Column(Integer)
     ci_snapshot_id = Column(Integer)
     charge_item_name = Column(String(200))
     charge_item_type = Column(Integer)
     category_name = Column(String(100))
     
-    # 资产信息
+    # 璧勪骇淇℃伅
     asset_id = Column(Integer)
     asset_name = Column(String(100))
     asset_type = Column(Integer)
     asset_type_str = Column(String(50))
     
-    # 房屋信息
+    # 鎴垮眿淇℃伅
     house_id = Column(Integer)
     full_house_name = Column(String(200))
     bind_house_id = Column(Integer)
     bind_house_name = Column(String(200))
     
-    # 车位信息
+    # 杞︿綅淇℃伅
     park_id = Column(Integer)
     park_name = Column(String(100))
     
-    # 账单时间
-    bill_month = Column(DateTime)
+    # 璐﹀崟鏃堕棿
+    bill_month = Column(Date)
     in_month = Column(String(10))
-    start_time = Column(Integer)  # Unix timestamp
-    end_time = Column(Integer)    # Unix timestamp
+    start_time = Column(BigInteger)  # Unix timestamp
+    end_time = Column(BigInteger)    # Unix timestamp
     
-    # 金额信息（单位：元）
+    # 閲戦淇℃伅锛堝崟浣嶏細鍏冿級
     amount = Column(DECIMAL(12, 2))
     bill_amount = Column(DECIMAL(12, 2))
     discount_amount = Column(DECIMAL(12, 2), default=0)
@@ -302,36 +304,36 @@ class Bill(Base):
     deposit_amount = Column(DECIMAL(12, 2), default=0)
     second_pay_amount = Column(DECIMAL(12, 2), default=0)
     
-    # 支付信息
+    # 鏀粯淇℃伅
     pay_status = Column(Integer)
     pay_status_str = Column(String(20))
     pay_type = Column(Integer)
     pay_type_str = Column(String(50))
-    pay_time = Column(Integer)  # Unix timestamp
-    receive_date = Column(Date)  # 收款日期 (YYYY-MM-DD), derived from pay_time
+    pay_time = Column(BigInteger)  # Unix timestamp
+    receive_date = Column(DateTime)  # Derived from pay_time
     second_pay_channel = Column(Integer)
     
-    # 账单类型
+    # 璐﹀崟绫诲瀷
     bill_type = Column(Integer)
     bill_type_str = Column(String(50))
     
-    # 业务引用
-    deal_log_id = Column(Integer)
+    # 涓氬姟寮曠敤
+    deal_log_id = Column(BigInteger)
     receipt_id = Column(String(50))
     sub_mch_id = Column(String(50))
     sub_mch_name = Column(String(100))
     
-    # 坏账和拆分
+    # 鍧忚处鍜屾媶鍒?
     bad_bill_state = Column(Integer, default=0)
     is_bad_bill = Column(Boolean, default=False)
     has_split = Column(Boolean, default=False)
     split_desc = Column(Text)
     
-    # 可见性
+    # 鍙鎬?
     visible_type = Column(Integer, default=0)
     visible_desc_str = Column(String(50))
     
-    # 其他
+    # 鍏朵粬
     can_revoke = Column(Integer, default=0)
     version = Column(Integer, default=1)
     meter_type = Column(Integer, default=0)
@@ -339,30 +341,30 @@ class Bill(Base):
     now_size = Column(String(50))
     remark = Column(Text)
     
-    # JSONB字段（存储嵌套数据）
-    bind_toll = Column(Text)  # JSON string - 收费项目快照
-    user_list = Column(Text)  # JSON string - 原始客户列表备份
+    # JSONB瀛楁锛堝瓨鍌ㄥ祵濂楁暟鎹級
+    bind_toll = Column(Text)  # JSON string - 鏀惰垂椤圭洰蹇収
+    user_list = Column(Text)  # JSON string - 鍘熷瀹㈡埛鍒楄〃澶囦唤
     
-    # 时间戳
-    create_time = Column(Integer)  # Unix timestamp
+    # 鏃堕棿鎴?
+    create_time = Column(BigInteger)  # Unix timestamp
     last_op_time = Column(DateTime)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
-    # 关联从表
+    # 鍏宠仈浠庤〃
     users = relationship("BillUser", back_populates="bill", cascade="all, delete-orphan",
                          foreign_keys="[BillUser.bill_id, BillUser.community_id]")
 
 
 class BillUser(Base):
-    """账单关联客户/住户（从表）"""
+    """璐﹀崟鍏宠仈瀹㈡埛/浣忔埛锛堜粠琛級"""
     __tablename__ = "bill_users"
 
     id = Column(Integer, primary_key=True, index=True)
     bill_id = Column(BigInteger, nullable=False, index=True)
-    community_id = Column(Integer, nullable=False)
-    user_id = Column(Integer)           # 马克系统用户 ID
-    user_name = Column(String(255))     # 客户名称（含手机号）
+    community_id = Column(BigInteger, nullable=False)
+    user_id = Column(Integer)           # 椹厠绯荤粺鐢ㄦ埛 ID
+    user_name = Column(String(255))     # 瀹㈡埛鍚嶇О锛堝惈鎵嬫満鍙凤級
     is_system = Column(Integer, default=0)
     created_at = Column(DateTime, server_default=func.now())
 
@@ -381,7 +383,7 @@ class BillUser(Base):
 
 
 class ReceiptBill(Base):
-    """收款明细（收款账单）"""
+    """鏀舵鏄庣粏锛堟敹娆捐处鍗曪級"""
 
     __tablename__ = "receipt_bills"
 
@@ -437,7 +439,7 @@ class ReceiptBill(Base):
 
 
 class ReceiptBillUser(Base):
-    """收款明细关联住户（bindUsers）"""
+    """Receipt bill related users."""
 
     __tablename__ = "receipt_bill_users"
 
@@ -590,7 +592,7 @@ class BillVoucherPushRecord(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     bill_id = Column(BigInteger, nullable=False, index=True)
-    community_id = Column(Integer, nullable=False, index=True)
+    community_id = Column(BigInteger, nullable=False, index=True)
     push_batch_no = Column(String(50), nullable=False, index=True)
     push_status = Column(String(20), nullable=False, default="pushing")
     voucher_number = Column(String(100))
@@ -859,7 +861,7 @@ class ReportingDbConnection(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), unique=True, nullable=False, index=True)
     description = Column(String(500))
-    db_type = Column(String(30), nullable=False, default="postgresql")
+    db_type = Column(String(30), nullable=False, default="sqlserver")
     host = Column(String(255))
     port = Column(Integer)
     database_name = Column(String(255), nullable=False)
@@ -927,31 +929,31 @@ class GlobalVariable(Base):
 class AccountingSubject(Base):
     __tablename__ = "accounting_subjects"
 
-    id = Column(String(50), primary_key=True)  # 使用金蝶的内码ID
+    id = Column(String(50), primary_key=True)  # 浣跨敤閲戣澏鐨勫唴鐮両D
     number = Column(String(50), nullable=False, index=True)
     name = Column(String(200), nullable=False)
     fullname = Column(String(500))
     level = Column(Integer)
     is_leaf = Column(Boolean)
-    direction = Column(String(10))  # dc: 1(借) or -1(贷)
+    direction = Column(String(10))  # dc: 1(鍊? or -1(璐?
     is_active = Column(Boolean, default=True) # enable: 1 or 0
     long_number = Column(String(50))
     
-    # 扩展字段
+    # 鎵╁睍瀛楁
     is_cash = Column(Boolean, default=False)
     is_bank = Column(Boolean, default=False)
     is_cash_equivalent = Column(Boolean, default=False)
     account_type_number = Column(String(50)) # accounttype_accounttype
     acct_currency = Column(String(50)) # acctcurrency
     
-    # 新增字段
+    # 鏂板瀛楁
     ac_check = Column(Boolean, default=False) # accheck
     is_qty = Column(Boolean, default=False) # isqty
     currency_entry = Column(Text) # JSON for currencyentry
 
-    # 核算维度与原始数据
+    # 鏍哥畻缁村害涓庡師濮嬫暟鎹?
     check_items = Column(Text) # JSON for checkitementry
-    raw_data = Column(Text) # 完整的原始 JSON 数据
+    raw_data = Column(Text) # 瀹屾暣鐨勫師濮?JSON 鏁版嵁
     
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
@@ -959,12 +961,12 @@ class AccountingSubject(Base):
 class Customer(Base):
     __tablename__ = "customers"
 
-    id = Column(String(50), primary_key=True)  # 金蝶内码
+    id = Column(String(50), primary_key=True)  # 閲戣澏鍐呯爜
     number = Column(String(50), nullable=False, index=True)
     name = Column(String(200), nullable=False)
-    status = Column(String(10)) # 数据状态 A/B/C
-    enable = Column(String(10)) # 使用状态
-    type = Column(String(10)) # 伙伴类型
+    status = Column(String(10)) # 鏁版嵁鐘舵€?A/B/C
+    enable = Column(String(10)) # 浣跨敤鐘舵€?
+    type = Column(String(10)) # 浼欎即绫诲瀷
     
     linkman = Column(String(100))
     bizpartner_phone = Column(String(100))
@@ -974,9 +976,9 @@ class Customer(Base):
     org_name = Column(String(200))
     createorg_name = Column(String(200))
 
-    entry_bank = Column(Text) # 银行信息 JSON
-    entry_linkman = Column(Text) # 联系人信息 JSON
-    raw_data = Column(Text) # 完整的原始 JSON 数据
+    entry_bank = Column(Text) # 閾惰淇℃伅 JSON
+    entry_linkman = Column(Text) # 鑱旂郴浜轰俊鎭?JSON
+    raw_data = Column(Text) # 瀹屾暣鐨勫師濮?JSON 鏁版嵁
     
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
@@ -984,17 +986,17 @@ class Customer(Base):
 class Supplier(Base):
     __tablename__ = "suppliers"
 
-    id = Column(String(50), primary_key=True)  # 金蝶内码
+    id = Column(String(50), primary_key=True)  # 閲戣澏鍐呯爜
     number = Column(String(50), nullable=False, index=True)
     name = Column(String(200), nullable=False)
-    status = Column(String(10)) # 数据状态 A/B/C
-    enable = Column(String(10)) # 使用状态
-    type = Column(String(10)) # 伙伴类型
+    status = Column(String(10)) # 鏁版嵁鐘舵€?A/B/C
+    enable = Column(String(10)) # 浣跨敤鐘舵€?
+    type = Column(String(10)) # 浼欎即绫诲瀷
     
     createorg_number = Column(String(100))
     supplier_status_name = Column(String(100))
 
-    raw_data = Column(Text) # 完整的原始 JSON 数据
+    raw_data = Column(Text) # 瀹屾暣鐨勫師濮?JSON 鏁版嵁
     
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
@@ -1002,7 +1004,7 @@ class Supplier(Base):
 class KingdeeHouse(Base):
     __tablename__ = "kd_houses"
 
-    id = Column(String(50), primary_key=True)  # 金蝶内码
+    id = Column(String(50), primary_key=True)  # 閲戣澏鍐呯爜
     number = Column(String(50), index=True)
     wtw8_number = Column(String(50), index=True)
     name = Column(String(255), nullable=False)
@@ -1011,7 +1013,7 @@ class KingdeeHouse(Base):
     createorg_name = Column(String(200))
     createorg_number = Column(String(100))
 
-    raw_data = Column(Text) # 完整的原始 JSON 数据
+    raw_data = Column(Text) # 瀹屾暣鐨勫師濮?JSON 鏁版嵁
     
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
@@ -1019,20 +1021,20 @@ class KingdeeHouse(Base):
 class KingdeeAccountBook(Base):
     __tablename__ = "kd_account_books"
 
-    id = Column(String(50), primary_key=True)  # 金蝶内码
+    id = Column(String(50), primary_key=True)  # 閲戣澏鍐呯爜
     number = Column(String(50), index=True)
     name = Column(String(255), nullable=False)
     org_number = Column(String(100))
     org_name = Column(String(200))
     accountingsys_number = Column(String(100))
     accountingsys_name = Column(String(200))
-    booknature = Column(String(50))   # 1 主账簿, 0 副账簿
+    booknature = Column(String(50))   # 1 涓昏处绨? 0 鍓处绨?
     accounttable_name = Column(String(200))
     basecurrency_name = Column(String(100))
     status = Column(String(50))
     enable = Column(String(50))
 
-    raw_data = Column(Text) # 完整的原始 JSON 数据
+    raw_data = Column(Text) # 瀹屾暣鐨勫師濮?JSON 鏁版嵁
     
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
@@ -1040,12 +1042,12 @@ class KingdeeAccountBook(Base):
 class AuxiliaryData(Base):
     __tablename__ = "auxiliary_data"
 
-    id = Column(String(50), primary_key=True)  # 金蝶内码
+    id = Column(String(50), primary_key=True)  # 閲戣澏鍐呯爜
     number = Column(String(50), nullable=False, index=True)
     name = Column(String(200), nullable=False)
     issyspreset = Column(Boolean)
-    ctrlstrategy = Column(String(10)) # 控制策略
-    enable = Column(String(10)) # 使用状态
+    ctrlstrategy = Column(String(10)) # 鎺у埗绛栫暐
+    enable = Column(String(10)) # 浣跨敤鐘舵€?
     
     group_number = Column(String(100))
     group_name = Column(String(100))
@@ -1054,7 +1056,7 @@ class AuxiliaryData(Base):
     createorg_number = Column(String(100))
     createorg_name = Column(String(100))
 
-    raw_data = Column(Text) # 完整的原始 JSON 数据
+    raw_data = Column(Text) # 瀹屾暣鐨勫師濮?JSON 鏁版嵁
     
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
@@ -1062,69 +1064,71 @@ class AuxiliaryData(Base):
 class AuxiliaryDataCategory(Base):
     __tablename__ = "auxiliary_data_categories"
 
-    id = Column(String(50), primary_key=True)  # 金蝶内码
+    id = Column(String(50), primary_key=True)  # 閲戣澏鍐呯爜
     number = Column(String(50), nullable=False, index=True)
     name = Column(String(200), nullable=False)
     fissyspreset = Column(Boolean)
     description = Column(String(500))
-    ctrlstrategy = Column(String(10)) # 控制策略
+    ctrlstrategy = Column(String(10)) # 鎺у埗绛栫暐
     
     createorg_name = Column(String(200))
     createorg_number = Column(String(100))
     createorg_id = Column(String(50))
 
-    raw_data = Column(Text) # 完整的原始 JSON 数据
+    raw_data = Column(Text) # 瀹屾暣鐨勫師濮?JSON 鏁版嵁
     
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 class KingdeeBankAccount(Base):
-    """金蝶银行账户"""
+    """閲戣澏閾惰璐︽埛"""
     __tablename__ = "kd_bank_accounts"
 
-    id = Column(String(50), primary_key=True)  # 金蝶内码
-    bankaccountnumber = Column(String(100), index=True)  # 银行账号
-    name = Column(String(200))  # 账户简称
-    acctname = Column(String(200))  # 账户名称
+    id = Column(String(50), primary_key=True)  # 閲戣澏鍐呯爜
+    bankaccountnumber = Column(String(100), index=True)  # 閾惰璐﹀彿
+    name = Column(String(200))  # 璐︽埛绠€绉?
+    acctname = Column(String(200))  # 璐︽埛鍚嶇О
 
-    # 申请组织
+    # 鐢宠缁勭粐
     company_number = Column(String(100))
     company_name = Column(String(200))
 
-    # 开户组织
+    # 寮€鎴风粍缁?
     openorg_number = Column(String(100))
     openorg_name = Column(String(200))
 
-    # 币别
-    defaultcurrency_number = Column(String(50))  # 默认币别代码
-    defaultcurrency_name = Column(String(100))   # 默认币别名称
+    # 甯佸埆
+    defaultcurrency_number = Column(String(50))  # 榛樿甯佸埆浠ｇ爜
+    defaultcurrency_name = Column(String(100))   # 榛樿甯佸埆鍚嶇О
 
-    # 账户属性
-    accttype = Column(String(50))    # 账户性质: in_out/in/out
-    acctstyle = Column(String(50))   # 账户类型: basic/normal/temp/spcl 等
-    finorgtype = Column(String(50))  # 金融机构类别: 0 银行, 1 结算中心, etc.
+    # 璐︽埛灞炴€?
+    accttype = Column(String(50))    # 璐︽埛鎬ц川: in_out/in/out
+    acctstyle = Column(String(50))   # 璐︽埛绫诲瀷: basic/normal/temp/spcl 绛?
+    finorgtype = Column(String(50))  # 閲戣瀺鏈烘瀯绫诲埆: 0 閾惰, 1 缁撶畻涓績, etc.
 
-    # 开户行
-    banktype_number = Column(String(100))  # 银行类别编码
-    banktype_name = Column(String(200))    # 银行类别名称
-    bank_number = Column(String(100))      # 开户行编码
-    bank_name = Column(String(200))        # 开户行名称
+    # 寮€鎴疯
+    banktype_number = Column(String(100))  # 閾惰绫诲埆缂栫爜
+    banktype_name = Column(String(200))    # 閾惰绫诲埆鍚嶇О
+    bank_number = Column(String(100))      # 寮€鎴疯缂栫爜
+    bank_name = Column(String(200))        # 寮€鎴疯鍚嶇О
 
-    # 账户用途
+    # 璐︽埛鐢ㄩ€?
     acctproperty_number = Column(String(100))
     acctproperty_name = Column(String(200))
 
-    # 状态
-    status = Column(String(10))       # 数据状态 A/B/C
-    acctstatus = Column(String(50))   # 账户状态: normal/closing/changing/closed/freeze
+    # 鐘舵€?
+    status = Column(String(10))       # 鏁版嵁鐘舵€?A/B/C
+    acctstatus = Column(String(50))   # 璐︽埛鐘舵€? normal/closing/changing/closed/freeze
 
-    # 默认收付款
-    isdefaultrec = Column(Boolean, default=False)  # 默认收款户
-    isdefaultpay = Column(Boolean, default=False)  # 默认付款户
+    # 榛樿鏀朵粯娆?
+    isdefaultrec = Column(Boolean, default=False)  # 榛樿鏀舵鎴?
+    isdefaultpay = Column(Boolean, default=False)  # 榛樿浠樻鎴?
 
-    comment = Column(Text)  # 备注
+    comment = Column(Text)  # 澶囨敞
 
-    raw_data = Column(Text) # 完整的原始 JSON 数据
+    raw_data = Column(Text) # 瀹屾暣鐨勫師濮?JSON 鏁版嵁
     
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+

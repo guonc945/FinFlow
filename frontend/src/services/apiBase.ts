@@ -8,9 +8,9 @@ export const resolveApiBaseUrl = () => {
     }
 
     // Auto mode (dev convenience):
-    // - Opened via http://localhost:5273 -> API http://localhost:8100/api
-    // - Opened via http://192.168.x.x:5273 -> API http://192.168.x.x:8100/api
-    const port = ((import.meta.env.VITE_API_PORT as string | undefined) || '8100').trim();
+  // - Opened via http://localhost:5273 -> API http://localhost:8110/api
+  // - Opened via http://192.168.x.x:5273 -> API http://192.168.x.x:8110/api
+  const port = ((import.meta.env.VITE_API_PORT as string | undefined) || '8110').trim();
 
     // In case this module is ever imported in a non-browser environment.
     if (typeof window === 'undefined') {
@@ -23,4 +23,3 @@ export const resolveApiBaseUrl = () => {
 };
 
 export const API_BASE_URL = resolveApiBaseUrl();
-

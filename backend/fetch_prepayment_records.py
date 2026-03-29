@@ -1,13 +1,15 @@
-import json
+﻿import json
 import os
 import time
 from datetime import datetime
 
-import psycopg2
 from dotenv import load_dotenv
 
+from database import SessionLocal
+from models import ExternalApi, House, PrepaymentRecord, ProjectList, ReceiptBill
 from receipt_bill_deposit_links import rebuild_receipt_bill_deposit_refund_links
 from sync_tracker import tracker
+from utils.db_compat import upsert_model_row
 from utils.marki_client import get_api_url_by_id, marki_client
 
 load_dotenv()
@@ -17,18 +19,8 @@ PREPAYMENT_RECORD_API_ID = int(os.getenv("MARKI_PREPAYMENT_RECORD_API_ID", "31")
 DEFAULT_PAGE_SIZE = int(os.getenv("MARKI_PREPAYMENT_RECORD_PAGE_SIZE", "1000"))
 
 
-def get_db_connection():
-    return psycopg2.connect(
-        host=os.getenv("DB_HOST", "localhost"),
-        port=os.getenv("DB_PORT", "5432"),
-        database=os.getenv("DB_NAME", "finflow"),
-        user=os.getenv("DB_USER", "postgres"),
-        password=os.getenv("DB_PASSWORD", ""),
-    )
-
-
 def validate_timestamp(timestamp):
-    if timestamp and int(timestamp) > 0:
+    if timestamp and str(timestamp).isdigit() and int(timestamp) > 0:
         return int(timestamp)
     return None
 
@@ -84,9 +76,6 @@ def _to_json_str(value):
 
 
 def _load_api_config():
-    from database import SessionLocal
-    from models import ExternalApi
-
     db = SessionLocal()
     try:
         return db.query(ExternalApi).filter(ExternalApi.id == PREPAYMENT_RECORD_API_ID).first()
@@ -107,9 +96,6 @@ def _parse_json_object(value):
 
 
 def _load_context_maps(community_ids, house_ids):
-    from database import SessionLocal
-    from models import House, ProjectList
-
     normalized_community_ids = sorted({int(cid) for cid in community_ids if cid is not None})
     normalized_house_ids = sorted({str(hid).strip() for hid in house_ids if str(hid).strip()})
 
@@ -139,9 +125,7 @@ def _load_context_maps(community_ids, house_ids):
 
 
 def insert_prepayment_records(data_list, community_ids_filter=None):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
+    db = SessionLocal()
     inserted_count = 0
     skipped_count = 0
     allowed_community_ids = {int(cid) for cid in (community_ids_filter or [])}
@@ -206,109 +190,47 @@ def insert_prepayment_records(data_list, community_ids_filter=None):
                 except Exception:
                     pay_date = None
 
-            cursor.execute(
-                """
-                INSERT INTO prepayment_records (
-                    id, community_id, community_name,
-                    account_id, building_id, unit_id, house_id, house_name,
-                    amount, balance_after_change,
-                    operate_type, operate_type_label,
-                    pay_channel_id, pay_channel_str,
-                    operator, operator_name,
-                    operate_time, operate_date, source_updated_time,
-                    remark, deposit_order_id,
-                    pay_time, pay_date,
-                    category_id, category_name, status,
-                    has_refund_receipt, refund_receipt_id,
-                    raw_data
-                ) VALUES (
-                    %s, %s, %s,
-                    %s, %s, %s, %s, %s,
-                    %s, %s,
-                    %s, %s,
-                    %s, %s,
-                    %s, %s,
-                    %s, %s, %s,
-                    %s, %s,
-                    %s, %s,
-                    %s, %s, %s,
-                    %s, %s,
-                    %s
-                )
-                ON CONFLICT (id) DO UPDATE SET
-                    community_id = EXCLUDED.community_id,
-                    community_name = EXCLUDED.community_name,
-                    account_id = EXCLUDED.account_id,
-                    building_id = EXCLUDED.building_id,
-                    unit_id = EXCLUDED.unit_id,
-                    house_id = EXCLUDED.house_id,
-                    house_name = EXCLUDED.house_name,
-                    amount = EXCLUDED.amount,
-                    balance_after_change = EXCLUDED.balance_after_change,
-                    operate_type = EXCLUDED.operate_type,
-                    operate_type_label = EXCLUDED.operate_type_label,
-                    pay_channel_id = EXCLUDED.pay_channel_id,
-                    pay_channel_str = EXCLUDED.pay_channel_str,
-                    operator = EXCLUDED.operator,
-                    operator_name = EXCLUDED.operator_name,
-                    operate_time = EXCLUDED.operate_time,
-                    operate_date = EXCLUDED.operate_date,
-                    source_updated_time = EXCLUDED.source_updated_time,
-                    remark = EXCLUDED.remark,
-                    deposit_order_id = EXCLUDED.deposit_order_id,
-                    pay_time = EXCLUDED.pay_time,
-                    pay_date = EXCLUDED.pay_date,
-                    category_id = EXCLUDED.category_id,
-                    category_name = EXCLUDED.category_name,
-                    status = EXCLUDED.status,
-                    has_refund_receipt = EXCLUDED.has_refund_receipt,
-                    refund_receipt_id = EXCLUDED.refund_receipt_id,
-                    raw_data = EXCLUDED.raw_data,
-                    updated_at = NOW()
-                """,
-                (
-                    record_id,
-                    community_id,
-                    project_name_map.get(community_id),
-                    change_log.get("accountId"),
-                    change_log.get("buildingId"),
-                    change_log.get("unitId"),
-                    house_id,
-                    item.get("houseName") or house_name_map.get(house_key),
-                    format_amount(change_log.get("money")),
-                    format_amount(change_log.get("balanceAfterChange")),
-                    change_log.get("type"),
-                    item.get("opTypeStr"),
-                    change_log.get("payChannelId"),
-                    change_log.get("payChannelStr"),
-                    change_log.get("createUid"),
-                    item.get("operatorName"),
-                    operate_time,
-                    operate_date,
-                    source_updated_time,
-                    change_log.get("remark"),
-                    change_log.get("depositOrderId"),
-                    pay_time,
-                    pay_date,
-                    change_log.get("categoryId"),
-                    change_log.get("categoryName"),
-                    change_log.get("status"),
-                    bool(refund_receipt.get("hasRefundReceipt")),
-                    refund_receipt.get("refundReceiptId"),
-                    _to_json_str(item),
-                ),
-            )
+            values = {
+                "community_id": community_id,
+                "community_name": project_name_map.get(community_id),
+                "account_id": change_log.get("accountId"),
+                "building_id": change_log.get("buildingId"),
+                "unit_id": change_log.get("unitId"),
+                "house_id": house_id,
+                "house_name": item.get("houseName") or house_name_map.get(house_key),
+                "amount": format_amount(change_log.get("money")),
+                "balance_after_change": format_amount(change_log.get("balanceAfterChange")),
+                "operate_type": change_log.get("type"),
+                "operate_type_label": item.get("opTypeStr"),
+                "pay_channel_id": change_log.get("payChannelId"),
+                "pay_channel_str": change_log.get("payChannelStr"),
+                "operator": change_log.get("createUid"),
+                "operator_name": item.get("operatorName"),
+                "operate_time": operate_time,
+                "operate_date": operate_date,
+                "source_updated_time": source_updated_time,
+                "remark": change_log.get("remark"),
+                "deposit_order_id": change_log.get("depositOrderId"),
+                "pay_time": pay_time,
+                "pay_date": pay_date,
+                "category_id": change_log.get("categoryId"),
+                "category_name": change_log.get("categoryName"),
+                "status": change_log.get("status"),
+                "has_refund_receipt": bool(refund_receipt.get("hasRefundReceipt")),
+                "refund_receipt_id": refund_receipt.get("refundReceiptId"),
+                "raw_data": _to_json_str(item),
+            }
 
+            upsert_model_row(db, PrepaymentRecord, {"id": int(record_id)}, values)
             inserted_count += 1
 
-        conn.commit()
+        db.commit()
         return {"inserted": inserted_count, "skipped": skipped_count}
     except Exception:
-        conn.rollback()
+        db.rollback()
         raise
     finally:
-        cursor.close()
-        conn.close()
+        db.close()
 
 
 def _parse_list_response(result):
@@ -370,89 +292,61 @@ def _resolve_request_headers(headers_template, db_session, preloaded_vars):
 
 
 def _sync_prepayment_payment_ids(community_id: int):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
+    db = SessionLocal()
     try:
-        cursor.execute(
-            """
-            UPDATE prepayment_records
-            SET payment_id = NULL,
-                updated_at = NOW()
-            WHERE community_id = %s
-              AND (operate_type <> 1 OR payment_id IS NOT NULL)
-            """,
-            (community_id,),
-        )
+        db.query(PrepaymentRecord).filter(
+            PrepaymentRecord.community_id == community_id,
+            (PrepaymentRecord.operate_type != 1) | (PrepaymentRecord.payment_id.isnot(None)),
+        ).update({PrepaymentRecord.payment_id: None}, synchronize_session=False)
 
-        cursor.execute(
-            """
-            WITH matched_receipts AS (
-                SELECT DISTINCT ON (community_id, deal_time, asset_id)
-                    id,
-                    community_id,
-                    deal_time,
-                    asset_id
-                FROM receipt_bills
-                WHERE community_id = %s
-                  AND deal_time IS NOT NULL
-                  AND deal_type = 1
-                  AND asset_id IS NOT NULL
-                ORDER BY community_id, deal_time, asset_id, id DESC
+        receipt_rows = (
+            db.query(ReceiptBill.id, ReceiptBill.deal_time, ReceiptBill.asset_id)
+            .filter(
+                ReceiptBill.community_id == community_id,
+                ReceiptBill.deal_time.isnot(None),
+                ReceiptBill.deal_type == 1,
+                ReceiptBill.asset_id.isnot(None),
             )
-            UPDATE prepayment_records AS p
-            SET payment_id = matched_receipts.id,
-                updated_at = NOW()
-            FROM matched_receipts
-            WHERE p.community_id = matched_receipts.community_id
-              AND p.pay_time = matched_receipts.deal_time
-              AND p.house_id = matched_receipts.asset_id
-              AND p.operate_type = 1
-              AND p.pay_time IS NOT NULL
-              AND p.house_id IS NOT NULL
-              AND p.community_id = %s
-            """,
-            (community_id, community_id),
+            .order_by(ReceiptBill.id.desc())
+            .all()
         )
 
-        cursor.execute(
-            """
-            SELECT COUNT(*)
-            FROM prepayment_records
-            WHERE community_id = %s
-              AND operate_type = 1
-            """,
-            (community_id,),
-        )
-        collected_total = int(cursor.fetchone()[0] or 0)
+        payment_id_map = {}
+        for row in receipt_rows:
+            key = (int(row.deal_time), int(row.asset_id))
+            if key not in payment_id_map:
+                payment_id_map[key] = int(row.id)
 
-        cursor.execute(
-            """
-            SELECT COUNT(*)
-            FROM prepayment_records
-            WHERE community_id = %s
-              AND operate_type = 1
-              AND payment_id IS NOT NULL
-            """,
-            (community_id,),
+        records = (
+            db.query(PrepaymentRecord)
+            .filter(
+                PrepaymentRecord.community_id == community_id,
+                PrepaymentRecord.operate_type == 1,
+                PrepaymentRecord.pay_time.isnot(None),
+                PrepaymentRecord.house_id.isnot(None),
+            )
+            .all()
         )
-        matched_total = int(cursor.fetchone()[0] or 0)
 
-        conn.commit()
-        return {
-            "collected_total": collected_total,
-            "matched_total": matched_total,
-        }
+        matched_total = 0
+        for record in records:
+            key = (int(record.pay_time), int(record.house_id))
+            payment_id = payment_id_map.get(key)
+            record.payment_id = payment_id
+            if payment_id is not None:
+                matched_total += 1
+
+        collected_total = len(records)
+        db.commit()
+        return {"collected_total": collected_total, "matched_total": matched_total}
     except Exception:
-        conn.rollback()
+        db.rollback()
         raise
     finally:
-        cursor.close()
-        conn.close()
+        db.close()
 
 
 def sync_prepayment_records(community_ids=None, task_id=None):
-    from database import SessionLocal
     from utils.variable_parser import build_variable_map, resolve_dict_variables
 
     api_config = _load_api_config()
@@ -482,11 +376,7 @@ def sync_prepayment_records(community_ids=None, task_id=None):
 
         if task_id:
             tracker.update_status(task_id, "running")
-            tracker.add_log(
-                task_id,
-                f"Starting prepayment record sync with api_id={PREPAYMENT_RECORD_API_ID}",
-                "info",
-            )
+            tracker.add_log(task_id, f"Starting prepayment record sync with api_id={PREPAYMENT_RECORD_API_ID}", "info")
 
         for index, community_id in enumerate(community_ids, start=1):
             if task_id:
@@ -572,8 +462,7 @@ def sync_prepayment_records(community_ids=None, task_id=None):
                     task_id,
                     (
                         f"Community {community_id}: linked payment IDs for "
-                        f"{payment_sync_counts['matched_total']}/{payment_sync_counts['collected_total']} "
-                        "prepayment recharge records"
+                        f"{payment_sync_counts['matched_total']}/{payment_sync_counts['collected_total']} prepayment recharge records"
                     ),
                     "info",
                 )
@@ -583,7 +472,7 @@ def sync_prepayment_records(community_ids=None, task_id=None):
                 tracker.add_log(
                     task_id,
                     (
-                        f"Community {community_id}: rebuilt receipt/deposit refund links "
+                        f"Community {community_id}: rebuilt links "
                         f"{link_counts['total_links']} total, "
                         f"{link_counts['transfer_to_prepayment_links']} transfer-to-prepayment, "
                         f"{link_counts['actual_refund_links']} actual refunds"

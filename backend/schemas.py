@@ -467,7 +467,7 @@ class ExternalServiceWithApis(ExternalServiceResponse):
 class ReportingDbConnectionBase(BaseModel):
     name: str
     description: Optional[str] = None
-    db_type: str = "postgresql"
+    db_type: str = "sqlserver"
     host: Optional[str] = None
     port: Optional[int] = None
     database_name: str

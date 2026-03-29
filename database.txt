@@ -1,0 +1,4 @@
+服务器：fn.hyqy.group  ，
+端口：1433，
+账号：sa ，
+密码：sa@sqlserver
