@@ -73,6 +73,7 @@ from voucher_field_mapping import (
     enrich_source_data as mapping_enrich_source_data,
     prefix_source_fields as mapping_prefix_source_fields,
 )
+from api import voucher_helpers as voucher_helper_module
 
 # Configure logger for project sync
 logger = logging.getLogger('project_sync')
@@ -399,41 +400,6 @@ BILL_VOUCHER_PUSH_STATUS_LABELS = {
     "failed": "推送失败",
 }
 
-
-def _decode_header_value(value: Optional[str]) -> str:
-    if not value:
-        return ""
-    from urllib.parse import unquote
-    return unquote(value).strip()
-
-
-def _normalize_bill_refs(refs: Optional[List[Any]]) -> List[Dict[str, int]]:
-    normalized: List[Dict[str, int]] = []
-    seen = set()
-
-    for ref in refs or []:
-        if isinstance(ref, dict):
-            bill_id = ref.get("bill_id")
-            community_id = ref.get("community_id")
-        else:
-            bill_id = getattr(ref, "bill_id", None)
-            community_id = getattr(ref, "community_id", None)
-
-        if bill_id is None or community_id is None:
-            continue
-
-        key = (int(bill_id), int(community_id))
-        if key in seen:
-            continue
-        seen.add(key)
-        normalized.append({
-            "bill_id": int(bill_id),
-            "community_id": int(community_id),
-        })
-
-    return normalized
-
-
 def _build_bill_push_status_entry(
     bill_id: int,
     community_id: int,
@@ -458,98 +424,6 @@ def _build_bill_push_status_entry(
         "message": message,
         "account_book_number": account_book_number,
     }
-
-
-def _get_bill_push_status_map(
-    db: Session,
-    refs: Optional[List[Any]],
-    account_book_number: Optional[str] = None,
-) -> Dict[tuple, Dict[str, Any]]:
-    normalized_refs = _normalize_bill_refs(refs)
-    status_map = {
-        (ref["bill_id"], ref["community_id"]): _build_bill_push_status_entry(
-            bill_id=ref["bill_id"],
-            community_id=ref["community_id"],
-            account_book_number=account_book_number or None,
-        )
-        for ref in normalized_refs
-    }
-
-    if not normalized_refs:
-        return status_map
-
-    conditions = [
-        and_(
-            models.BillVoucherPushRecord.bill_id == ref["bill_id"],
-            models.BillVoucherPushRecord.community_id == ref["community_id"],
-        )
-        for ref in normalized_refs
-    ]
-
-    latest_query = db.query(
-        models.BillVoucherPushRecord.bill_id.label("bill_id"),
-        models.BillVoucherPushRecord.community_id.label("community_id"),
-        models.BillVoucherPushRecord.push_status.label("push_status"),
-        models.BillVoucherPushRecord.push_batch_no.label("push_batch_no"),
-        models.BillVoucherPushRecord.voucher_number.label("voucher_number"),
-        models.BillVoucherPushRecord.voucher_id.label("voucher_id"),
-        models.BillVoucherPushRecord.pushed_at.label("pushed_at"),
-        models.BillVoucherPushRecord.message.label("message"),
-        models.BillVoucherPushRecord.account_book_number.label("account_book_number"),
-        models.BillVoucherPushRecord.created_at.label("created_at"),
-        models.BillVoucherPushRecord.id.label("id"),
-    ).filter(or_(*conditions))
-
-    normalized_book_number = (account_book_number or "").strip()
-    if normalized_book_number:
-        latest_query = latest_query.filter(
-            models.BillVoucherPushRecord.account_book_number == normalized_book_number
-        )
-
-    latest_rows = latest_query.order_by(
-        models.BillVoucherPushRecord.bill_id.asc(),
-        models.BillVoucherPushRecord.community_id.asc(),
-        models.BillVoucherPushRecord.created_at.desc(),
-        models.BillVoucherPushRecord.id.desc(),
-    ).distinct(
-        models.BillVoucherPushRecord.bill_id,
-        models.BillVoucherPushRecord.community_id,
-    ).all()
-
-    for row in latest_rows:
-        key = (int(row.bill_id), int(row.community_id))
-        status_map[key] = _build_bill_push_status_entry(
-            bill_id=row.bill_id,
-            community_id=row.community_id,
-            push_status=row.push_status or "not_pushed",
-            push_batch_no=row.push_batch_no,
-            voucher_number=row.voucher_number,
-            voucher_id=row.voucher_id,
-            pushed_at=row.pushed_at,
-            message=row.message,
-            account_book_number=row.account_book_number,
-        )
-
-    return status_map
-
-
-def _summarize_bill_push_statuses(statuses: List[Dict[str, Any]]) -> Dict[str, int]:
-    summary = {
-        "total": len(statuses),
-        "not_pushed": 0,
-        "pushing": 0,
-        "success": 0,
-        "failed": 0,
-    }
-
-    for item in statuses:
-        status_key = item.get("push_status") or "not_pushed"
-        if status_key not in summary:
-            status_key = "not_pushed"
-        summary[status_key] += 1
-
-    return summary
-
 
 def _get_related_bill_refs_for_receipts(
     db: Session,
@@ -1495,6 +1369,27 @@ def _finalize_bill_push_records(
         record.pushed_at = pushed_at
 
     db.commit()
+
+
+# Route handlers below are intentionally rebound to the shared helper module.
+# This keeps behavior aligned while we reduce voucher-specific logic in main.py.
+_decode_header_value = voucher_helper_module._decode_header_value
+_normalize_bill_refs = voucher_helper_module._normalize_bill_refs
+_get_bill_push_status_map = voucher_helper_module._get_bill_push_status_map
+_summarize_bill_push_statuses = voucher_helper_module._summarize_bill_push_statuses
+_get_related_bill_refs_for_receipts = voucher_helper_module._get_related_bill_refs_for_receipts
+_normalize_receipt_refs = voucher_helper_module._normalize_receipt_refs
+_serialize_receipt_bill_model = voucher_helper_module._serialize_receipt_bill_model
+_enrich_receipt_bill_data = voucher_helper_module._enrich_receipt_bill_data
+_load_receipt_to_bills_relation = voucher_helper_module._load_receipt_to_bills_relation
+_load_receipt_to_deposit_collect_relation = voucher_helper_module._load_receipt_to_deposit_collect_relation
+_load_receipt_to_deposit_refund_relation = voucher_helper_module._load_receipt_to_deposit_refund_relation
+_load_receipt_to_prepayment_recharge_relation = voucher_helper_module._load_receipt_to_prepayment_recharge_relation
+_load_receipt_to_prepayment_refund_relation = voucher_helper_module._load_receipt_to_prepayment_refund_relation
+_find_bill_push_conflicts = voucher_helper_module._find_bill_push_conflicts
+_extract_kingdee_voucher_result = voucher_helper_module._extract_kingdee_voucher_result
+_extract_kingdee_push_message = voucher_helper_module._extract_kingdee_push_message
+_finalize_bill_push_records = voucher_helper_module._finalize_bill_push_records
 
 
 app = FastAPI(title="FinFlow Middleware")
