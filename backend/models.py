@@ -262,6 +262,9 @@ class CommunityMapping(Base):
 class Bill(Base):
     """璐﹀崟琛紙鎸夊洯鍖哄垎鍖猴級"""
     __tablename__ = "bills"
+    __table_args__ = (
+        Index("ix_bills_community_deal_log", "community_id", "deal_log_id"),
+    )
 
     # 澶嶅悎涓婚敭锛歩d + community_id锛堝垎鍖洪敭锛?
     id = Column(BigInteger, primary_key=True)

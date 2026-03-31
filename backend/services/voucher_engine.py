@@ -462,3 +462,268 @@ def _resolve_dimension_json(
     except (json.JSONDecodeError, TypeError) as e:
         logger.warning(f"解析辅助核算 JSON 失败: {e}")
         return {}
+
+
+def batch_preload_kd_cache(
+    bills_data: List[Dict[str, Any]],
+    db: Session,
+) -> Dict[str, Any]:
+    """
+    批量预加载所有 bill 需要的金蝶关联数据，避免 N+1 查询。
+
+    返回缓存字典，包含 houses/parks/residents/projects/banks_receive/banks_pay。
+    """
+    from sqlalchemy.orm import joinedload as _jl
+
+    cache: Dict[str, Any] = {
+        "houses": {},
+        "parks": {},
+        "residents": {},
+        "projects": {},
+        "banks_receive": {},
+        "banks_pay": {},
+    }
+
+    # 收集所有需要查询的 ID
+    house_ids = set()
+    park_ids = set()
+    community_ids = set()
+    resident_ids = set()
+
+    for bd in bills_data:
+        h_id = _normalize_id(bd.get("house_id"))
+        if h_id:
+            house_ids.add(h_id)
+        p_id = _normalize_id(bd.get("park_id"))
+        if p_id:
+            park_ids.add(p_id)
+        c_id = bd.get("community_id")
+        if c_id not in (None, "", 0, "0"):
+            try:
+                community_ids.add(int(c_id))
+            except (ValueError, TypeError):
+                pass
+        # 从 user_list 提取 resident_id
+        user_list = bd.get("user_list")
+        if user_list:
+            try:
+                users = json.loads(user_list) if isinstance(user_list, str) else user_list
+                if isinstance(users, list):
+                    for user in users:
+                        uid = user.get("id") or user.get("user_id")
+                        if uid:
+                            resident_ids.add(_normalize_id(uid))
+            except Exception:
+                pass
+
+    # 批量查询 House（含 kingdee_house 关联）
+    if house_ids:
+        rows = (
+            db.query(House)
+            .options(_jl(House.kingdee_house))
+            .filter(House.house_id.in_(list(house_ids)))
+            .all()
+        )
+        for row in rows:
+            cache["houses"][str(row.house_id)] = row
+
+    # 批量查询 Park（含 kingdee_house 关联）
+    if park_ids:
+        rows = (
+            db.query(Park)
+            .options(_jl(Park.kingdee_house))
+            .filter(Park.park_id.in_(list(park_ids)))
+            .all()
+        )
+        for row in rows:
+            cache["parks"][str(row.park_id)] = row
+
+    # 批量查询 Resident（含 kingdee_customer 关联）
+    if resident_ids:
+        rows = (
+            db.query(Resident)
+            .options(_jl(Resident.kingdee_customer))
+            .filter(Resident.resident_id.in_(list(resident_ids)))
+            .all()
+        )
+        for row in rows:
+            cache["residents"][str(row.resident_id)] = row
+
+    # 批量查询 ProjectList（含 kingdee_project 关联）
+    if community_ids:
+        rows = (
+            db.query(ProjectList)
+            .options(_jl(ProjectList.kingdee_project))
+            .filter(ProjectList.proj_id.in_(list(community_ids)))
+            .all()
+        )
+        for row in rows:
+            cache["projects"][int(row.proj_id)] = row
+
+    # 批量查询银行账户（按园区维度）
+    if community_ids:
+        bank_ids_to_query = set()
+        for proj_id, project in cache["projects"].items():
+            if project.default_receive_bank_id:
+                bank_ids_to_query.add(int(project.default_receive_bank_id))
+            if project.default_pay_bank_id:
+                bank_ids_to_query.add(int(project.default_pay_bank_id))
+        if bank_ids_to_query:
+            bank_rows = db.query(KingdeeBankAccount).filter(
+                KingdeeBankAccount.id.in_(list(bank_ids_to_query))
+            ).all()
+            bank_by_id = {int(b.id): b for b in bank_rows}
+            for proj_id, project in cache["projects"].items():
+                if project.default_receive_bank_id:
+                    bank = bank_by_id.get(int(project.default_receive_bank_id))
+                    if bank:
+                        cache["banks_receive"][proj_id] = bank
+                if project.default_pay_bank_id:
+                    bank = bank_by_id.get(int(project.default_pay_bank_id))
+                    if bank:
+                        cache["banks_pay"][proj_id] = bank
+
+    # 全局默认银行账户
+    default_rec = db.query(KingdeeBankAccount).filter(
+        KingdeeBankAccount.isdefaultrec == True
+    ).first()
+    if default_rec:
+        cache["banks_receive"]["_default"] = default_rec
+    default_pay = db.query(KingdeeBankAccount).filter(
+        KingdeeBankAccount.isdefaultpay == True
+    ).first()
+    if default_pay:
+        cache["banks_pay"]["_default"] = default_pay
+
+    return cache
+
+
+def _resolve_kd_field_cached(
+    field_name: str,
+    bill_data: Dict[str, Any],
+    kd_cache: Dict[str, Any],
+) -> str:
+    """使用预加载缓存解析金蝶衍生字段，无额外 DB 查询。"""
+    config = KD_DERIVED_FIELDS.get(field_name)
+    if not config:
+        return ""
+
+    source_value = bill_data.get(config["source_field"])
+    archive_model = config["archive_model"]
+    target_prop = config["target_prop"]
+    bill_community_id = bill_data.get("community_id")
+
+    try:
+        if archive_model == "house":
+            nid = _normalize_id(source_value)
+            house = kd_cache.get("houses", {}).get(nid)
+            if house and house.kingdee_house:
+                return getattr(house.kingdee_house, target_prop, "") or ""
+
+        elif archive_model == "park":
+            nid = _normalize_id(source_value)
+            park = kd_cache.get("parks", {}).get(nid)
+            if park and park.kingdee_house:
+                return getattr(park.kingdee_house, target_prop, "") or ""
+
+        elif archive_model == "resident":
+            user_list = bill_data.get("user_list")
+            if user_list:
+                try:
+                    users = json.loads(user_list) if isinstance(user_list, str) else user_list
+                    if isinstance(users, list):
+                        first_resident = None
+                        for user in users:
+                            uid = user.get("id") or user.get("user_id")
+                            if uid:
+                                resident = kd_cache.get("residents", {}).get(_normalize_id(uid))
+                                if resident:
+                                    if not first_resident:
+                                        first_resident = resident
+                                    if resident.kingdee_customer:
+                                        return getattr(resident.kingdee_customer, target_prop, "") or ""
+                        if first_resident and first_resident.kingdee_customer:
+                            return getattr(first_resident.kingdee_customer, target_prop, "") or ""
+                except Exception:
+                    pass
+
+        elif archive_model == "project":
+            c_id = bill_community_id
+            try:
+                c_id_int = int(c_id) if c_id not in (None, "") else 0
+            except (ValueError, TypeError):
+                c_id_int = 0
+            if c_id_int == 0:
+                h_id = _normalize_id(bill_data.get("house_id"))
+                if h_id:
+                    house = kd_cache.get("houses", {}).get(h_id)
+                    if house and house.community_id:
+                        c_id_int = int(house.community_id)
+                if c_id_int == 0:
+                    p_id = _normalize_id(bill_data.get("park_id"))
+                    if p_id:
+                        park = kd_cache.get("parks", {}).get(p_id)
+                        if park and park.community_id:
+                            c_id_int = int(park.community_id)
+            project = kd_cache.get("projects", {}).get(c_id_int)
+            if project and project.kingdee_project:
+                return getattr(project.kingdee_project, target_prop, "") or ""
+
+        elif archive_model in ("bank_receive", "bank_pay"):
+            bank_key = "banks_receive" if archive_model == "bank_receive" else "banks_pay"
+            c_id = bill_community_id
+            try:
+                c_id_int = int(c_id) if c_id not in (None, "") else 0
+            except (ValueError, TypeError):
+                c_id_int = 0
+            bank = kd_cache.get(bank_key, {}).get(c_id_int)
+            if not bank:
+                bank = kd_cache.get(bank_key, {}).get("_default")
+            if bank:
+                return getattr(bank, target_prop, "") or ""
+
+    except Exception as e:
+        logger.warning(f"缓存解析金蝶衍生字段 '{field_name}' 失败: {e}")
+
+    return ""
+
+
+def enrich_bill_data_cached(
+    bill_data: Dict[str, Any],
+    kd_cache: Dict[str, Any],
+) -> Dict[str, Any]:
+    """使用预加载缓存的 enrich_bill_data，无额外 DB 查询。"""
+    enriched = dict(bill_data)
+
+    for field_name in KD_DERIVED_FIELDS:
+        if field_name not in enriched:
+            enriched[field_name] = _resolve_kd_field_cached(field_name, bill_data, kd_cache)
+
+    # 注入客户信息
+    user_list = bill_data.get("user_list")
+    chosen_user = None
+    if user_list:
+        try:
+            users = json.loads(user_list) if isinstance(user_list, str) else user_list
+            if isinstance(users, list) and len(users) > 0:
+                chosen_user = users[0]
+        except Exception:
+            pass
+
+    if chosen_user:
+        enriched["customer_name"] = chosen_user.get("name", "")
+        enriched["customer_id"] = str(chosen_user.get("id") or chosen_user.get("user_id", ""))
+    else:
+        enriched["customer_name"] = ""
+        enriched["customer_id"] = ""
+
+    # 添加带前缀的字段别名
+    _prefix = "bills"
+    _module_prefix = "marki.bills"
+    for key, val in list(enriched.items()):
+        if not isinstance(key, str) or "." in key:
+            continue
+        enriched[f"{_prefix}.{key}"] = val
+        enriched[f"{_module_prefix}.{key}"] = val
+
+    return enriched

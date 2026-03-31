@@ -208,6 +208,15 @@ def _preview_voucher_for_bill_via_receipt_templates(
     x_account_book_number: Optional[str],
     current_user: models.User,
     db: Session,
+    receipt_bill_override: Optional[models.ReceiptBill] = None,
+    receipt_enriched_override: Optional[Dict[str, Any]] = None,
+    runtime_vars_override: Optional[Dict[str, str]] = None,
+    receipt_templates_override: Optional[List[models.VoucherTemplate]] = None,
+    source_bills_override: Optional[List[Dict[str, Any]]] = None,
+    relation_cache_override: Optional[Dict[Any, Any]] = None,
+    trigger_condition_cache_override: Optional[Dict[str, Any]] = None,
+    subject_names_cache_override: Optional[Dict[str, str]] = None,
+    subject_type_cache_override: Optional[Dict[str, str]] = None,
 ) -> Optional[Dict[str, Any]]:
     from services.voucher_engine import evaluate_expression
     from utils.variable_parser import build_variable_map, resolve_variables
@@ -215,7 +224,7 @@ def _preview_voucher_for_bill_via_receipt_templates(
     if not bill.deal_log_id:
         return None
 
-    receipt_bill = (
+    receipt_bill = receipt_bill_override or (
         db.query(models.ReceiptBill)
         .options(joinedload(models.ReceiptBill.users))
         .filter(
@@ -227,14 +236,18 @@ def _preview_voucher_for_bill_via_receipt_templates(
     if not receipt_bill:
         return None
 
-    normalized_account_book_number = _main_attr("_decode_header_value")(x_account_book_number) or None
-    bill_ref = {"bill_id": int(bill.id), "community_id": int(bill.community_id)}
-    source_status_map = _main_attr("_get_bill_push_status_map")(
-        db,
-        [bill_ref],
-        account_book_number=normalized_account_book_number,
-    )
-    source_bills = [source_status_map[(int(bill.id), int(bill.community_id))]]
+    # 使用外部传入的推送状态，避免每个 bill 单独查 DB
+    if source_bills_override is not None:
+        source_bills = source_bills_override
+    else:
+        normalized_account_book_number = _main_attr("_decode_header_value")(x_account_book_number) or None
+        bill_ref = {"bill_id": int(bill.id), "community_id": int(bill.community_id)}
+        source_status_map = _main_attr("_get_bill_push_status_map")(
+            db,
+            [bill_ref],
+            account_book_number=normalized_account_book_number,
+        )
+        source_bills = [source_status_map[(int(bill.id), int(bill.community_id))]]
     source_bill_push_summary = _main_attr("_summarize_bill_push_statuses")(source_bills)
     push_conflicts = _main_attr("_find_bill_push_conflicts")(source_bills)
     push_blocked = len(push_conflicts) > 0
@@ -245,15 +258,20 @@ def _preview_voucher_for_bill_via_receipt_templates(
         )
         push_block_reason = f"Current bill already has voucher push records: {conflict_preview}"
 
-    receipt_data = _main_attr("_serialize_receipt_bill_model")(receipt_bill, db)
-    enriched_receipt = _main_attr("_enrich_receipt_bill_data")(receipt_data, receipt_bill=receipt_bill, db=db)
-    user_context = _main_attr("_build_preview_user_context")(
-        current_user,
-        x_account_book_id=x_account_book_id,
-        x_account_book_name=x_account_book_name,
-        x_account_book_number=x_account_book_number,
-    )
-    runtime_vars = build_variable_map(db, user_context=user_context)
+    enriched_receipt = receipt_enriched_override
+    if enriched_receipt is None:
+        receipt_data = _main_attr("_serialize_receipt_bill_model")(receipt_bill, db)
+        enriched_receipt = _main_attr("_enrich_receipt_bill_data")(receipt_data, receipt_bill=receipt_bill, db=db)
+
+    runtime_vars = runtime_vars_override
+    if runtime_vars is None:
+        user_context = _main_attr("_build_preview_user_context")(
+            current_user,
+            x_account_book_id=x_account_book_id,
+            x_account_book_name=x_account_book_name,
+            x_account_book_number=x_account_book_number,
+        )
+        runtime_vars = build_variable_map(db, user_context=user_context)
     scoped_relation_records = {"bills": [enriched_bill]}
 
     match_result = _main_attr("_match_receipt_templates")(
@@ -262,6 +280,9 @@ def _preview_voucher_for_bill_via_receipt_templates(
         runtime_vars=runtime_vars,
         db=db,
         scoped_relation_records=scoped_relation_records,
+        templates_override=receipt_templates_override,
+        relation_cache_override=relation_cache_override,
+        trigger_condition_cache_override=trigger_condition_cache_override,
     )
     matched_template = match_result["matched_template"]
     matched_selected_records = match_result["matched_selected_records"]
@@ -307,13 +328,13 @@ def _preview_voucher_for_bill_via_receipt_templates(
 
     accounting_entries = []
     kingdee_entries = []
-    subject_names_cache = {}
-    subject_type_cache = {}
+    subject_names_cache = subject_names_cache_override if subject_names_cache_override is not None else {}
+    subject_type_cache = subject_type_cache_override if subject_type_cache_override is not None else {}
     rule_relation_base_ctx = {
         "db": db,
         "root_record": receipt_bill,
         "receipt_bill": receipt_bill,
-        "cache": {},
+        "cache": relation_cache_override if relation_cache_override is not None else {},
     }
     if scoped_relation_records is not None:
         rule_relation_base_ctx["scoped_records"] = scoped_relation_records
@@ -802,6 +823,10 @@ def preview_voucher_for_receipt(
     current_user: models.User,
     db: Session,
     allowed_community_ids: List[int],
+    _templates_cache: Optional[List[models.VoucherTemplate]] = None,
+    _runtime_vars_cache: Optional[Dict[str, str]] = None,
+    _user_context_cache: Optional[Dict[str, str]] = None,
+    _trigger_condition_cache: Optional[Dict[str, Any]] = None,
 ):
     from services.voucher_engine import evaluate_expression
     from utils.variable_parser import build_variable_map, resolve_variables
@@ -840,6 +865,30 @@ def preview_voucher_for_receipt(
         push_block_reason = f"Related bills already have voucher push records: {conflict_preview}"
 
     if source_bills:
+        receipt_data_cached = _main_attr("_serialize_receipt_bill_model")(receipt_bill, db)
+        enriched_receipt_cached = _main_attr("_enrich_receipt_bill_data")(receipt_data_cached, receipt_bill=receipt_bill, db=db)
+        # 使用外部缓存或新建
+        if _user_context_cache is not None:
+            user_context_cached = _user_context_cache
+        else:
+            user_context_cached = _main_attr("_build_preview_user_context")(
+                current_user,
+                x_account_book_id=x_account_book_id,
+                x_account_book_name=x_account_book_name,
+                x_account_book_number=x_account_book_number,
+            )
+        runtime_vars_cached = _runtime_vars_cache if _runtime_vars_cache is not None else build_variable_map(db, user_context=user_context_cached)
+        if _templates_cache is not None:
+            receipt_templates_cached = _templates_cache
+        else:
+            receipt_templates_cached = db.query(models.VoucherTemplate).filter(
+                models.VoucherTemplate.active == True,
+                models.VoucherTemplate.source_type == "receipt_bills",
+            ).order_by(
+                models.VoucherTemplate.priority.asc(),
+                models.VoucherTemplate.template_id.asc(),
+            ).all()
+
         related_bills = (
             db.query(models.Bill)
             .filter(
@@ -850,9 +899,8 @@ def preview_voucher_for_receipt(
             .all()
         )
 
-        previews: List[Dict[str, Any]] = []
-        skipped_bills: List[Dict[str, Any]] = []
-
+        # 批量预加载所有 bill 的原始数据
+        all_bill_data_list: List[Dict[str, Any]] = []
         for related_bill in related_bills:
             bill_data = {}
             for col in models.Bill.__table__.columns:
@@ -866,8 +914,41 @@ def preview_voucher_for_receipt(
             for key, val in bill_data.items():
                 if isinstance(val, PyDecimal):
                     bill_data[key] = float(val)
+            all_bill_data_list.append(bill_data)
 
-            enriched_bill = _main_attr("mapping_enrich_source_data")("bills", bill_data, db=db)
+        # 批量预加载 KD 关联数据（House/Park/Resident/Project/Bank），一次替代 N*12 次查询
+        from services.voucher_engine import batch_preload_kd_cache, enrich_bill_data_cached
+        kd_cache = batch_preload_kd_cache(all_bill_data_list, db)
+
+        # 批量预加载所有 bill 的推送状态（一次 DB 查询替代 N 次）
+        all_bill_refs = [
+            {"bill_id": int(b.id), "community_id": int(b.community_id)}
+            for b in related_bills
+        ]
+        all_push_status_map = _main_attr("_get_bill_push_status_map")(
+            db,
+            all_bill_refs,
+            account_book_number=normalized_account_book_number,
+        )
+
+        previews: List[Dict[str, Any]] = []
+        skipped_bills: List[Dict[str, Any]] = []
+        shared_relation_cache: Dict[Any, Any] = {}
+        shared_condition_cache = _trigger_condition_cache if _trigger_condition_cache is not None else {}
+        shared_subject_names: Dict[str, str] = {}
+        shared_subject_types: Dict[str, str] = {}
+
+        for idx, related_bill in enumerate(related_bills):
+            bill_data = all_bill_data_list[idx]
+
+            # 使用批量缓存进行数据富化，避免 N+1 查询
+            enriched_bill = enrich_bill_data_cached(bill_data, kd_cache)
+
+            # 预加载当前 bill 的推送状态
+            bill_key = (int(related_bill.id), int(related_bill.community_id))
+            bill_push_entry = all_push_status_map.get(bill_key)
+            bill_source_bills = [bill_push_entry] if bill_push_entry else []
+
             result = _main_attr("_preview_voucher_for_bill_via_receipt_templates")(
                 bill=related_bill,
                 enriched_bill=enriched_bill,
@@ -876,6 +957,15 @@ def preview_voucher_for_receipt(
                 x_account_book_number=x_account_book_number,
                 current_user=current_user,
                 db=db,
+                receipt_bill_override=receipt_bill,
+                receipt_enriched_override=enriched_receipt_cached,
+                runtime_vars_override=runtime_vars_cached,
+                receipt_templates_override=receipt_templates_cached,
+                source_bills_override=bill_source_bills,
+                relation_cache_override=shared_relation_cache,
+                trigger_condition_cache_override=shared_condition_cache,
+                subject_names_cache_override=shared_subject_names,
+                subject_type_cache_override=shared_subject_types,
             )
 
             if not result or not result.get("matched"):
@@ -1003,19 +1093,25 @@ def preview_voucher_for_receipt(
     receipt_data = _main_attr("_serialize_receipt_bill_model")(receipt_bill, db)
     enriched = _main_attr("_enrich_receipt_bill_data")(receipt_data, receipt_bill=receipt_bill, db=db)
 
-    user_context = _main_attr("_build_preview_user_context")(
-        current_user,
-        x_account_book_id=x_account_book_id,
-        x_account_book_name=x_account_book_name,
-        x_account_book_number=x_account_book_number,
-    )
-    runtime_vars = build_variable_map(db, user_context=user_context)
+    # 使用外部缓存或新建
+    if _user_context_cache is not None:
+        user_context = _user_context_cache
+    else:
+        user_context = _main_attr("_build_preview_user_context")(
+            current_user,
+            x_account_book_id=x_account_book_id,
+            x_account_book_name=x_account_book_name,
+            x_account_book_number=x_account_book_number,
+        )
+    runtime_vars = _runtime_vars_cache if _runtime_vars_cache is not None else build_variable_map(db, user_context=user_context)
 
     match_result = _main_attr("_match_receipt_templates")(
         receipt_bill=receipt_bill,
         enriched=enriched,
         runtime_vars=runtime_vars,
         db=db,
+        templates_override=_templates_cache,
+        trigger_condition_cache_override=_trigger_condition_cache,
     )
     templates = match_result["templates"]
     matched_template = match_result["matched_template"]
@@ -1256,6 +1352,24 @@ def preview_voucher_for_receipts(
     previews: List[Dict[str, Any]] = []
     skipped_bills: List[Dict[str, Any]] = []
 
+    # 批量预加载共享数据：模板、用户上下文、全局变量（一次替代 N 次重复查询）
+    from utils.variable_parser import build_variable_map
+    batch_user_context = _main_attr("_build_preview_user_context")(
+        current_user,
+        x_account_book_id=x_account_book_id,
+        x_account_book_name=x_account_book_name,
+        x_account_book_number=x_account_book_number,
+    )
+    batch_runtime_vars = build_variable_map(db, user_context=batch_user_context)
+    batch_templates = db.query(models.VoucherTemplate).filter(
+        models.VoucherTemplate.active == True,
+        models.VoucherTemplate.source_type == "receipt_bills",
+    ).order_by(
+        models.VoucherTemplate.priority.asc(),
+        models.VoucherTemplate.template_id.asc(),
+    ).all()
+    batch_trigger_condition_cache: Dict[str, Any] = {}
+
     for ref in unique_refs:
         try:
             result = _main_attr("preview_voucher_for_receipt")(
@@ -1264,9 +1378,14 @@ def preview_voucher_for_receipts(
                 x_account_book_id=x_account_book_id,
                 x_account_book_name=x_account_book_name,
                 x_account_book_number=x_account_book_number,
+                allow_bill_fallback=False,
                 current_user=current_user,
                 db=db,
                 allowed_community_ids=allowed_community_ids,
+                _templates_cache=batch_templates,
+                _runtime_vars_cache=batch_runtime_vars,
+                _user_context_cache=batch_user_context,
+                _trigger_condition_cache=batch_trigger_condition_cache,
             )
             if not result.get("matched"):
                 skipped_bills.append({

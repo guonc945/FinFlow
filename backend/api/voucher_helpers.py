@@ -134,15 +134,26 @@ def _get_bill_push_status_map(
             models.BillVoucherPushRecord.account_book_number == normalized_book_number
         )
 
-    latest_rows = latest_query.order_by(
+    # NOTE:
+    # Previous implementation relied on DISTINCT with ordered rows to emulate
+    # "latest row per (bill_id, community_id)". That is efficient on PostgreSQL
+    # with DISTINCT ON, but can degrade badly on SQL Server.
+    # We keep SQL portable by ordering once, then picking the first row per key in Python.
+    ordered_rows = latest_query.order_by(
         models.BillVoucherPushRecord.bill_id.asc(),
         models.BillVoucherPushRecord.community_id.asc(),
         models.BillVoucherPushRecord.created_at.desc(),
         models.BillVoucherPushRecord.id.desc(),
-    ).distinct(
-        models.BillVoucherPushRecord.bill_id,
-        models.BillVoucherPushRecord.community_id,
     ).all()
+
+    seen_keys = set()
+    latest_rows = []
+    for row in ordered_rows:
+        key = (int(row.bill_id), int(row.community_id))
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        latest_rows.append(row)
 
     for row in latest_rows:
         key = (int(row.bill_id), int(row.community_id))

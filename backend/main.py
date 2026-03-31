@@ -2280,16 +2280,21 @@ def _match_receipt_templates(
     runtime_vars: Dict[str, str],
     db: Session,
     scoped_relation_records: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    templates_override: Optional[List[models.VoucherTemplate]] = None,
+    relation_cache_override: Optional[Dict[Any, Any]] = None,
+    trigger_condition_cache_override: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     import json as json_mod
 
-    templates = db.query(models.VoucherTemplate).filter(
-        models.VoucherTemplate.active == True,
-        models.VoucherTemplate.source_type == "receipt_bills",
-    ).order_by(
-        models.VoucherTemplate.priority.asc(),
-        models.VoucherTemplate.template_id.asc(),
-    ).all()
+    templates = templates_override
+    if templates is None:
+        templates = db.query(models.VoucherTemplate).filter(
+            models.VoucherTemplate.active == True,
+            models.VoucherTemplate.source_type == "receipt_bills",
+        ).order_by(
+            models.VoucherTemplate.priority.asc(),
+            models.VoucherTemplate.template_id.asc(),
+        ).all()
 
     matched_template = None
     matched_selected_records: Dict[str, Dict[str, Any]] = {}
@@ -2297,16 +2302,24 @@ def _match_receipt_templates(
 
     conditional_templates = [t for t in templates if t.trigger_condition]
     fallback_templates = [t for t in templates if not t.trigger_condition]
+    shared_relation_cache = relation_cache_override if relation_cache_override is not None else {}
 
     for tmpl in conditional_templates:
         try:
-            conditions = json_mod.loads(tmpl.trigger_condition)
+            cache_key = str(tmpl.template_id or "")
+            conditions: Any
+            if trigger_condition_cache_override is not None and cache_key in trigger_condition_cache_override:
+                conditions = trigger_condition_cache_override.get(cache_key)
+            else:
+                conditions = json_mod.loads(tmpl.trigger_condition)
+                if trigger_condition_cache_override is not None:
+                    trigger_condition_cache_override[cache_key] = conditions
             debug_logs = []
             relation_eval_ctx = {
                 "db": db,
                 "root_record": receipt_bill,
                 "receipt_bill": receipt_bill,
-                "cache": {},
+                "cache": shared_relation_cache,
                 "selected_records": {},
             }
             if scoped_relation_records is not None:
