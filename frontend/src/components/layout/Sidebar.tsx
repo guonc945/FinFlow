@@ -202,15 +202,6 @@ const Sidebar = () => {
                         { path: '/bank-accounts', label: '银行账户', icon: Landmark },
                     ],
                 },
-                {
-                    key: 'kingdee-vouchers',
-                    label: '凭证管理',
-                    icon: Layers,
-                    children: [
-                        { path: '/vouchers/templates', label: '凭证模板', icon: Layers },
-                        { path: '/vouchers/categories', label: '模板分类', icon: Tags },
-                    ],
-                },
             ],
         },
         {
@@ -226,10 +217,26 @@ const Sidebar = () => {
             label: '集成中心',
             icon: Network,
             children: [
+                {
+                    key: 'integration-connectors',
+                    label: '接口接入',
+                    icon: FileJson,
+                    children: [
+                        { path: '/integrations/credentials', label: '接口认证', icon: Settings },
+                        { path: '/integrations/apis', label: '接口管理', icon: FileJson },
+                    ],
+                },
+                {
+                    key: 'integration-vouchers',
+                    label: '财务凭证',
+                    icon: Layers,
+                    children: [
+                        { path: '/vouchers/templates', label: '凭证模板', icon: Layers },
+                        { path: '/vouchers/categories', label: '模板分类', icon: Tags },
+                    ],
+                },
                 { path: '/integrations/reporting', label: '报表设计', icon: BarChart3 },
                 { path: '/integrations/sync-schedules', label: '同步计划', icon: CalendarClock },
-                { path: '/integrations/credentials', label: '凭证配置', icon: Settings },
-                { path: '/integrations/apis', label: '接口管理', icon: FileJson },
             ],
         },
         { path: '/report-center', label: '报表中心', icon: BarChart3 },

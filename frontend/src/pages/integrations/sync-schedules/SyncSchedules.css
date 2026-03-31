@@ -580,6 +580,57 @@
     line-height: 1.6;
 }
 
+.target-tab-nav {
+    display: flex;
+    gap: 10px;
+    margin-top: 14px;
+    margin-bottom: 14px;
+}
+
+.target-tab {
+    border: 1px solid rgba(203, 213, 225, 0.85);
+    background: #fff;
+    color: #334155;
+    border-radius: 12px;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.target-tab span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    height: 22px;
+    padding: 0 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    background: #f1f5f9;
+    color: #475569;
+}
+
+.target-tab.active {
+    border-color: rgba(29, 78, 216, 0.4);
+    background: #eff6ff;
+    color: #1e40af;
+}
+
+.target-tab.active span {
+    background: rgba(29, 78, 216, 0.14);
+    color: #1d4ed8;
+}
+
+.target-tab-content {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
 .target-columns {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -611,6 +662,12 @@
     align-items: center;
     gap: 10px;
     color: #334155;
+}
+
+.target-empty {
+    color: #64748b;
+    font-size: 13px;
+    padding: 8px 0;
 }
 
 .weekday-grid {
@@ -645,6 +702,82 @@
 .community-panel select {
     min-height: 180px;
     margin-top: 14px;
+}
+
+.community-toolbar {
+    display: flex;
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.community-action {
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 10px;
+    border: 1px solid rgba(203, 213, 225, 0.85);
+    background: #fff;
+    color: #334155;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.community-action:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+.community-list {
+    margin-top: 12px;
+    max-height: 220px;
+    overflow: auto;
+    border: 1px solid rgba(203, 213, 225, 0.85);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.96);
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.community-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    color: #334155;
+    border: 1px solid transparent;
+    cursor: pointer;
+}
+
+.community-checkbox:hover {
+    background: #f8fafc;
+}
+
+.community-checkbox.checked {
+    border-color: rgba(29, 78, 216, 0.35);
+    background: #eff6ff;
+}
+
+.community-checkbox input {
+    margin: 0;
+}
+
+.community-checkbox small {
+    color: #94a3b8;
+    margin-left: auto;
+}
+
+.community-checkbox.disabled {
+    cursor: not-allowed;
+    opacity: 0.65;
+}
+
+.community-empty {
+    padding: 12px;
+    color: #64748b;
+    text-align: center;
 }
 
 .schedule-form-footer {

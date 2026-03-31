@@ -123,6 +123,7 @@ const SyncSchedulesPage = () => {
     const [saving, setSaving] = useState(false);
     const [formOpen, setFormOpen] = useState(false);
     const [editingSchedule, setEditingSchedule] = useState<SyncSchedule | null>(null);
+    const [activeTargetTab, setActiveTargetTab] = useState<'mark' | 'kingdee'>('mark');
     const [formState, setFormState] = useState<ScheduleFormState>(createEmptyForm('Asia/Shanghai'));
     const [confirmState, setConfirmState] = useState<{
         open: boolean;
@@ -160,6 +161,16 @@ const SyncSchedulesPage = () => {
 
     const requiresCommunitySelection = useMemo(
         () => formState.target_codes.some((code) => targetMap.get(code)?.requires_community_ids),
+        [formState.target_codes, targetMap]
+    );
+
+    const markSelectedCount = useMemo(
+        () => formState.target_codes.filter((code) => targetMap.get(code)?.system === 'mark').length,
+        [formState.target_codes, targetMap]
+    );
+
+    const kingdeeSelectedCount = useMemo(
+        () => formState.target_codes.filter((code) => targetMap.get(code)?.system === 'kingdee').length,
         [formState.target_codes, targetMap]
     );
 
@@ -252,12 +263,20 @@ const SyncSchedulesPage = () => {
 
     const openCreateModal = () => {
         setEditingSchedule(null);
+        setActiveTargetTab('mark');
         setFormState(createEmptyForm(meta?.default_timezone || 'Asia/Shanghai'));
         setFormOpen(true);
     };
 
     const openEditModal = (schedule: SyncSchedule) => {
         setEditingSchedule(schedule);
+        const hasMarkTarget = schedule.target_codes.some((code) => targetMap.get(code)?.system === 'mark');
+        const hasKingdeeTarget = schedule.target_codes.some((code) => targetMap.get(code)?.system === 'kingdee');
+        if (hasMarkTarget || !hasKingdeeTarget) {
+            setActiveTargetTab('mark');
+        } else {
+            setActiveTargetTab('kingdee');
+        }
         setFormState({
             name: schedule.name,
             description: schedule.description || '',
@@ -307,11 +326,32 @@ const SyncSchedulesPage = () => {
         });
     };
 
-    const handleCommunitySelect = (event: ChangeEvent<HTMLSelectElement>) => {
-        const values = Array.from(event.target.selectedOptions)
-            .map((option) => Number(option.value))
+    const toggleCommunity = (communityId: number) => {
+        if (!requiresCommunitySelection) return;
+        setFormState((prev) => {
+            const checked = prev.community_ids.includes(communityId);
+            return {
+                ...prev,
+                community_ids: checked
+                    ? prev.community_ids.filter((id) => id !== communityId)
+                    : [...prev.community_ids, communityId],
+            };
+        });
+    };
+
+    const handleSelectAllCommunities = () => {
+        if (!requiresCommunitySelection) return;
+        const allCommunityIds = projects
+            .map((project) => Number(project.proj_id))
             .filter((value) => !Number.isNaN(value));
-        setFormState((prev) => ({ ...prev, community_ids: values }));
+        setFormState((prev) => ({
+            ...prev,
+            community_ids: Array.from(new Set(allCommunityIds)),
+        }));
+    };
+
+    const handleClearCommunities = () => {
+        setFormState((prev) => ({ ...prev, community_ids: [] }));
     };
 
     const handleAccountBookChange = (event: ChangeEvent<HTMLSelectElement>) => {
@@ -733,40 +773,124 @@ const SyncSchedulesPage = () => {
                                     <h3>同步目标</h3>
                                     <p>可跨马克与金蝶组合配置，同一计划会并行分发到多个独立进程执行。</p>
                                 </div>
-                                <div className="target-columns">
-                                    <div className="target-column">
-                                        <div className="target-column-title">
-                                            <Landmark size={16} />
-                                            马克业务
-                                        </div>
-                                        {groupedTargets.mark.map((target) => (
-                                            <label key={target.code} className="target-checkbox">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={formState.target_codes.includes(target.code)}
-                                                    onChange={() => toggleTarget(target.code)}
-                                                />
-                                                <span>{target.label}</span>
-                                            </label>
-                                        ))}
-                                    </div>
-                                    <div className="target-column">
-                                        <div className="target-column-title">
-                                            <Landmark size={16} />
-                                            金蝶财务
-                                        </div>
-                                        {groupedTargets.kingdee.map((target) => (
-                                            <label key={target.code} className="target-checkbox">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={formState.target_codes.includes(target.code)}
-                                                    onChange={() => toggleTarget(target.code)}
-                                                />
-                                                <span>{target.label}</span>
-                                            </label>
-                                        ))}
-                                    </div>
+                                <div className="target-tab-nav">
+                                    <button
+                                        type="button"
+                                        className={`target-tab ${activeTargetTab === 'mark' ? 'active' : ''}`}
+                                        onClick={() => setActiveTargetTab('mark')}
+                                    >
+                                        马克业务
+                                        <span>{markSelectedCount}</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={`target-tab ${activeTargetTab === 'kingdee' ? 'active' : ''}`}
+                                        onClick={() => setActiveTargetTab('kingdee')}
+                                    >
+                                        金蝶财务
+                                        <span>{kingdeeSelectedCount}</span>
+                                    </button>
                                 </div>
+
+                                {activeTargetTab === 'mark' ? (
+                                    <div className="target-tab-content">
+                                        <div className="target-column">
+                                            <div className="target-column-title">
+                                                <Landmark size={16} />
+                                                马克业务
+                                            </div>
+                                            {groupedTargets.mark.length > 0 ? (
+                                                groupedTargets.mark.map((target) => (
+                                                    <label key={target.code} className="target-checkbox">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={formState.target_codes.includes(target.code)}
+                                                            onChange={() => toggleTarget(target.code)}
+                                                        />
+                                                        <span>{target.label}</span>
+                                                    </label>
+                                                ))
+                                            ) : (
+                                                <p className="target-empty">暂无可用的马克业务同步目标</p>
+                                            )}
+                                        </div>
+
+                                        <div className={`community-panel ${requiresCommunitySelection ? '' : 'disabled'}`}>
+                                            <div className="target-group-header">
+                                                <h3>园区范围</h3>
+                                                <p>仅对马克同步目标生效，可多选；未选择则无法保存涉及马克数据的计划。</p>
+                                            </div>
+                                            <div className="community-toolbar">
+                                                <button
+                                                    type="button"
+                                                    className="community-action"
+                                                    onClick={handleSelectAllCommunities}
+                                                    disabled={!requiresCommunitySelection || projects.length === 0}
+                                                >
+                                                    全选
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className="community-action"
+                                                    onClick={handleClearCommunities}
+                                                    disabled={!requiresCommunitySelection || formState.community_ids.length === 0}
+                                                >
+                                                    清空
+                                                </button>
+                                            </div>
+                                            <div className="community-list">
+                                                {projects.length > 0 ? (
+                                                    projects.map((project) => {
+                                                        const projectId = Number(project.proj_id);
+                                                        if (Number.isNaN(projectId)) return null;
+                                                        const checked = formState.community_ids.includes(projectId);
+                                                        return (
+                                                            <label
+                                                                key={project.proj_id}
+                                                                className={`community-checkbox ${checked ? 'checked' : ''} ${!requiresCommunitySelection ? 'disabled' : ''}`}
+                                                            >
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={checked}
+                                                                    onChange={() => toggleCommunity(projectId)}
+                                                                    disabled={!requiresCommunitySelection}
+                                                                />
+                                                                <span>{project.proj_name}</span>
+                                                                <small>{project.proj_id}</small>
+                                                            </label>
+                                                        );
+                                                    })
+                                                ) : (
+                                                    <div className="community-empty">暂无园区数据</div>
+                                                )}
+                                            </div>
+                                            <small>已选择 {formState.community_ids.length} 个园区</small>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="target-tab-content">
+                                        <div className="target-column">
+                                            <div className="target-column-title">
+                                                <Landmark size={16} />
+                                                金蝶财务
+                                            </div>
+                                            {groupedTargets.kingdee.length > 0 ? (
+                                                groupedTargets.kingdee.map((target) => (
+                                                    <label key={target.code} className="target-checkbox">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={formState.target_codes.includes(target.code)}
+                                                            onChange={() => toggleTarget(target.code)}
+                                                        />
+                                                        <span>{target.label}</span>
+                                                    </label>
+                                                ))
+                                            ) : (
+                                                <p className="target-empty">暂无可用的金蝶财务同步目标</p>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
 
                             <div className="form-grid two-columns">
@@ -850,26 +974,6 @@ const SyncSchedulesPage = () => {
                                         <span>{formState.enabled ? '启用' : '停用'}</span>
                                     </button>
                                 </label>
-                            </div>
-
-                            <div className={`community-panel ${requiresCommunitySelection ? '' : 'disabled'}`}>
-                                <div className="target-group-header">
-                                    <h3>园区范围</h3>
-                                    <p>仅对马克同步目标生效，可多选；未选择则无法保存涉及马克数据的计划。</p>
-                                </div>
-                                <select
-                                    multiple
-                                    value={formState.community_ids.map(String)}
-                                    onChange={handleCommunitySelect}
-                                    disabled={!requiresCommunitySelection}
-                                >
-                                    {projects.map((project) => (
-                                        <option key={project.proj_id} value={project.proj_id}>
-                                            {project.proj_name} ({project.proj_id})
-                                        </option>
-                                    ))}
-                                </select>
-                                <small>已选择 {formState.community_ids.length} 个园区</small>
                             </div>
 
                             <div className="schedule-form-footer">
