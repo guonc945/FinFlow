@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session, joinedload, selectinload
-from sqlalchemy import and_, desc, func, extract, or_, inspect, text, cast, String
+from sqlalchemy import and_, desc, func, extract, or_, cast, String
 from sqlalchemy.exc import IntegrityError
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -64,7 +64,9 @@ from voucher_field_mapping import (
     enrich_source_data as mapping_enrich_source_data,
     prefix_source_fields as mapping_prefix_source_fields,
 )
+from api import bootstrap as bootstrap_module
 from api import frontend as frontend_module
+from api import voucher_common_utils as voucher_common_utils_module
 from api import voucher_preview_handlers as voucher_preview_handlers_module
 from api import voucher_push_handlers as voucher_push_handlers_module
 from api import voucher_template_handlers as voucher_template_handlers_module
@@ -98,30 +100,6 @@ if not logger.handlers:
 
 def _is_mssql() -> bool:
     return database.engine.dialect.name == "mssql"
-
-
-def _index_names(table_name: str) -> set[str]:
-    inspector_obj = inspect(database.engine)
-    try:
-        return {idx["name"] for idx in inspector_obj.get_indexes(table_name)}
-    except Exception:
-        return set()
-
-
-def _create_index_if_missing(conn, table_name: str, index_name: str, columns_sql: str) -> None:
-    if index_name in _index_names(table_name):
-        return
-    conn.execute(text(f"CREATE INDEX {index_name} ON {table_name} ({columns_sql})"))
-
-
-def _drop_index_if_exists(conn, table_name: str, index_name: str) -> None:
-    if index_name not in _index_names(table_name):
-        return
-    if _is_mssql():
-        conn.execute(text(f"DROP INDEX {index_name} ON {table_name}"))
-    else:
-        conn.execute(text(f"DROP INDEX IF EXISTS {index_name}"))
-
 
 def _upsert_rows(
     db_session: Session,
@@ -160,248 +138,10 @@ def _upsert_rows(
 
     return processed
 
-# Create tables
-models.Base.metadata.create_all(bind=database.engine)
+# Create tables and apply incremental schema/index bootstrap.
+bootstrap_module.initialize_database()
 
 sync_schedule_service = SyncScheduleService(database.SessionLocal, database.engine)
-
-
-def _ensure_voucher_columns():
-    inspector = inspect(database.engine)
-    tables = inspector.get_table_names()
-    if "voucher_template" not in tables:
-        return
-
-    existing_cols = {c["name"] for c in inspector.get_columns("voucher_template")}
-    with database.engine.begin() as conn:
-        if "priority" not in existing_cols:
-            conn.execute(text("ALTER TABLE voucher_template ADD COLUMN priority INTEGER DEFAULT 100"))
-        if "bizdate_expr" not in existing_cols:
-            conn.execute(text("ALTER TABLE voucher_template ADD COLUMN bizdate_expr VARCHAR(100) DEFAULT '{CURRENT_DATE}'"))
-        if "bookeddate_expr" not in existing_cols:
-            conn.execute(text("ALTER TABLE voucher_template ADD COLUMN bookeddate_expr VARCHAR(100) DEFAULT '{CURRENT_DATE}'"))
-        if "source_module" not in existing_cols:
-            conn.execute(text("ALTER TABLE voucher_template ADD COLUMN source_module VARCHAR(50)"))
-        if "category_id" not in existing_cols:
-            conn.execute(text("ALTER TABLE voucher_template ADD COLUMN category_id INTEGER"))
-
-
-_ensure_voucher_columns()
-
-
-def _ensure_house_columns():
-    inspector = inspect(database.engine)
-    tables = inspector.get_table_names()
-    if "houses" not in tables:
-        return
-
-    existing_cols = {c["name"] for c in inspector.get_columns("houses")}
-
-    # 注意：这里只做「增量补列」，不做删改列类型，避免破坏存量数据
-    with database.engine.begin() as conn:
-        if "kingdee_house_id" not in existing_cols:
-            conn.execute(text("ALTER TABLE houses ADD COLUMN kingdee_house_id VARCHAR(50)"))
-
-        if "building_id" not in existing_cols:
-            conn.execute(text("ALTER TABLE houses ADD COLUMN building_id BIGINT"))
-        if "unit_id" not in existing_cols:
-            conn.execute(text("ALTER TABLE houses ADD COLUMN unit_id BIGINT"))
-        if "unit_name" not in existing_cols:
-            conn.execute(text("ALTER TABLE houses ADD COLUMN unit_name VARCHAR(255)"))
-        if "layer" not in existing_cols:
-            conn.execute(text("ALTER TABLE houses ADD COLUMN layer INTEGER"))
-        if "building_size" not in existing_cols:
-            conn.execute(text("ALTER TABLE houses ADD COLUMN building_size DECIMAL(10,2)"))
-        if "usable_size" not in existing_cols:
-            conn.execute(text("ALTER TABLE houses ADD COLUMN usable_size DECIMAL(10,2)"))
-
-        if "user_num" not in existing_cols:
-            conn.execute(text("ALTER TABLE houses ADD COLUMN user_num INTEGER"))
-        if "charge_num" not in existing_cols:
-            conn.execute(text("ALTER TABLE houses ADD COLUMN charge_num INTEGER"))
-        if "park_num" not in existing_cols:
-            conn.execute(text("ALTER TABLE houses ADD COLUMN park_num INTEGER"))
-        if "car_num" not in existing_cols:
-            conn.execute(text("ALTER TABLE houses ADD COLUMN car_num INTEGER"))
-
-        if "combina_name" not in existing_cols:
-            conn.execute(text("ALTER TABLE houses ADD COLUMN combina_name VARCHAR(255)"))
-        if "create_uid" not in existing_cols:
-            conn.execute(text("ALTER TABLE houses ADD COLUMN create_uid BIGINT"))
-        if "disable" not in existing_cols:
-            if _is_mssql():
-                conn.execute(text("ALTER TABLE houses ADD disable BIT DEFAULT 0"))
-            else:
-                conn.execute(text("ALTER TABLE houses ADD COLUMN disable BOOLEAN DEFAULT FALSE"))
-
-        if "expand" not in existing_cols:
-            conn.execute(text("ALTER TABLE houses ADD COLUMN expand TEXT"))
-        if "expand_info" not in existing_cols:
-            conn.execute(text("ALTER TABLE houses ADD COLUMN expand_info TEXT"))
-        if "tag_list" not in existing_cols:
-            conn.execute(text("ALTER TABLE houses ADD COLUMN tag_list TEXT"))
-        if "attachment_list" not in existing_cols:
-            conn.execute(text("ALTER TABLE houses ADD COLUMN attachment_list TEXT"))
-        if "house_type_name" not in existing_cols:
-            conn.execute(text("ALTER TABLE houses ADD COLUMN house_type_name VARCHAR(100)"))
-        if "house_status_name" not in existing_cols:
-            conn.execute(text("ALTER TABLE houses ADD COLUMN house_status_name VARCHAR(100)"))
-
-
-_ensure_house_columns()
-
-
-def _ensure_park_columns():
-    inspector = inspect(database.engine)
-    tables = inspector.get_table_names()
-    if "parks" not in tables:
-        return
-
-    existing_cols = {c["name"] for c in inspector.get_columns("parks")}
-    with database.engine.begin() as conn:
-        if "house_id" not in existing_cols:
-            conn.execute(text("ALTER TABLE parks ADD COLUMN house_id VARCHAR(50)"))
-        if "house_fk" not in existing_cols:
-            conn.execute(text("ALTER TABLE parks ADD COLUMN house_fk INTEGER"))
-
-
-_ensure_park_columns()
-
-
-def _ensure_bill_columns():
-    inspector = inspect(database.engine)
-    tables = inspector.get_table_names()
-    if "bills" not in tables:
-        return
-
-    columns_info = {c["name"]: c for c in inspector.get_columns("bills")}
-    existing_cols = set(columns_info.keys())
-    added_receive_date = False
-
-    with database.engine.begin() as conn:
-        if "receive_date" not in existing_cols:
-            if _is_mssql():
-                conn.execute(text("ALTER TABLE bills ADD receive_date DATETIME2 NULL"))
-            else:
-                conn.execute(text("ALTER TABLE bills ADD COLUMN receive_date TIMESTAMP"))
-            added_receive_date = True
-        elif _is_mssql():
-            receive_type = str(columns_info["receive_date"].get("type", "")).upper()
-            if receive_type.startswith("DATE") and "TIME" not in receive_type:
-                conn.execute(text("ALTER TABLE bills ALTER COLUMN receive_date DATETIME2 NULL"))
-
-        if "bill_month" in existing_cols and _is_mssql():
-            bill_month_type = str(columns_info["bill_month"].get("type", "")).upper()
-            if "DATETIME" in bill_month_type or bill_month_type.startswith("TIMESTAMP"):
-                conn.execute(text("ALTER TABLE bills ALTER COLUMN bill_month DATE NULL"))
-
-        # Keep bigint-width fields consistent with PostgreSQL to avoid 32-bit truncation risk.
-        if _is_mssql():
-            bigint_cols = ["start_time", "end_time", "pay_time", "deal_log_id", "create_time"]
-            for col_name in bigint_cols:
-                if col_name not in existing_cols:
-                    continue
-                col_type = str(columns_info[col_name].get("type", "")).upper()
-                if "BIGINT" in col_type:
-                    continue
-                conn.execute(text(f"ALTER TABLE bills ALTER COLUMN [{col_name}] BIGINT NULL"))
-
-        # Backfill receive_date from pay_time (unix timestamp seconds)
-        if added_receive_date or "receive_date" in existing_cols:
-            rows = conn.execute(text("""
-                SELECT id, community_id, pay_time
-                FROM bills
-                WHERE receive_date IS NULL
-                  AND pay_time IS NOT NULL
-                  AND pay_time > 0
-            """)).fetchall()
-            for row in rows:
-                try:
-                    dt = datetime.fromtimestamp(int(row.pay_time))
-                except Exception:
-                    continue
-                conn.execute(
-                    text("UPDATE bills SET receive_date = :d WHERE id = :id AND community_id = :cid"),
-                    {"d": dt, "id": row.id, "cid": row.community_id},
-                )
-
-
-_ensure_bill_columns()
-
-
-def _ensure_charge_and_project_columns():
-    inspector = inspect(database.engine)
-    tables = set(inspector.get_table_names())
-
-    with database.engine.begin() as conn:
-        if "charge_items" in tables:
-            charge_cols = {c["name"] for c in inspector.get_columns("charge_items")}
-            if "updated_at" not in charge_cols:
-                if _is_mssql():
-                    conn.execute(text("ALTER TABLE charge_items ADD updated_at DATETIME2 NULL"))
-                else:
-                    conn.execute(text("ALTER TABLE charge_items ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
-
-        if "projects_lists" in tables:
-            project_cols = {c["name"] for c in inspector.get_columns("projects_lists")}
-            if "updated_at" not in project_cols:
-                if _is_mssql():
-                    conn.execute(text("ALTER TABLE projects_lists ADD updated_at DATETIME2 NULL"))
-                else:
-                    conn.execute(text("ALTER TABLE projects_lists ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
-
-
-_ensure_charge_and_project_columns()
-
-
-def _ensure_deposit_record_columns():
-    inspector = inspect(database.engine)
-    tables = inspector.get_table_names()
-    if "deposit_records" not in tables:
-        return
-
-    existing_cols = {c["name"] for c in inspector.get_columns("deposit_records")}
-    with database.engine.begin() as conn:
-        if "payment_id" not in existing_cols:
-            conn.execute(text("ALTER TABLE deposit_records ADD COLUMN payment_id BIGINT"))
-        _create_index_if_missing(conn, "deposit_records", "ix_deposit_records_payment_id", "payment_id")
-
-
-_ensure_deposit_record_columns()
-
-
-def _ensure_prepayment_record_columns():
-    inspector = inspect(database.engine)
-    tables = inspector.get_table_names()
-    if "prepayment_records" not in tables:
-        return
-
-    existing_cols = {c["name"] for c in inspector.get_columns("prepayment_records")}
-    with database.engine.begin() as conn:
-        if "payment_id" not in existing_cols:
-            conn.execute(text("ALTER TABLE prepayment_records ADD COLUMN payment_id BIGINT"))
-        _create_index_if_missing(conn, "prepayment_records", "ix_prepayment_records_payment_id", "payment_id")
-
-
-_ensure_prepayment_record_columns()
-
-
-def _ensure_user_email_index():
-    inspector = inspect(database.engine)
-    tables = inspector.get_table_names()
-    if "users" not in tables:
-        return
-
-    indexes = {idx["name"]: idx for idx in inspector.get_indexes("users")}
-    email_index = indexes.get("ix_users_email")
-
-    with database.engine.begin() as conn:
-        if email_index and email_index.get("unique"):
-            _drop_index_if_exists(conn, "users", "ix_users_email")
-            _create_index_if_missing(conn, "users", "ix_users_email", "email")
-
-
-_ensure_user_email_index()
 
 BILL_VOUCHER_PUSH_STATUS_LABELS = {
     "not_pushed": "未推送",
@@ -1154,6 +894,13 @@ app.include_router(voucher_templates_router_module.router)
 
 build_template_category_path_map = org_tpl_router_module.build_template_category_path_map
 _normalize_template_for_response = voucher_template_handlers_module._normalize_template_for_response
+_build_allowed_placeholders = voucher_common_utils_module._build_allowed_placeholders
+_extract_required_check_dimensions = voucher_common_utils_module._extract_required_check_dimensions
+_validate_unknown_placeholders = voucher_common_utils_module._validate_unknown_placeholders
+_validate_unknown_functions = voucher_common_utils_module._validate_unknown_functions
+_validate_dimension_mapping_json = voucher_common_utils_module._validate_dimension_mapping_json
+_build_allowed_source_fields_for_type = voucher_common_utils_module._build_allowed_source_fields_for_type
+_normalize_relation_group = voucher_common_utils_module._normalize_relation_group
 _validate_trigger_condition = voucher_template_handlers_module._validate_trigger_condition
 _validate_voucher_template_payload = voucher_template_handlers_module._validate_voucher_template_payload
 get_voucher_templates = voucher_template_handlers_module.get_voucher_templates
@@ -2391,190 +2138,6 @@ def get_voucher_source_modules():
     return {
         "modules": build_source_modules_payload(MODULE_REGISTRY, SOURCE_REGISTRY),
         "relations": build_relation_payload(RELATION_REGISTRY),
-    }
-
-
-def _build_allowed_placeholders(source_type: Optional[str], source_module: Optional[str], db: Session) -> Set[str]:
-    from utils.variable_parser import build_variable_map
-
-    allowed = set()
-    try:
-        allowed.update(build_variable_map(db).keys())
-    except Exception:
-        allowed.update(v.key for v in db.query(models.GlobalVariable).all())
-
-    # 鐢ㄦ埛涓婁笅鏂囧彉閲忥紙杩愯鏃剁敱褰撳墠鐧诲綍鐢ㄦ埛鍔ㄦ€佹敞鍏ワ紝鏍￠獙闃舵闇€棰勫厛鏀捐锛?
-    allowed.update({
-        "CURRENT_ACCOUNT_BOOK_NUMBER",
-        "CURRENT_ACCOUNT_BOOK_NAME",
-        "CURRENT_USER_REALNAME",
-        "CURRENT_USERNAME",
-        "CURRENT_USER_ID",
-        "CURRENT_ORG_ID",
-        "CURRENT_ORG_NAME",
-    })
-
-    normalized_source = (source_type or "").strip().lower()
-    normalized_module = (source_module or "").strip().lower()
-
-    source_meta = _get_source_meta(normalized_source) if normalized_source else None
-    module_prefix = normalized_module or (source_meta.module_id if source_meta else "marki")
-
-    source_types: Set[str] = set()
-    if module_prefix:
-        source_types.update(_get_module_source_types(module_prefix))
-
-    if normalized_source:
-        source_types.add(normalized_source)
-    else:
-        source_types.add("bills")
-
-    for current_source in sorted(source_types):
-        source_fields = _build_source_fields(current_source)
-        if not source_fields:
-            continue
-
-        allowed.update(source_fields)
-        allowed.update({f"{current_source}.{name}" for name in source_fields})
-        if module_prefix:
-            allowed.update({f"{module_prefix}.{current_source}.{name}" for name in source_fields})
-
-        registered_meta = _get_source_meta(current_source)
-        if registered_meta and registered_meta.module_id == "marki" and module_prefix != "marki":
-            allowed.update({f"marki.{current_source}.{name}" for name in source_fields})
-    return allowed
-
-
-def _extract_required_check_dimensions(subject: Optional[models.AccountingSubject]) -> Set[str]:
-    if not subject or not subject.check_items:
-        return set()
-    try:
-        check_items = json.loads(subject.check_items)
-    except (TypeError, json.JSONDecodeError):
-        return set()
-    if not isinstance(check_items, list):
-        return set()
-
-    required_dims = set()
-    for item in check_items:
-        if not isinstance(item, dict):
-            continue
-        dim_name = str(item.get("asstactitem_name") or item.get("asstactitem_number") or "").strip()
-        if dim_name:
-            required_dims.add(dim_name)
-    return required_dims
-
-
-def _validate_unknown_placeholders(expr: Any, field_path: str, allowed_placeholders: Set[str], errors: List[str]) -> None:
-    unknown = sorted(_extract_placeholders(expr) - allowed_placeholders)
-    if unknown:
-        errors.append(f"{field_path} contains unknown placeholders: {_format_placeholders(unknown)}")
-
-
-def _validate_unknown_functions(expr: Any, field_path: str, errors: List[str]) -> None:
-    allowed_functions = set(get_public_expression_function_names())
-    unknown = sorted({name for name in extract_expression_function_names(expr) if name not in allowed_functions})
-    if unknown:
-        errors.append(f"{field_path} contains unknown functions: {', '.join(unknown)}")
-
-
-def _validate_dimension_mapping_json(
-    raw_value: Any,
-    field_path: str,
-    allowed_placeholders: Set[str],
-    errors: List[str],
-) -> Dict[str, Dict[str, str]]:
-    if raw_value in (None, ""):
-        return {}
-
-    mapping_obj: Any = raw_value
-    if isinstance(raw_value, str):
-        try:
-            mapping_obj = json.loads(raw_value)
-        except json.JSONDecodeError as exc:
-            errors.append(f"{field_path} must be a valid JSON object: {exc}")
-            return {}
-
-    if not isinstance(mapping_obj, dict):
-        errors.append(f"{field_path} must be a JSON object")
-        return {}
-
-    normalized_mapping: Dict[str, Dict[str, str]] = {}
-    for dim_key, dim_cfg in mapping_obj.items():
-        dim_name = str(dim_key).strip()
-        if not dim_name:
-            errors.append(f"{field_path} has an empty dimension name")
-            continue
-
-        if not isinstance(dim_cfg, dict):
-            errors.append(f"{field_path}.{dim_name} must be a JSON object")
-            continue
-
-        if not dim_cfg:
-            errors.append(f"{field_path}.{dim_name} must have at least one property")
-            continue
-
-        normalized_mapping[dim_name] = {}
-        for prop_key, expr in dim_cfg.items():
-            prop_name = str(prop_key).strip()
-            if not prop_name:
-                errors.append(f"{field_path}.{dim_name} has an empty property name")
-                continue
-
-            expr_text = "" if expr is None else str(expr)
-            normalized_mapping[dim_name][prop_name] = expr_text
-            _validate_unknown_placeholders(
-                expr_text,
-                f"{field_path}.{dim_name}.{prop_name}",
-                allowed_placeholders,
-                errors,
-            )
-            _validate_unknown_functions(
-                expr_text,
-                f"{field_path}.{dim_name}.{prop_name}",
-                errors,
-            )
-
-    return normalized_mapping
-
-
-def _build_allowed_source_fields_for_type(source_type: Optional[str], module_prefix: str = "marki") -> Set[str]:
-    normalized_source = (source_type or "").strip().lower()
-    if not normalized_source:
-        normalized_source = "bills"
-
-    base_fields = _build_source_fields(normalized_source)
-    allowed_fields = set(base_fields)
-    allowed_fields.update({f"{normalized_source}.{name}" for name in base_fields})
-    allowed_fields.update({f"{module_prefix}.{normalized_source}.{name}" for name in base_fields})
-    if module_prefix != "marki":
-        allowed_fields.update({f"marki.{normalized_source}.{name}" for name in base_fields})
-    return allowed_fields
-
-
-def _normalize_relation_group(node: Dict[str, Any]) -> Dict[str, Any]:
-    children = node.get("children")
-    if isinstance(children, list):
-        return {
-            "logic": str(node.get("logic", "AND")).upper(),
-            "children": children,
-        }
-
-    where = node.get("where")
-    if isinstance(where, dict):
-        if str(where.get("type", "group")) == "group":
-            return {
-                "logic": str(where.get("logic", "AND")).upper(),
-                "children": where.get("children", []),
-            }
-        return {
-            "logic": "AND",
-            "children": [where],
-        }
-
-    return {
-        "logic": str(node.get("logic", "AND")).upper(),
-        "children": [],
     }
 
 
