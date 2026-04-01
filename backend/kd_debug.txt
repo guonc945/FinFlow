@@ -1,6 +1,0 @@
-house_id=2804933
-house_name=9-1-901
-community_id=10956
-kd_id=2268216241745302528
-kd_number=未来森林A区9-1-901
-kd_name=9-1-901周艳波

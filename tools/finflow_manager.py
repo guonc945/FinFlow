@@ -18,6 +18,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 import http.client
+import tkinter.scrolledtext as scrolledtext
 
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
@@ -199,6 +200,8 @@ DEFAULT_STATE = {
     "release_package_path": "",
     "backup_dir": str(BACKUP_DIR),
     "sqlcmd_path": "sqlcmd",
+    "git_repo_url": "",
+    "git_branch": "main",
 }
 
 
@@ -906,7 +909,22 @@ class FinFlowManagerApp:
         self.build_logs_tab(logs_frame)
 
     def build_status_tab(self, parent: ttk.Frame) -> None:
-        summary = ttk.LabelFrame(parent, text="当前状态", padding=16)
+        canvas = tk.Canvas(parent, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        summary = ttk.LabelFrame(scrollable_frame, text="当前状态", padding=16)
         summary.pack(fill="x", padx=10, pady=10)
 
         status_items = {
@@ -940,7 +958,7 @@ class FinFlowManagerApp:
             self.status_vars[key] = var
             row += 1
 
-        actions = ttk.LabelFrame(parent, text="服务操作", padding=16)
+        actions = ttk.LabelFrame(scrollable_frame, text="服务操作", padding=16)
         actions.pack(fill="x", padx=10, pady=10)
 
         ttk.Button(actions, text="启动后端", command=self.handle_start_backend).grid(row=0, column=0, padx=6, pady=6)
@@ -952,7 +970,7 @@ class FinFlowManagerApp:
         ttk.Button(actions, text="打开日志目录", command=self.open_logs_folder).grid(row=0, column=6, padx=6, pady=6)
         ttk.Button(actions, text="隐藏到托盘", command=self.hide_to_tray).grid(row=0, column=7, padx=6, pady=6)
 
-        options = ttk.LabelFrame(parent, text="管理器选项", padding=16)
+        options = ttk.LabelFrame(scrollable_frame, text="管理器选项", padding=16)
         options.pack(fill="x", padx=10, pady=10)
 
         option_items = [
@@ -966,10 +984,10 @@ class FinFlowManagerApp:
             var = tk.BooleanVar(value=self.manager_state.get(key, False))
             self.manager_option_vars[key] = var
             ttk.Checkbutton(options, text=label, variable=var, command=self.save_manager_state).grid(
-                row=idx // 2, column=idx % 2, padx=10, pady=4, sticky="w"
+                row=idx // 3, column=idx % 3, padx=10, pady=4, sticky="w"
             )
 
-        tips = ttk.LabelFrame(parent, text="说明", padding=16)
+        tips = ttk.LabelFrame(scrollable_frame, text="说明", padding=16)
         tips.pack(fill="both", expand=True, padx=10, pady=10)
         ttk.Label(
             tips,
@@ -990,15 +1008,15 @@ class FinFlowManagerApp:
         registry: Dict[str, Dict[str, Any]],
     ) -> None:
         for key, title, description in items:
-            card = tk.Frame(parent, bd=1, relief="solid", bg="#f5f7fa", padx=10, pady=8, cursor="hand2")
-            card.pack(fill="x", pady=4)
+            card = tk.Frame(parent, bd=1, relief="flat", bg="#f0f0f0", padx=8, pady=6, cursor="hand2")
+            card.pack(fill="x", pady=2)
 
             title_label = tk.Label(
                 card,
                 text=title,
-                bg="#f5f7fa",
-                fg="#15304b",
-                font=("Microsoft YaHei UI", 10, "bold"),
+                bg="#f0f0f0",
+                fg="#333333",
+                font=("Microsoft YaHei UI", 9, "bold"),
                 anchor="w",
                 justify="left",
                 cursor="hand2",
@@ -1008,15 +1026,15 @@ class FinFlowManagerApp:
             desc_label = tk.Label(
                 card,
                 text=description,
-                bg="#f5f7fa",
-                fg="#5f6b7a",
-                font=("Microsoft YaHei UI", 9),
+                bg="#f0f0f0",
+                fg="#666666",
+                font=("Microsoft YaHei UI", 8),
                 anchor="w",
                 justify="left",
-                wraplength=190,
+                wraplength=180,
                 cursor="hand2",
             )
-            desc_label.pack(fill="x", anchor="w", pady=(4, 0))
+            desc_label.pack(fill="x", anchor="w", pady=(2, 0))
 
             def on_click(_event=None, target_key=key) -> None:
                 selected_var.set(target_key)
@@ -1030,12 +1048,12 @@ class FinFlowManagerApp:
     def refresh_side_nav_styles(self, registry: Dict[str, Dict[str, Any]], active_key: str) -> None:
         for key, widgets in registry.items():
             selected = key == active_key
-            card_bg = "#dceeff" if selected else "#f5f7fa"
-            title_fg = "#0f4c81" if selected else "#15304b"
-            desc_fg = "#2c5d86" if selected else "#5f6b7a"
+            card_bg = "#e0e0e0" if selected else "#f0f0f0"
+            title_fg = "#000000" if selected else "#333333"
+            desc_fg = "#444444" if selected else "#666666"
             for widget_key, widget in widgets.items():
                 if widget_key == "card":
-                    widget.configure(bg=card_bg, highlightbackground="#c7d8e8")
+                    widget.configure(bg=card_bg, highlightbackground="#cccccc")
                 elif widget_key == "title":
                     widget.configure(bg=card_bg, fg=title_fg)
                 elif widget_key == "desc":
@@ -1054,18 +1072,23 @@ class FinFlowManagerApp:
         container = ttk.Frame(parent)
         container.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
-        nav_frame = tk.LabelFrame(
+        nav_frame = tk.Frame(
             container,
-            text="配置导航",
+            bg="#f0f0f0",
             bd=1,
-            relief="solid",
-            bg="#eef3f8",
-            fg="#15304b",
-            padx=10,
-            pady=10,
-            font=("Microsoft YaHei UI", 10, "bold"),
+            relief="flat",
         )
         nav_frame.pack(side="left", fill="y", padx=(0, 10))
+
+        nav_title = tk.Label(
+            nav_frame,
+            text="配置导航",
+            bg="#f0f0f0",
+            fg="#333333",
+            font=("Microsoft YaHei UI", 10, "bold"),
+            anchor="w",
+        )
+        nav_title.pack(fill="x", padx=8, pady=(8, 12))
 
         content_frame = ttk.Frame(container)
         content_frame.pack(side="left", fill="both", expand=True)
@@ -1119,18 +1142,23 @@ class FinFlowManagerApp:
         container = ttk.Frame(parent)
         container.pack(fill="both", expand=True, padx=10, pady=10)
 
-        nav_frame = tk.LabelFrame(
+        nav_frame = tk.Frame(
             container,
-            text="运维导航",
+            bg="#f0f0f0",
             bd=1,
-            relief="solid",
-            bg="#eef3f8",
-            fg="#15304b",
-            padx=10,
-            pady=10,
-            font=("Microsoft YaHei UI", 10, "bold"),
+            relief="flat",
         )
         nav_frame.pack(side="left", fill="y", padx=(0, 10))
+
+        nav_title = tk.Label(
+            nav_frame,
+            text="运维导航",
+            bg="#f0f0f0",
+            fg="#333333",
+            font=("Microsoft YaHei UI", 10, "bold"),
+            anchor="w",
+        )
+        nav_title.pack(fill="x", padx=8, pady=(8, 12))
 
         content_frame = ttk.Frame(container)
         content_frame.pack(side="left", fill="both", expand=True)
@@ -1139,13 +1167,14 @@ class FinFlowManagerApp:
         ops_nav_items = [
             ("frontend", "前端部署", "覆盖发布 dist，更新页面静态资源"),
             ("release", "发布包升级", "导入 ZIP 发布包并执行一键升级"),
+            ("git_update", "Git 拉取更新", "从远程 Git 仓库拉取最新代码"),
             ("backup", "数据库备份", "调用 sqlcmd 执行数据库备份"),
             ("notes", "使用说明", "查看当前运维方式和操作建议"),
         ]
 
-        for key in ("frontend_deploy_source", "release_package_path", "backup_dir", "sqlcmd_path"):
+        for key in ("frontend_deploy_source", "release_package_path", "backup_dir", "sqlcmd_path", "git_repo_url", "git_branch"):
             if key not in self.ops_vars:
-                self.ops_vars[key] = tk.StringVar(value=str(self.manager_state.get(key, DEFAULT_STATE[key])))
+                self.ops_vars[key] = tk.StringVar(value=str(self.manager_state.get(key, DEFAULT_STATE.get(key, ""))))
 
         self.create_side_nav(
             nav_frame,
@@ -1155,8 +1184,16 @@ class FinFlowManagerApp:
             self.ops_nav_items,
         )
 
-        common_group = ttk.LabelFrame(content_frame, text="基础路径设置", padding=16)
-        common_group.pack(fill="x", pady=(0, 10))
+        self.ops_content_host = ttk.Frame(content_frame)
+        self.ops_content_host.pack(fill="both", expand=True)
+        self.ops_section_frames: Dict[str, ttk.Frame] = {}
+
+        frontend_frame = ttk.LabelFrame(self.ops_content_host, text="前端部署", padding=16)
+        frontend_top = ttk.Frame(frontend_frame)
+        frontend_top.pack(fill="x", pady=(0, 10))
+        
+        self.ops_common_group = ttk.LabelFrame(frontend_top, text="基础路径设置", padding=16)
+        self.ops_common_group.pack(fill="x", pady=(0, 10))
 
         path_fields = [
             ("frontend_deploy_source", "前端 dist 来源目录", "directory"),
@@ -1166,26 +1203,21 @@ class FinFlowManagerApp:
         ]
 
         for row, (key, label, select_mode) in enumerate(path_fields):
-            ttk.Label(common_group, text=f"{label}：", width=18).grid(row=row, column=0, sticky="w", padx=6, pady=6)
-            ttk.Entry(common_group, textvariable=self.ops_vars[key], width=82).grid(
+            ttk.Label(self.ops_common_group, text=f"{label}：", width=18).grid(row=row, column=0, sticky="w", padx=6, pady=6)
+            ttk.Entry(self.ops_common_group, textvariable=self.ops_vars[key], width=82).grid(
                 row=row, column=1, sticky="ew", padx=6, pady=6
             )
             ttk.Button(
-                common_group,
+                self.ops_common_group,
                 text="选择",
                 command=lambda target_key=key, mode=select_mode: self.select_path_for_var(target_key, mode),
             ).grid(row=row, column=2, padx=6, pady=6)
-        common_group.columnconfigure(1, weight=1)
+        self.ops_common_group.columnconfigure(1, weight=1)
 
-        ttk.Button(common_group, text="保存运维设置", command=self.save_manager_state).grid(
+        ttk.Button(self.ops_common_group, text="保存运维设置", command=self.save_manager_state).grid(
             row=len(path_fields), column=1, sticky="w", padx=6, pady=(10, 0)
         )
 
-        self.ops_content_host = ttk.Frame(content_frame)
-        self.ops_content_host.pack(fill="both", expand=True)
-        self.ops_section_frames: Dict[str, ttk.Frame] = {}
-
-        frontend_frame = ttk.LabelFrame(self.ops_content_host, text="前端部署", padding=16)
         ttk.Label(
             frontend_frame,
             text="将选定目录中的前端构建产物覆盖到 frontend/dist，部署后后端重启即可生效。",
@@ -1228,13 +1260,43 @@ class FinFlowManagerApp:
         ttk.Button(backup_actions, text="打开备份目录", command=self.open_backup_folder).pack(side="left", padx=4)
         self.ops_section_frames["backup"] = backup_frame
 
+        git_frame = ttk.LabelFrame(self.ops_content_host, text="Git 拉取更新", padding=16)
+        ttk.Label(
+            git_frame,
+            text="从远程 Git 仓库拉取最新代码并自动部署，支持增量更新。",
+            justify="left",
+        ).pack(anchor="w", pady=(0, 8))
+        
+        git_config = ttk.LabelFrame(git_frame, text="仓库配置", padding=12)
+        git_config.pack(fill="x", pady=(0, 10))
+        
+        ttk.Label(git_config, text="仓库地址：", width=12).grid(row=0, column=0, sticky="w", padx=6, pady=6)
+        ttk.Entry(git_config, textvariable=self.ops_vars["git_repo_url"], width=60).grid(
+            row=0, column=1, sticky="ew", padx=6, pady=6
+        )
+        
+        ttk.Label(git_config, text="分支名称：", width=12).grid(row=1, column=0, sticky="w", padx=6, pady=6)
+        ttk.Entry(git_config, textvariable=self.ops_vars["git_branch"], width=20).grid(
+            row=1, column=1, sticky="w", padx=6, pady=6
+        )
+        git_config.columnconfigure(1, weight=1)
+        
+        git_actions = ttk.Frame(git_frame)
+        git_actions.pack(fill="x")
+        ttk.Button(git_actions, text="检查更新", command=self.check_git_update).pack(side="left", padx=4)
+        ttk.Button(git_actions, text="拉取并部署", command=self.git_pull_update).pack(side="left", padx=4)
+        ttk.Button(git_actions, text="查看提交历史", command=self.git_show_history).pack(side="left", padx=4)
+        ttk.Button(git_actions, text="回滚版本", command=self.git_rollback).pack(side="left", padx=4)
+        self.ops_section_frames["git_update"] = git_frame
+
         notes_frame = ttk.LabelFrame(self.ops_content_host, text="使用说明", padding=16)
         ttk.Label(
             notes_frame,
             text=(
                 "1. 前端建议先在构建机完成 npm run build，再把 dist 目录复制到服务器。\n"
                 "2. 一键升级建议使用标准 ZIP 发布包，包内至少包含 backend 或 frontend/dist。\n"
-                "3. 数据库备份使用 sqlcmd 工具，运行前请先确认 sqlcmd 可执行文件可用（SQL Server 2016 及以上版本自带）。"
+                "3. 数据库备份使用 sqlcmd 工具，运行前请先确认 sqlcmd 可执行文件可用（SQL Server 2016 及以上版本自带）。\n"
+                "4. Git 拉取更新需要服务器已安装 Git，且仓库可访问。"
             ),
             justify="left",
         ).pack(anchor="w")
@@ -1252,18 +1314,23 @@ class FinFlowManagerApp:
         container = ttk.Frame(parent)
         container.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
-        nav_frame = tk.LabelFrame(
+        nav_frame = tk.Frame(
             container,
-            text="检查导航",
+            bg="#f0f0f0",
             bd=1,
-            relief="solid",
-            bg="#eef3f8",
-            fg="#15304b",
-            padx=10,
-            pady=10,
-            font=("Microsoft YaHei UI", 10, "bold"),
+            relief="flat",
         )
         nav_frame.pack(side="left", fill="y", padx=(0, 10))
+
+        nav_title = tk.Label(
+            nav_frame,
+            text="检查导航",
+            bg="#f0f0f0",
+            fg="#333333",
+            font=("Microsoft YaHei UI", 10, "bold"),
+            anchor="w",
+        )
+        nav_title.pack(fill="x", padx=8, pady=(8, 12))
 
         content_frame = ttk.Frame(container)
         content_frame.pack(side="left", fill="both", expand=True)
@@ -1352,6 +1419,12 @@ class FinFlowManagerApp:
                 frame.pack(fill="both", expand=True)
             else:
                 frame.pack_forget()
+        
+        if active_key in ("frontend", "release"):
+            self.ops_common_group.pack(fill="x", pady=(0, 10))
+        else:
+            self.ops_common_group.pack_forget()
+        
         self.refresh_side_nav_styles(self.ops_nav_items, active_key)
 
     def show_env_section(self) -> None:
@@ -1978,6 +2051,291 @@ class FinFlowManagerApp:
             return
 
         messagebox.showinfo("备份成功", f"数据库已备份到：{target_file}")
+
+    def check_git_available(self) -> bool:
+        try:
+            result = subprocess.run(
+                ["git", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            return result.returncode == 0
+        except FileNotFoundError:
+            return False
+        except Exception:
+            return False
+
+    def check_git_update(self) -> None:
+        self.save_manager_state()
+        
+        if not self.check_git_available():
+            messagebox.showerror("错误", "未找到 Git 命令，请先安装 Git 并添加到系统 PATH")
+            return
+        
+        repo_url = self.ops_vars["git_repo_url"].get().strip()
+        if not repo_url:
+            messagebox.showerror("错误", "请先配置 Git 仓库地址")
+            return
+        
+        branch = self.ops_vars["git_branch"].get().strip() or "main"
+        
+        try:
+            result = subprocess.run(
+                ["git", "ls-remote", "--heads", repo_url, branch],
+                cwd=ROOT_DIR,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            
+            if result.returncode != 0:
+                messagebox.showerror("检查失败", f"无法访问仓库或分支不存在：\n{result.stderr.strip()}")
+                return
+            
+            if not result.stdout.strip():
+                messagebox.showinfo("检查结果", f"分支 '{branch}' 不存在于仓库中")
+                return
+            
+            messagebox.showinfo("检查结果", f"分支 '{branch}' 存在，可以拉取更新")
+            
+        except Exception as exc:
+            messagebox.showerror("检查失败", f"检查更新时出错：{exc}")
+
+    def git_pull_update(self) -> None:
+        self.save_manager_state()
+        
+        if not self.check_git_available():
+            messagebox.showerror("错误", "未找到 Git 命令，请先安装 Git 并添加到系统 PATH")
+            return
+        
+        repo_url = self.ops_vars["git_repo_url"].get().strip()
+        if not repo_url:
+            messagebox.showerror("错误", "请先配置 Git 仓库地址")
+            return
+        
+        branch = self.ops_vars["git_branch"].get().strip() or "main"
+        
+        if not (ROOT_DIR / ".git").exists():
+            proceed = messagebox.askyesno(
+                "初始化 Git 仓库",
+                "当前项目目录没有 Git 仓库，是否初始化并从远程仓库克隆？\n注意：这会覆盖本地的 backend、frontend 等目录。",
+            )
+            if not proceed:
+                return
+            
+            try:
+                subprocess.run(
+                    ["git", "clone", "--branch", branch, repo_url, str(ROOT_DIR)],
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                messagebox.showinfo("成功", "Git 仓库初始化完成，代码已克隆")
+                self.refresh_status()
+                return
+            except Exception as exc:
+                messagebox.showerror("失败", f"克隆仓库失败：{exc}")
+                return
+        
+        was_running = self.backend.is_running()
+        
+        try:
+            if was_running:
+                self.backend.stop()
+            
+            result = subprocess.run(
+                ["git", "pull", "origin", branch],
+                cwd=ROOT_DIR,
+                capture_output=True,
+                text=True,
+                timeout=300,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            
+            if result.returncode != 0:
+                detail = (result.stderr or result.stdout or "未知错误").strip()
+                messagebox.showerror("拉取失败", f"Git pull 失败：\n{detail}")
+                return
+            
+            stdout_text = result.stdout.strip()
+            if "Already up to date" in stdout_text:
+                messagebox.showinfo("结果", "代码已是最新，无需更新")
+                return
+            
+            messagebox.showinfo("成功", f"代码已更新：\n{stdout_text}")
+            
+            self.refresh_status()
+            self.notify_tray("Git 更新完成", "代码已从远程仓库拉取")
+            
+        except Exception as exc:
+            messagebox.showerror("失败", f"拉取更新时出错：{exc}")
+        finally:
+            if was_running and not self.backend.is_running():
+                self.backend.start(self.get_effective_config())
+
+    def git_show_history(self) -> None:
+        self.save_manager_state()
+        
+        if not self.check_git_available():
+            messagebox.showerror("错误", "未找到 Git 命令，请先安装 Git 并添加到系统 PATH")
+            return
+        
+        repo_url = self.ops_vars["git_repo_url"].get().strip()
+        if not repo_url:
+            messagebox.showerror("错误", "请先配置 Git 仓库地址")
+            return
+        
+        try:
+            result = subprocess.run(
+                ["git", "log", "-5", "--oneline"],
+                cwd=ROOT_DIR,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            
+            if result.returncode != 0:
+                messagebox.showinfo("提示", "本地仓库暂无提交历史")
+                return
+            
+            history = result.stdout.strip()
+            if not history:
+                messagebox.showinfo("提示", "本地仓库暂无提交历史")
+                return
+            
+            top_level = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=ROOT_DIR,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            repo_dir = top_level.stdout.strip() if top_level.returncode == 0 else str(ROOT_DIR)
+            
+            history_window = tk.Toplevel(self.root)
+            history_window.title("Git 提交历史")
+            history_window.geometry("600x400")
+            
+            text_widget = scrolledtext.ScrolledText(history_window, wrap="word", font=("Consolas", 10))
+            text_widget.pack(fill="both", expand=True, padx=10, pady=10)
+            text_widget.insert("1.0", f"仓库目录：{repo_dir}\n\n{history}")
+            text_widget.configure(state="disabled")
+            
+            ttk.Button(history_window, text="关闭", command=history_window.destroy).pack(pady=10)
+            
+        except Exception as exc:
+            messagebox.showerror("错误", f"查看提交历史失败：{exc}")
+
+    def git_rollback(self) -> None:
+        self.save_manager_state()
+        
+        if not self.check_git_available():
+            messagebox.showerror("错误", "未找到 Git 命令，请先安装 Git 并添加到系统 PATH")
+            return
+        
+        if not (ROOT_DIR / ".git").exists():
+            messagebox.showerror("错误", "当前项目目录没有 Git 仓库")
+            return
+        
+        try:
+            result = subprocess.run(
+                ["git", "log", "--oneline", "-20"],
+                cwd=ROOT_DIR,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            
+            if result.returncode != 0:
+                messagebox.showinfo("提示", "本地仓库暂无提交历史")
+                return
+            
+            history = result.stdout.strip()
+            if not history:
+                messagebox.showinfo("提示", "本地仓库暂无提交历史")
+                return
+            
+            commits = []
+            for line in history.split("\n"):
+                if " " in line:
+                    commit_hash = line.split(" ", 1)[0]
+                    message = line.split(" ", 1)[1]
+                    commits.append((commit_hash, message))
+            
+            if not commits:
+                messagebox.showinfo("提示", "本地仓库暂无提交历史")
+                return
+            
+            rollback_window = tk.Toplevel(self.root)
+            rollback_window.title("选择回滚版本")
+            rollback_window.geometry("500x400")
+            
+            ttk.Label(rollback_window, text="选择要回滚到的版本：").pack(pady=10)
+            
+            listbox = tk.Listbox(rollback_window, height=15, font=("Consolas", 10))
+            listbox.pack(fill="both", expand=True, padx=10, pady=10)
+            
+            for commit_hash, message in commits:
+                listbox.insert("end", f"{commit_hash} {message}")
+            
+            ttk.Button(rollback_window, text="确定回滚", command=lambda: self.execute_rollback(listbox, rollback_window)).pack(pady=10)
+            
+        except Exception as exc:
+            messagebox.showerror("错误", f"获取提交历史失败：{exc}")
+
+    def execute_rollback(self, listbox: tk.Listbox, window: tk.Toplevel) -> None:
+        selection = listbox.curselection()
+        if not selection:
+            messagebox.showwarning("警告", "请选择一个版本")
+            return
+        
+        selected = listbox.get(selection[0])
+        commit_hash = selected.split(" ")[0]
+        
+        proceed = messagebox.askyesno(
+            "确认回滚",
+            f"确定要回滚到版本 {commit_hash} 吗？\n\n注意：这会覆盖本地的代码变更。",
+        )
+        if not proceed:
+            return
+        
+        was_running = self.backend.is_running()
+        
+        try:
+            if was_running:
+                self.backend.stop()
+            
+            result = subprocess.run(
+                ["git", "reset", "--hard", commit_hash],
+                cwd=ROOT_DIR,
+                capture_output=True,
+                text=True,
+                timeout=300,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            
+            if result.returncode != 0:
+                messagebox.showerror("回滚失败", f"Git reset 失败：\n{result.stderr.strip()}")
+                return
+            
+            messagebox.showinfo("成功", f"已回滚到版本 {commit_hash}")
+            
+            self.refresh_status()
+            self.notify_tray("Git 回滚完成", f"已回滚到版本 {commit_hash}")
+            
+        except Exception as exc:
+            messagebox.showerror("失败", f"回滚时出错：{exc}")
+        finally:
+            if was_running and not self.backend.is_running():
+                self.backend.start(self.get_effective_config())
+            window.destroy()
 
     def hide_to_tray(self) -> None:
         self.root.withdraw()
