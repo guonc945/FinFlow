@@ -7,7 +7,7 @@
 - 后端启动、停止、重启
 - 前端访问入口
 - 前端 `dist` 部署
-- PostgreSQL 备份
+- SQL Server 数据库备份
 - 发布包 ZIP 一键升级
 - 日志查看
 
@@ -129,8 +129,8 @@ D:\FinFlow\deploy\windows\dist\FinFlowManager.exe
 - 覆盖部署到 `frontend/dist`
 - 选择发布包 ZIP
 - 一键升级发布包
-- 选择 `pg_dump`
-- 执行 PostgreSQL 备份
+- 选择 `sqlcmd` 可执行文件
+- 执行 SQL Server 数据库备份
 
 发布包升级会保留这些服务器本地文件：
 
@@ -139,6 +139,21 @@ D:\FinFlow\deploy\windows\dist\FinFlowManager.exe
 - `backend/.venv`
 - `backend/logs`
 - `deploy/windows/manager_state.json`
+
+### 6.4 数据库备份说明
+
+FinFlowManager 使用 `sqlcmd` 工具对 SQL Server 数据库执行备份。
+
+**前提条件：**
+- SQL Server 2016 及以上版本需安装 `sqlcmd` 工具
+- 或安装 [Microsoft SQL Server Command Line Utilities](https://learn.microsoft.com/en-us/sql/cli/sqlcmd/sqlcmd-download)
+
+**备份文件格式：** `.bak` (SQL Server 原生备份格式)
+
+**备份命令：**
+```sql
+BACKUP DATABASE [finflow] TO DISK = N'路径\finflow_YYYYMMDD_HHMMSS.bak' WITH INIT, NAME = N'FinFlow Full Backup'
+```
 
 ### 6.4 日志页
 

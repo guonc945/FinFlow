@@ -1,4 +1,7 @@
-服务器：fn.hyqy.group  ，
-端口：1433，
-账号：sa ，
+数据库配置备注 (此文件仅作参考，实际配置请修改 backend/.env)
+
+数据库类型：sqlserver
+服务器：fn.hyqy.group
+端口：1433
+账号：sa
 密码：sa@sqlserver

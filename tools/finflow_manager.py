@@ -171,9 +171,9 @@ ENV_SECTIONS: List[Tuple[str, List[Tuple[str, str, bool]]]] = [
 DEFAULT_ENV = {
     "DATABASE_URL": "",
     "DB_HOST": "localhost",
-    "DB_PORT": "5432",
+    "DB_PORT": "1433",
     "DB_NAME": "finflow",
-    "DB_USER": "postgres",
+    "DB_USER": "admin",
     "DB_PASSWORD": "",
     "SECRET_KEY": "",
     "ACCESS_TOKEN_EXPIRE_MINUTES": "1440",
@@ -198,7 +198,7 @@ DEFAULT_STATE = {
     "frontend_deploy_source": "",
     "release_package_path": "",
     "backup_dir": str(BACKUP_DIR),
-    "pg_dump_path": "pg_dump",
+    "sqlcmd_path": "sqlcmd",
 }
 
 
@@ -487,7 +487,7 @@ def remove_path(path: Path) -> None:
         path.unlink()
 
 
-def extract_postgres_connection(config: Dict[str, str]) -> Dict[str, str]:
+def extract_db_connection(config: Dict[str, str]) -> Dict[str, str]:
     database_url = (config.get("DATABASE_URL") or "").strip()
     if database_url:
         parsed = urlparse(database_url)
@@ -499,6 +499,24 @@ def extract_postgres_connection(config: Dict[str, str]) -> Dict[str, str]:
                 "password": parsed.password or "",
                 "dbname": (parsed.path or "").lstrip("/"),
             }
+        if parsed.scheme.startswith("mssql") or parsed.scheme.startswith("sqlserver"):
+            return {
+                "host": parsed.hostname or "127.0.0.1",
+                "port": str(parsed.port or 1433),
+                "user": parsed.username or "",
+                "password": parsed.password or "",
+                "dbname": (parsed.path or "").lstrip("/"),
+            }
+
+    db_type = (config.get("DB_DIALECT") or "").strip().lower()
+    if db_type in {"mssql", "sqlserver", "sql_server"}:
+        return {
+            "host": (config.get("DB_HOST") or "127.0.0.1").strip(),
+            "port": (config.get("DB_PORT") or "1433").strip(),
+            "user": (config.get("DB_USER") or "").strip(),
+            "password": (config.get("DB_PASSWORD") or "").strip(),
+            "dbname": (config.get("DB_NAME") or "").strip(),
+        }
 
     return {
         "host": (config.get("DB_HOST") or "127.0.0.1").strip(),
@@ -1121,11 +1139,11 @@ class FinFlowManagerApp:
         ops_nav_items = [
             ("frontend", "前端部署", "覆盖发布 dist，更新页面静态资源"),
             ("release", "发布包升级", "导入 ZIP 发布包并执行一键升级"),
-            ("backup", "数据库备份", "调用 pg_dump 执行数据库逻辑备份"),
+            ("backup", "数据库备份", "调用 sqlcmd 执行数据库备份"),
             ("notes", "使用说明", "查看当前运维方式和操作建议"),
         ]
 
-        for key in ("frontend_deploy_source", "release_package_path", "backup_dir", "pg_dump_path"):
+        for key in ("frontend_deploy_source", "release_package_path", "backup_dir", "sqlcmd_path"):
             if key not in self.ops_vars:
                 self.ops_vars[key] = tk.StringVar(value=str(self.manager_state.get(key, DEFAULT_STATE[key])))
 
@@ -1144,7 +1162,7 @@ class FinFlowManagerApp:
             ("frontend_deploy_source", "前端 dist 来源目录", "directory"),
             ("release_package_path", "发布包 ZIP 文件", "zip"),
             ("backup_dir", "数据库备份输出目录", "directory"),
-            ("pg_dump_path", "pg_dump 可执行文件", "file"),
+            ("sqlcmd_path", "sqlcmd 可执行文件", "file"),
         ]
 
         for row, (key, label, select_mode) in enumerate(path_fields):
@@ -1201,7 +1219,7 @@ class FinFlowManagerApp:
         backup_frame = ttk.LabelFrame(self.ops_content_host, text="数据库备份", padding=16)
         ttk.Label(
             backup_frame,
-            text="使用 pg_dump 对 PostgreSQL 数据库执行逻辑备份，连接信息来自当前 backend/.env。",
+            text="使用 sqlcmd 对 SQL Server 数据库执行备份，连接信息来自当前 backend/.env。",
             justify="left",
         ).pack(anchor="w", pady=(0, 8))
         backup_actions = ttk.Frame(backup_frame)
@@ -1216,7 +1234,7 @@ class FinFlowManagerApp:
             text=(
                 "1. 前端建议先在构建机完成 npm run build，再把 dist 目录复制到服务器。\n"
                 "2. 一键升级建议使用标准 ZIP 发布包，包内至少包含 backend 或 frontend/dist。\n"
-                "3. 数据库备份只支持当前项目默认的 PostgreSQL 场景，运行前请先确认 pg_dump 可执行文件可用。"
+                "3. 数据库备份使用 sqlcmd 工具，运行前请先确认 sqlcmd 可执行文件可用（SQL Server 2016 及以上版本自带）。"
             ),
             justify="left",
         ).pack(anchor="w")
@@ -1903,40 +1921,39 @@ class FinFlowManagerApp:
     def backup_database(self) -> None:
         self.save_manager_state()
         backup_dir = Path(self.ops_vars["backup_dir"].get().strip() or str(BACKUP_DIR))
-        pg_dump = self.ops_vars["pg_dump_path"].get().strip() or "pg_dump"
+        sqlcmd = self.ops_vars["sqlcmd_path"].get().strip() or "sqlcmd"
         backup_dir.mkdir(parents=True, exist_ok=True)
 
         config = self.get_effective_config()
-        conn = extract_postgres_connection(config)
+        conn = extract_db_connection(config)
         missing = [key for key in ("host", "port", "user", "dbname") if not conn.get(key)]
         if missing:
             messagebox.showerror("备份失败", f"数据库配置不完整，缺少：{', '.join(missing)}")
             return
 
-        filename = f"finflow_{datetime.now().strftime('%Y%m%d_%H%M%S')}.sql"
+        filename = f"finflow_{datetime.now().strftime('%Y%m%d_%H%M%S')}.bak"
         target_file = backup_dir / filename
-        env = os.environ.copy()
-        if conn.get("password"):
-            env["PGPASSWORD"] = conn["password"]
-
+        
+        query = f"BACKUP DATABASE [{conn['dbname']}] TO DISK = N'{target_file}' WITH INIT, NAME = N'FinFlow Full Backup'"
+        
         cmd = [
-            pg_dump,
-            "-h",
-            conn["host"],
-            "-p",
-            conn["port"],
+            sqlcmd,
+            "-S",
+            f"{conn['host']},{conn['port']}",
             "-U",
-            conn["user"],
+            conn['user'],
             "-d",
-            conn["dbname"],
-            "-f",
-            str(target_file),
+            conn['dbname'],
+            "-Q",
+            query,
         ]
+
+        if conn.get("password"):
+            cmd.extend(["-P", conn["password"]])
 
         try:
             result = subprocess.run(
                 cmd,
-                env=env,
                 cwd=ROOT_DIR,
                 capture_output=True,
                 text=False,
@@ -1944,10 +1961,10 @@ class FinFlowManagerApp:
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except FileNotFoundError:
-            messagebox.showerror("备份失败", f"未找到 pg_dump：{pg_dump}")
+            messagebox.showerror("备份失败", f"未找到 sqlcmd：{sqlcmd}")
             return
         except Exception as exc:
-            messagebox.showerror("备份失败", f"执行 pg_dump 失败：{exc}")
+            messagebox.showerror("备份失败", f"执行 sqlcmd 失败：{exc}")
             return
 
         stdout_text = decode_console_output(result.stdout or b"")
