@@ -1,17 +1,19 @@
-import json
+﻿import json
 from datetime import datetime
 from decimal import Decimal
+from functools import lru_cache
 from importlib import import_module
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, joinedload
 
 import models
 import schemas
 
 
+@lru_cache(maxsize=256)
 def _main_attr(name: str):
     return getattr(import_module("main"), name)
 
@@ -23,7 +25,7 @@ def _check_trigger_conditions(
     global_context: Optional[dict] = None,
     relation_context: Optional[dict] = None,
 ) -> bool:
-    """闁帒缍婂Λ鈧弻銉ㄐ曢崣鎴炴蒋娴犲墎绮ㄩ弸?"""
+    """闂侇偅甯掔紞濠偽涢埀顒勫蓟閵夈剱鏇㈠矗閹寸偞钂嬪ù鐘插缁劑寮?"""
     if debug_logs is None:
         debug_logs = []
 
@@ -44,10 +46,9 @@ def _check_trigger_conditions(
     def resolve_value(val_str: str, ctx: dict) -> str:
         if not isinstance(val_str, str):
             return str(val_str)
-        # 合并数据上下文和全局上下文，数据字段优先
+        # 鍚堝苟鏁版嵁涓婁笅鏂囧拰鍏ㄥ眬涓婁笅鏂囷紝鏁版嵁瀛楁浼樺厛
         merged_ctx = dict(global_context or {})
         merged_ctx.update(ctx)
-        # 使用 evaluate_expression 统一处理占位符替换和格式化函数
         from utils.expression_functions import evaluate_expression as _eval_expr
         return _eval_expr(val_str, merged_ctx)
 
@@ -140,17 +141,16 @@ def _check_trigger_conditions(
                 return False
             raw_value = str(node.get("value", ""))
 
-            # 鐟欙絾鐎介崣姗€鍣?
+            # 閻熸瑱绲鹃悗浠嬪矗濮椻偓閸?
             value = resolve_value(raw_value, data)
             actual_raw = data.get(field, "")
             raw_candidates = resolve_actual_candidates(field, actual_raw, data)
             actual = raw_candidates[0] if raw_candidates else ""
 
-            # 字段侧格式化：如果配置了 field_format 模板，对字段原始值做变换
+            # 瀛楁渚ф牸寮忓寲锛氬鏋滈厤缃簡 field_format 妯℃澘锛屽瀛楁鍘熷鍊煎仛鍙樻崲
             field_format = node.get("field_format", "")
             if field_format and "__VALUE__" in field_format:
                 from utils.expression_functions import evaluate_expression as _eval_expr
-                # 用字段的实际值替换 __VALUE__ 后求值
                 expr = field_format.replace("__VALUE__", actual)
                 try:
                     actual = _eval_expr(expr, {})
@@ -236,7 +236,7 @@ def _preview_voucher_for_bill_via_receipt_templates(
     if not receipt_bill:
         return None
 
-    # 使用外部传入的推送状态，避免每个 bill 单独查 DB
+    # 浣跨敤澶栭儴浼犲叆鐨勬帹閫佺姸鎬侊紝閬垮厤姣忎釜 bill 鍗曠嫭鏌?DB
     if source_bills_override is not None:
         source_bills = source_bills_override
     else:
@@ -479,13 +479,13 @@ def preview_voucher_for_bill(
     current_user: models.User,
     db: Session,
     allowed_community_ids: List[int],
+    _bill_override: Optional[models.Bill] = None,
+    _enriched_bill_override: Optional[Dict[str, Any]] = None,
+    _source_bills_override: Optional[List[Dict[str, Any]]] = None,
 ):
     """
-    预览单笔账单对应的凭证内容。
-
-    返回包含两个部分：
-    1. `accounting_view`: 面向业务查看的会计凭证视图
-    2. `kingdee_json`: 可直接用于 `voucherAdd` 的金蝶请求 JSON
+    棰勮鍗曠瑪璐﹀崟瀵瑰簲鐨勫嚟璇佸唴瀹广€?
+    杩斿洖鍖呭惈涓や釜閮ㄥ垎锛?    1. `accounting_view`: 闈㈠悜涓氬姟鏌ョ湅鐨勪細璁″嚟璇佽鍥?    2. `kingdee_json`: 鍙洿鎺ョ敤浜?`voucherAdd` 鐨勯噾铦惰姹?JSON
     """
     from services.voucher_engine import evaluate_expression
     from utils.variable_parser import build_variable_map, resolve_variables
@@ -493,24 +493,27 @@ def preview_voucher_for_bill(
     from datetime import datetime
 
     # 1. Query bill
-    bill_query = db.query(models.Bill).filter(models.Bill.id == bill_id)
-    if community_id is not None:
-        bill = bill_query.filter(models.Bill.community_id == community_id).first()
-        if not bill:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Bill not found: id={bill_id}, community_id={community_id}"
-            )
+    if _bill_override is not None:
+        bill = _bill_override
     else:
-        candidates = bill_query.limit(2).all()
-        if not candidates:
-            raise HTTPException(status_code=404, detail=f"Bill not found: id={bill_id}")
-        if len(candidates) > 1:
-            raise HTTPException(
-                status_code=400,
-                detail="bill_id is not unique across communities; please pass community_id"
-            )
-        bill = candidates[0]
+        bill_query = db.query(models.Bill).filter(models.Bill.id == bill_id)
+        if community_id is not None:
+            bill = bill_query.filter(models.Bill.community_id == community_id).first()
+            if not bill:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Bill not found: id={bill_id}, community_id={community_id}"
+                )
+        else:
+            candidates = bill_query.limit(2).all()
+            if not candidates:
+                raise HTTPException(status_code=404, detail=f"Bill not found: id={bill_id}")
+            if len(candidates) > 1:
+                raise HTTPException(
+                    status_code=400,
+                    detail="bill_id is not unique across communities; please pass community_id"
+                )
+            bill = candidates[0]
 
     if not allowed_community_ids:
         raise HTTPException(status_code=403, detail="No authorized communities for this account book")
@@ -522,16 +525,19 @@ def preview_voucher_for_bill(
         )
 
     normalized_account_book_number = _main_attr("_decode_header_value")(x_account_book_number) or None
-    source_refs = [{
-        "bill_id": int(bill.id),
-        "community_id": int(bill.community_id),
-    }]
-    source_status_map = _main_attr("_get_bill_push_status_map")(
-        db,
-        source_refs,
-        account_book_number=normalized_account_book_number,
-    )
-    source_bills = [source_status_map[(int(bill.id), int(bill.community_id))]]
+    if _source_bills_override is not None:
+        source_bills = _source_bills_override
+    else:
+        source_refs = [{
+            "bill_id": int(bill.id),
+            "community_id": int(bill.community_id),
+        }]
+        source_status_map = _main_attr("_get_bill_push_status_map")(
+            db,
+            source_refs,
+            account_book_number=normalized_account_book_number,
+        )
+        source_bills = [source_status_map[(int(bill.id), int(bill.community_id))]]
     source_bill_push_summary = _main_attr("_summarize_bill_push_statuses")(source_bills)
     push_conflicts = _main_attr("_find_bill_push_conflicts")(source_bills)
     push_blocked = len(push_conflicts) > 0
@@ -545,22 +551,23 @@ def preview_voucher_for_bill(
         )
         push_block_reason = f"Current bill already has voucher push records: {conflict_preview}"
 
-    # 鐏忓棜澶勯崡?ORM 鐎电钖勬潪璐熺€涙鍚€
-    bill_data = {}
-    for col in models.Bill.__table__.columns:
-        val = getattr(bill, col.name, None)
-        if val is not None:
-            bill_data[col.name] = val if not hasattr(val, 'isoformat') else val.isoformat()
-        else:
-            bill_data[col.name] = None
-    # Convert Decimal values to float for preview payload
-    from decimal import Decimal as PyDecimal
-    for k, v in bill_data.items():
-        if isinstance(v, PyDecimal):
-            bill_data[k] = float(v)
+    if _enriched_bill_override is not None:
+        enriched = _enriched_bill_override
+    else:
+        bill_data = {}
+        for col in models.Bill.__table__.columns:
+            val = getattr(bill, col.name, None)
+            if val is not None:
+                bill_data[col.name] = val if not hasattr(val, 'isoformat') else val.isoformat()
+            else:
+                bill_data[col.name] = None
+        # Convert Decimal values to float for preview payload
+        from decimal import Decimal as PyDecimal
+        for k, v in bill_data.items():
+            if isinstance(v, PyDecimal):
+                bill_data[k] = float(v)
 
-    # 2. 閹碘晛鐫嶉弫鐗堝祦閿涘牐鎷烽崝鐘诲櫨閾︽儼閻㈢喎鐡у▓纰夌礆
-    enriched = _main_attr("mapping_enrich_source_data")("bills", bill_data, db=db)
+        enriched = _main_attr("mapping_enrich_source_data")("bills", bill_data, db=db)
 
     # 3. Match candidate templates
     templates = db.query(models.VoucherTemplate).filter(
@@ -575,9 +582,8 @@ def preview_voucher_for_bill(
         models.VoucherTemplate.template_id.asc()
     ).all()
 
-    # 鏋勫缓鐢ㄦ埛鍙婅处濂椾笂涓嬫枃
     from urllib.parse import unquote
-    org_name = current_user.organization.name if current_user.organization else "未分配"
+    org_name = current_user.organization.name if current_user.organization else "未分配组织"
     user_context = {
         "current_user_id": str(current_user.id),
         "current_username": current_user.username,
@@ -669,7 +675,7 @@ def preview_voucher_for_bill(
         except (TypeError, ValueError):
             return 0
 
-    # 5. 瑙ｆ瀽姣忔潯鍒嗗綍瑙勫垯
+    # 5. 鐟欙絾鐎藉В蹇旀蒋閸掑棗缍嶇憴鍕灟
     accounting_entries = []
     kingdee_entries = []
 
@@ -713,7 +719,6 @@ def preview_voucher_for_bill(
         amount_val = _main_attr("_try_parse_decimal")(amount_str) or Decimal("0")
         localrate_val = _main_attr("_try_parse_decimal")(localrate) or Decimal("1")
 
-        # 瑙ｆ瀽杈呭姪鏍哥畻
         assgrp = {}
         if rule.aux_items:
             try:
@@ -725,7 +730,7 @@ def preview_voucher_for_bill(
             except (json_mod.JSONDecodeError, Exception):
                 pass
 
-        # 瑙ｆ瀽涓昏〃鏍哥畻
+        # 鐟欙絾鐎芥稉鏄忋€冮弽鍝ョ暬
         maincfassgrp = {}
         if rule.main_cf_assgrp:
             try:
@@ -737,7 +742,7 @@ def preview_voucher_for_bill(
             except (json_mod.JSONDecodeError, Exception):
                 pass
 
-        # 浼犵粺浼氳鍑瘉鏍煎紡
+        # 娴肩姷绮烘导姘愁吀閸戭叀鐦夐弽鐓庣础
         accounting_entries.append({
             "line_no": rule.line_no,
             "summary": summary,
@@ -754,7 +759,7 @@ def preview_voucher_for_bill(
             "maincfassgrp": maincfassgrp if maincfassgrp else None,
         })
 
-        # 闁叉垼婢?API JSON 閺嶇厧绱?
+        # 闂佸弶鍨煎?API JSON 闁哄秶鍘х槐?
         kd_entry = {
             "seq": rule.line_no,
             "edescription": summary,
@@ -775,7 +780,7 @@ def preview_voucher_for_bill(
     total_debit = sum((_main_attr("_try_parse_decimal")(e.get("debit")) or Decimal("0")) for e in accounting_entries)
     total_credit = sum((_main_attr("_try_parse_decimal")(e.get("credit")) or Decimal("0")) for e in accounting_entries)
 
-    # 6. 缂佸嫯鐎瑰本鏆ｉ惃鍕櫨閾﹁埖甯归柅?JSON 缂佹挻鐎?
+    # 6. 缂備礁瀚悗鐟版湰閺嗭綁鎯冮崟顖氭闁撅箒鍩栫敮褰掓焻?JSON 缂備焦鎸婚悗?
     kingdee_json = {
         "data": [{
             "book_number": book_number,
@@ -832,6 +837,8 @@ def preview_voucher_for_receipt(
     from utils.variable_parser import build_variable_map, resolve_variables
     import json as json_mod
 
+    preloaded_scoped_relation_records: Optional[Dict[str, List[Dict[str, Any]]]] = None
+
     if allowed_community_ids and int(community_id) not in set(allowed_community_ids):
         raise HTTPException(status_code=403, detail="Unauthorized community")
 
@@ -867,7 +874,6 @@ def preview_voucher_for_receipt(
     if source_bills:
         receipt_data_cached = _main_attr("_serialize_receipt_bill_model")(receipt_bill, db)
         enriched_receipt_cached = _main_attr("_enrich_receipt_bill_data")(receipt_data_cached, receipt_bill=receipt_bill, db=db)
-        # 使用外部缓存或新建
         if _user_context_cache is not None:
             user_context_cached = _user_context_cache
         else:
@@ -899,7 +905,6 @@ def preview_voucher_for_receipt(
             .all()
         )
 
-        # 批量预加载所有 bill 的原始数据
         all_bill_data_list: List[Dict[str, Any]] = []
         for related_bill in related_bills:
             bill_data = {}
@@ -916,11 +921,12 @@ def preview_voucher_for_receipt(
                     bill_data[key] = float(val)
             all_bill_data_list.append(bill_data)
 
-        # 批量预加载 KD 关联数据（House/Park/Resident/Project/Bank），一次替代 N*12 次查询
         from services.voucher_engine import batch_preload_kd_cache, enrich_bill_data_cached
         kd_cache = batch_preload_kd_cache(all_bill_data_list, db)
+        all_enriched_related_bills = [enrich_bill_data_cached(bill_data, kd_cache) for bill_data in all_bill_data_list]
+        preloaded_scoped_relation_records = {"bills": all_enriched_related_bills}
 
-        # 批量预加载所有 bill 的推送状态（一次 DB 查询替代 N 次）
+        # 鎵归噺棰勫姞杞芥墍鏈?bill 鐨勬帹閫佺姸鎬侊紙涓€娆?DB 鏌ヨ鏇夸唬 N 娆★級
         all_bill_refs = [
             {"bill_id": int(b.id), "community_id": int(b.community_id)}
             for b in related_bills
@@ -939,12 +945,8 @@ def preview_voucher_for_receipt(
         shared_subject_types: Dict[str, str] = {}
 
         for idx, related_bill in enumerate(related_bills):
-            bill_data = all_bill_data_list[idx]
+            enriched_bill = all_enriched_related_bills[idx]
 
-            # 使用批量缓存进行数据富化，避免 N+1 查询
-            enriched_bill = enrich_bill_data_cached(bill_data, kd_cache)
-
-            # 预加载当前 bill 的推送状态
             bill_key = (int(related_bill.id), int(related_bill.community_id))
             bill_push_entry = all_push_status_map.get(bill_key)
             bill_source_bills = [bill_push_entry] if bill_push_entry else []
@@ -1093,7 +1095,6 @@ def preview_voucher_for_receipt(
     receipt_data = _main_attr("_serialize_receipt_bill_model")(receipt_bill, db)
     enriched = _main_attr("_enrich_receipt_bill_data")(receipt_data, receipt_bill=receipt_bill, db=db)
 
-    # 使用外部缓存或新建
     if _user_context_cache is not None:
         user_context = _user_context_cache
     else:
@@ -1110,6 +1111,7 @@ def preview_voucher_for_receipt(
         enriched=enriched,
         runtime_vars=runtime_vars,
         db=db,
+        scoped_relation_records=preloaded_scoped_relation_records,
         templates_override=_templates_cache,
         trigger_condition_cache_override=_trigger_condition_cache,
     )
@@ -1127,6 +1129,7 @@ def preview_voucher_for_receipt(
                 x_account_book_id=x_account_book_id,
                 x_account_book_name=x_account_book_name,
                 x_account_book_number=x_account_book_number,
+                allow_receipt_fallback=False,
                 current_user=current_user,
                 db=db,
                 allowed_community_ids=allowed_community_ids,
@@ -1142,7 +1145,7 @@ def preview_voucher_for_receipt(
                 "community_id": receipt_bill.community_id,
                 "receipt_id": receipt_bill.receipt_id,
                 "deal_type": receipt_bill.deal_type,
-                "deal_type_label": _main_attr("RECEIPT_BILL_DEAL_TYPE_LABELS").get(receipt_bill.deal_type, "其他"),
+                "deal_type_label": _main_attr("RECEIPT_BILL_DEAL_TYPE_LABELS").get(receipt_bill.deal_type, "鍏朵粬"),
                 "income_amount": _main_attr("_json_number")(receipt_bill.income_amount),
                 "amount": _main_attr("_json_number")(receipt_bill.amount),
                 "asset_name": receipt_bill.asset_name,
@@ -1304,7 +1307,7 @@ def preview_voucher_for_receipt(
             "community_id": receipt_bill.community_id,
             "receipt_id": receipt_bill.receipt_id,
             "deal_type": receipt_bill.deal_type,
-            "deal_type_label": _main_attr("RECEIPT_BILL_DEAL_TYPE_LABELS").get(receipt_bill.deal_type, "其他"),
+            "deal_type_label": _main_attr("RECEIPT_BILL_DEAL_TYPE_LABELS").get(receipt_bill.deal_type, "鍏朵粬"),
             "income_amount": _main_attr("_json_number")(receipt_bill.income_amount),
             "amount": _main_attr("_json_number")(receipt_bill.amount),
             "asset_name": receipt_bill.asset_name,
@@ -1352,7 +1355,7 @@ def preview_voucher_for_receipts(
     previews: List[Dict[str, Any]] = []
     skipped_bills: List[Dict[str, Any]] = []
 
-    # 批量预加载共享数据：模板、用户上下文、全局变量（一次替代 N 次重复查询）
+    # 鎵归噺棰勫姞杞藉叡浜暟鎹細妯℃澘銆佺敤鎴蜂笂涓嬫枃銆佸叏灞€鍙橀噺锛堜竴娆℃浛浠?N 娆￠噸澶嶆煡璇級
     from utils.variable_parser import build_variable_map
     batch_user_context = _main_attr("_build_preview_user_context")(
         current_user,
@@ -1515,6 +1518,7 @@ def preview_voucher_for_bills(
     current_user: models.User,
     db: Session,
     allowed_community_ids: List[int],
+    allow_receipt_fallback: bool = True,
 ):
     if not payload.bills:
         raise HTTPException(status_code=400, detail="No bills selected")
@@ -1541,20 +1545,76 @@ def preview_voucher_for_bills(
         for ref in unique_refs
     ]
 
+    from decimal import Decimal as PyDecimal
+    from services.voucher_engine import batch_preload_kd_cache, enrich_bill_data_cached
+
+    bill_filters = [
+        and_(
+            models.Bill.id == int(ref["bill_id"]),
+            models.Bill.community_id == int(ref["community_id"]),
+        )
+        for ref in unique_refs
+    ]
+    bill_rows = db.query(models.Bill).filter(or_(*bill_filters)).all() if bill_filters else []
+
+    bill_row_map: Dict[Tuple[int, int], models.Bill] = {}
+    bill_data_map: Dict[Tuple[int, int], Dict[str, Any]] = {}
+    all_bill_data_list: List[Dict[str, Any]] = []
+    for bill in bill_rows:
+        key = (int(bill.id), int(bill.community_id))
+        bill_row_map[key] = bill
+
+        bill_data: Dict[str, Any] = {}
+        for col in models.Bill.__table__.columns:
+            val = getattr(bill, col.name, None)
+            if val is None:
+                bill_data[col.name] = None
+            elif hasattr(val, "isoformat"):
+                bill_data[col.name] = val.isoformat()
+            elif isinstance(val, PyDecimal):
+                bill_data[col.name] = float(val)
+            else:
+                bill_data[col.name] = val
+
+        bill_data_map[key] = bill_data
+        all_bill_data_list.append(bill_data)
+
+    kd_cache = batch_preload_kd_cache(all_bill_data_list, db) if all_bill_data_list else None
+
     previews: List[Dict[str, Any]] = []
     skipped_bills: List[Dict[str, Any]] = []
 
     for ref in unique_refs:
         try:
+            key = (int(ref["bill_id"]), int(ref["community_id"]))
+            bill_row = bill_row_map.get(key)
+            if bill_row is None:
+                skipped_bills.append({
+                    "bill_id": int(ref["bill_id"]),
+                    "community_id": int(ref["community_id"]),
+                    "reason": "bill not found",
+                })
+                continue
+            bill_data = bill_data_map.get(key) or {}
+            enriched_bill = (
+                enrich_bill_data_cached(bill_data, kd_cache)
+                if (bill_data and kd_cache is not None)
+                else None
+            )
+            bill_status = selected_status_map.get(key)
             result = _main_attr("preview_voucher_for_bill")(
                 bill_id=int(ref["bill_id"]),
                 community_id=int(ref["community_id"]),
                 x_account_book_id=x_account_book_id,
                 x_account_book_name=x_account_book_name,
                 x_account_book_number=x_account_book_number,
+                allow_receipt_fallback=allow_receipt_fallback,
                 current_user=current_user,
                 db=db,
                 allowed_community_ids=allowed_community_ids,
+                _bill_override=bill_row,
+                _enriched_bill_override=enriched_bill,
+                _source_bills_override=[bill_status] if bill_status else None,
             )
             if not result.get("matched"):
                 skipped_bills.append({

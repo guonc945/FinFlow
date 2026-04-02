@@ -430,6 +430,45 @@ def _load_receipt_to_bills_relation(
     ]
 
 
+def _load_receipt_to_bills_relation_light(
+    db: Session,
+    receipt_bill: models.ReceiptBill,
+) -> List[Dict[str, Any]]:
+    # Drilldown table only needs display columns. Keep query narrow to avoid
+    # loading large text/blob-like bill fields that slow response serialization.
+    rows = (
+        db.query(
+            models.Bill.id,
+            models.Bill.community_id,
+            models.Bill.charge_item_name,
+            models.Bill.full_house_name,
+            models.Bill.in_month,
+            models.Bill.amount,
+            models.Bill.pay_status_str,
+            models.Bill.pay_time,
+        )
+        .filter(
+            models.Bill.deal_log_id == int(receipt_bill.id),
+            models.Bill.community_id == int(receipt_bill.community_id),
+        )
+        .order_by(models.Bill.id.asc())
+        .all()
+    )
+    return [
+        {
+            "id": row.id,
+            "community_id": row.community_id,
+            "charge_item_name": row.charge_item_name,
+            "full_house_name": row.full_house_name,
+            "in_month": row.in_month,
+            "amount": _jsonify_scalar(row.amount),
+            "pay_status_str": row.pay_status_str,
+            "pay_time": row.pay_time,
+        }
+        for row in rows
+    ]
+
+
 def _count_receipt_to_bills_relation(
     db: Session,
     receipt_bill: models.ReceiptBill,

@@ -1,4 +1,5 @@
 import os
+from typing import Dict
 from pathlib import Path
 
 from dotenv import load_dotenv

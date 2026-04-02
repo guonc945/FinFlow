@@ -218,6 +218,24 @@ def _ensure_bill_columns():
                     {"d": dt, "id": row.id, "cid": row.community_id},
                 )
 
+        # Ensure hot-path relation index exists for receipt drilldown / voucher preview.
+        _create_index_if_missing(conn, "bills", "ix_bills_community_deal_log", "community_id, deal_log_id")
+
+
+def _ensure_receipt_bill_user_indexes():
+    inspector = inspect(database.engine)
+    tables = inspector.get_table_names()
+    if "receipt_bill_users" not in tables:
+        return
+
+    with database.engine.begin() as conn:
+        _create_index_if_missing(
+            conn,
+            "receipt_bill_users",
+            "ix_receipt_bill_users_receipt_community",
+            "receipt_bill_id, community_id",
+        )
+
 def _ensure_charge_and_project_columns():
     inspector = inspect(database.engine)
     tables = set(inspector.get_table_names())
@@ -283,6 +301,7 @@ def initialize_database() -> None:
     _ensure_house_columns()
     _ensure_park_columns()
     _ensure_bill_columns()
+    _ensure_receipt_bill_user_indexes()
     _ensure_charge_and_project_columns()
     _ensure_deposit_record_columns()
     _ensure_prepayment_record_columns()

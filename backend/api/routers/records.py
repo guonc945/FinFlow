@@ -1,5 +1,8 @@
 from datetime import datetime
 from importlib import import_module
+import logging
+import os
+import time
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query
@@ -16,6 +19,13 @@ from fetch_receipt_bills import sync_receipt_bills
 from sync_tracker import tracker
 
 router = APIRouter()
+logger = logging.getLogger("receipt_drilldown_perf")
+ENABLE_RECEIPT_DRILLDOWN_PERF_LOG = os.getenv("ENABLE_RECEIPT_DRILLDOWN_PERF_LOG", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 
 def _main_attr(name: str):
@@ -48,6 +58,10 @@ def _build_receipt_drilldown_meta(*args, **kwargs):
 
 def _load_receipt_to_bills_relation(*args, **kwargs):
     return _main_attr("_load_receipt_to_bills_relation")(*args, **kwargs)
+
+
+def _load_receipt_to_bills_relation_light(*args, **kwargs):
+    return _main_attr("_load_receipt_to_bills_relation_light")(*args, **kwargs)
 
 
 def _load_receipt_to_deposit_collect_relation(*args, **kwargs):
@@ -711,6 +725,7 @@ def get_receipt_bill(
     db: Session = Depends(get_db),
     allowed_community_ids: List[int] = Depends(get_allowed_community_ids),
 ):
+    t0 = time.perf_counter()
     if allowed_community_ids and int(community_id) not in set(allowed_community_ids):
         raise HTTPException(status_code=403, detail="Unauthorized community")
 
@@ -723,13 +738,16 @@ def get_receipt_bill(
     if not rb:
         raise HTTPException(status_code=404, detail="Receipt bill not found")
 
-    related_bills = _load_receipt_to_bills_relation(db, rb)
-    related_deposit_collect = _load_receipt_to_deposit_collect_relation(db, rb)
-    deposit_refund_links = _load_receipt_deposit_refund_links(db, rb)
+    t_load_receipt = time.perf_counter()
+    deal_type = int(rb.deal_type or 0)
+    related_bills = _load_receipt_to_bills_relation_light(db, rb) if deal_type in {3, 4} else []
+    related_deposit_collect = _load_receipt_to_deposit_collect_relation(db, rb) if deal_type == 5 else []
+    deposit_refund_links = _load_receipt_deposit_refund_links(db, rb) if deal_type == 6 else []
     deposit_refund_link_summary = _build_receipt_deposit_refund_link_summary(deposit_refund_links)
-    related_deposit_refund = _load_receipt_to_deposit_refund_relation(db, rb)
-    related_prepayment_recharge = _load_receipt_to_prepayment_recharge_relation(db, rb)
-    related_prepayment_refund = _load_receipt_to_prepayment_refund_relation(db, rb)
+    related_deposit_refund = _load_receipt_to_deposit_refund_relation(db, rb) if deal_type == 6 else []
+    related_prepayment_recharge = _load_receipt_to_prepayment_recharge_relation(db, rb) if deal_type in {1, 6} else []
+    related_prepayment_refund = _load_receipt_to_prepayment_refund_relation(db, rb) if deal_type == 2 else []
+    t_load_relations = time.perf_counter()
     drilldown_sections = _build_receipt_drilldown_sections(
         rb,
         related_bills,
@@ -739,6 +757,22 @@ def get_receipt_bill(
         related_prepayment_refund,
     )
     drilldown_meta = _build_receipt_drilldown_meta(db, rb)
+    t_build_response = time.perf_counter()
+
+    if ENABLE_RECEIPT_DRILLDOWN_PERF_LOG:
+        logger.info(
+            "receipt_drilldown_perf receipt_bill_id=%s community_id=%s deal_type=%s users=%s bills=%s sections=%s t_receipt_ms=%.1f t_relations_ms=%.1f t_response_ms=%.1f t_total_ms=%.1f",
+            receipt_bill_id,
+            community_id,
+            deal_type,
+            len(rb.users or []),
+            len(related_bills),
+            len(drilldown_sections),
+            (t_load_receipt - t0) * 1000,
+            (t_load_relations - t_load_receipt) * 1000,
+            (t_build_response - t_load_relations) * 1000,
+            (t_build_response - t0) * 1000,
+        )
 
     return {
         "id": rb.id,
