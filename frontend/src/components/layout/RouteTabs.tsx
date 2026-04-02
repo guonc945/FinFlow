@@ -1,4 +1,4 @@
-import React, { startTransition, useEffect, useState } from 'react';
+import React, { startTransition, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useOutlet } from 'react-router-dom';
 import { X } from 'lucide-react';
 import classNames from 'classnames';
@@ -16,6 +16,7 @@ const RouteTabs: React.FC<{ getPageTitle: (path: string) => { title: string } }>
     const navigate = useNavigate();
     const outlet = useOutlet();
     const [tabs, setTabs] = useState<Tab[]>([]);
+    const paneCacheRef = useRef<Record<string, React.ReactNode>>({});
 
     const openTab = (path: string) => {
         if (location.pathname === path) return;
@@ -38,12 +39,17 @@ const RouteTabs: React.FC<{ getPageTitle: (path: string) => { title: string } }>
             }
             return prev;
         });
-    }, [location.pathname, location.search, getPageTitle]);
+
+        if (outlet && !paneCacheRef.current[pathname]) {
+            paneCacheRef.current[pathname] = outlet;
+        }
+    }, [location.pathname, location.search, getPageTitle, outlet]);
 
     const closeTab = (e: React.MouseEvent, key: string) => {
         e.stopPropagation();
         setTabs(prev => {
             const newTabs = prev.filter(t => t.key !== key);
+            delete paneCacheRef.current[key];
             if (newTabs.length === 0) {
                 startTransition(() => navigate('/'));
                 return prev; // Let the next render handle adding the index page if it was cleared
@@ -77,9 +83,14 @@ const RouteTabs: React.FC<{ getPageTitle: (path: string) => { title: string } }>
                 ))}
             </div>
             <main className="page-content route-tabs-content">
-                <div className={classNames('route-tab-pane', { 'pane-active': true })}>
-                    {outlet}
-                </div>
+                {tabs.map(tab => (
+                    <div
+                        key={tab.key}
+                        className={classNames('route-tab-pane', { 'pane-active': location.pathname === tab.path })}
+                    >
+                        {paneCacheRef.current[tab.path]}
+                    </div>
+                ))}
             </main>
         </div>
     );

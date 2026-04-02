@@ -118,8 +118,12 @@
 .route-tab-pane {
     flex: 1;
     min-height: 0;
-    display: flex;
+    display: none;
     flex-direction: column;
+}
+
+.route-tab-pane.pane-active {
+    display: flex;
 }
 
 @media (max-width: 768px) {

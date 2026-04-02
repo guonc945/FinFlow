@@ -2,6 +2,7 @@ import json
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Set
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 import models

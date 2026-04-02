@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Sequence, Tuple, Type
+from typing import Any, Dict, Iterable, List, Sequence, Set, Tuple, Type
 
 from sqlalchemy import and_, text
 from sqlalchemy.orm import Session
@@ -23,6 +23,22 @@ def _qualified_table_name(model: ModelType) -> str:
     if table.schema:
         return f"{_quote_identifier(table.schema)}.{_quote_identifier(table.name)}"
     return _quote_identifier(table.name)
+
+
+def _mssql_identity_column_names(db: Session, model: ModelType) -> Set[str]:
+    table = model.__table__
+    table_name = table.name
+    schema_name = table.schema or "dbo"
+    full_name = f"{schema_name}.{table_name}"
+
+    sql = """
+SELECT c.name
+FROM sys.columns AS c
+WHERE c.object_id = OBJECT_ID(:full_name)
+  AND c.is_identity = 1
+"""
+    rows = db.execute(text(sql), {"full_name": full_name}).fetchall()
+    return {str(row[0]) for row in rows if row and row[0]}
 
 
 def _iter_chunks(items: List[Dict[str, Any]], size: int):
@@ -55,6 +71,9 @@ def _mssql_atomic_upsert(
     insert_columns = ", ".join(_quote_identifier(field) for field in insert_fields)
     insert_values = ", ".join(f":i_{field}" for field in insert_fields)
 
+    identity_columns = _mssql_identity_column_names(db, model)
+    has_identity_insert = any(col in identity_columns for col in insert_fields)
+
     params: Dict[str, Any] = {}
     for field, val in key_values.items():
         params[f"k_{field}"] = val
@@ -64,45 +83,54 @@ def _mssql_atomic_upsert(
         if field in update_fields:
             params[f"u_{field}"] = val
 
+    inserted = False
     if update_fields:
         set_clause = ", ".join(
             f"{_quote_identifier(field)} = :u_{field}" for field in update_fields
         )
-        sql = f"""
+        update_sql = f"""
 UPDATE {table_name} WITH (UPDLOCK, HOLDLOCK)
 SET {set_clause}
 WHERE {where_clause};
-DECLARE @updated_count INT = @@ROWCOUNT;
-IF @updated_count = 0
-BEGIN
-    INSERT INTO {table_name} ({insert_columns})
-    VALUES ({insert_values});
-    SELECT CAST(1 AS BIT) AS inserted;
-END
-ELSE
-BEGIN
-    SELECT CAST(0 AS BIT) AS inserted;
-END
 """
-    else:
-        sql = f"""
-IF NOT EXISTS (
+        updated_count = db.execute(text(update_sql), params).rowcount or 0
+        if updated_count <= 0:
+            core_insert_sql = f"""
+INSERT INTO {table_name} ({insert_columns})
+SELECT {insert_values}
+WHERE NOT EXISTS (
     SELECT 1
     FROM {table_name} WITH (UPDLOCK, HOLDLOCK)
     WHERE {where_clause}
-)
-BEGIN
-    INSERT INTO {table_name} ({insert_columns})
-    VALUES ({insert_values});
-    SELECT CAST(1 AS BIT) AS inserted;
-END
-ELSE
-BEGIN
-    SELECT CAST(0 AS BIT) AS inserted;
-END
+);
 """
+            if has_identity_insert:
+                db.execute(text(f"SET IDENTITY_INSERT {table_name} ON;"))
+                try:
+                    inserted = (db.execute(text(core_insert_sql), params).rowcount or 0) > 0
+                finally:
+                    db.execute(text(f"SET IDENTITY_INSERT {table_name} OFF;"))
+            else:
+                inserted = (db.execute(text(core_insert_sql), params).rowcount or 0) > 0
+    else:
+        core_insert_sql = f"""
+INSERT INTO {table_name} ({insert_columns})
+SELECT {insert_values}
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM {table_name} WITH (UPDLOCK, HOLDLOCK)
+    WHERE {where_clause}
+);
+"""
+        if has_identity_insert:
+            db.execute(text(f"SET IDENTITY_INSERT {table_name} ON;"))
+            try:
+                inserted = (db.execute(text(core_insert_sql), params).rowcount or 0) > 0
+            finally:
+                db.execute(text(f"SET IDENTITY_INSERT {table_name} OFF;"))
+        else:
+            inserted = (db.execute(text(core_insert_sql), params).rowcount or 0) > 0
 
-    inserted = bool(db.execute(text(sql), params).scalar())
     filters = [getattr(model, key) == val for key, val in key_values.items()]
     instance = db.query(model).filter(and_(*filters)).first()
     return instance, inserted

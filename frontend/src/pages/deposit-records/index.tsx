@@ -139,6 +139,7 @@ const DepositRecords = () => {
     const [pageSize, setPageSize] = useState(25);
 
     const [isSyncing, setIsSyncing] = useState(false);
+    const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
     const [syncState, setSyncState] = useState({
         taskId: '',
         total: 0,
@@ -225,17 +226,40 @@ const DepositRecords = () => {
 
                 if (['completed', 'failed', 'partially_completed'].includes(status.status)) {
                     stopPolling();
+                    setIsSyncing(false);
                     await fetchDepositList();
+                    if (status.status === 'completed') {
+                        showToast('success', '同步完成', '押金记录已同步完成');
+                    } else if (status.status === 'partially_completed') {
+                        showToast('info', '同步部分完成', '部分社区同步失败，请查看日志');
+                    } else if (status.status === 'failed') {
+                        showToast('error', '同步失败', '请查看同步日志并稍后重试');
+                    }
                 }
-            } catch {
+            } catch (error: any) {
                 stopPolling();
+                setIsSyncing(false);
+                setSyncState((prev) => ({
+                    ...prev,
+                    status: 'failed',
+                    logs: [
+                        ...prev.logs,
+                        {
+                            message: '同步状态查询失败，请稍后手动刷新列表确认结果',
+                            type: 'error',
+                            time: new Date().toLocaleTimeString(),
+                        },
+                    ],
+                }));
+                showToast('error', '同步状态异常', error?.message || '无法获取同步进度');
             }
         }, 1000);
-    }, [fetchDepositList, stopPolling]);
+    }, [fetchDepositList, showToast, stopPolling]);
 
     const handleSync = useCallback(async () => {
         try {
             setIsSyncing(true);
+            setIsSyncModalOpen(true);
             setSyncState({
                 taskId: '',
                 total: communityFilter.length || projects.length || 1,
@@ -255,6 +279,7 @@ const DepositRecords = () => {
             startPolling(result.task_id);
         } catch (error: any) {
             setIsSyncing(false);
+            setIsSyncModalOpen(false);
             const message = error?.response?.data?.detail || error?.message || '启动同步失败';
             showToast('error', '同步失败', typeof message === 'string' ? message : JSON.stringify(message));
         }
@@ -457,8 +482,8 @@ const DepositRecords = () => {
                                 </div>
                             </div>
 
-                            <button className="btn-primary btn-refresh-list" onClick={() => void handleSync()}>
-                                <RefreshCw size={14} /> 同步押金记录
+                            <button className="btn-primary btn-refresh-list" disabled={isSyncing} onClick={() => void handleSync()}>
+                                <RefreshCw size={14} className={isSyncing ? 'animate-spin' : ''} /> {isSyncing ? '同步进行中...' : '同步押金记录'}
                             </button>
 
                             <button
@@ -547,10 +572,9 @@ const DepositRecords = () => {
             </div>
 
             <SyncProgressModal
-                isOpen={isSyncing}
+                isOpen={isSyncModalOpen}
                 onClose={() => {
-                    setIsSyncing(false);
-                    stopPolling();
+                    setIsSyncModalOpen(false);
                 }}
                 total={syncState.total}
                 current={syncState.current}
