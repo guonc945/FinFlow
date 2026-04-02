@@ -56,6 +56,26 @@ type ScheduleFormState = {
 
 const weekdayOrder = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 
+const applyForcedTargetCodes = (targetCodes: string[], targetMap: Map<string, SyncScheduleTargetMeta>) => {
+    const seen = new Set<string>();
+    const normalized: string[] = [];
+
+    for (const code of targetCodes) {
+        if (!code || seen.has(code)) continue;
+        seen.add(code);
+        normalized.push(code);
+
+        const forcedTargets = targetMap.get(code)?.forced_with || [];
+        for (const forcedCode of forcedTargets) {
+            if (!forcedCode || seen.has(forcedCode)) continue;
+            seen.add(forcedCode);
+            normalized.push(forcedCode);
+        }
+    }
+
+    return normalized;
+};
+
 const createEmptyForm = (timezone: string): ScheduleFormState => ({
     name: '',
     description: '',
@@ -302,9 +322,10 @@ const SyncSchedulesPage = () => {
     const toggleTarget = (code: string) => {
         setFormState((prev) => {
             const hasCode = prev.target_codes.includes(code);
-            const nextTargets = hasCode
+            const requestedTargets = hasCode
                 ? prev.target_codes.filter((item) => item !== code)
                 : [...prev.target_codes, code];
+            const nextTargets = applyForcedTargetCodes(requestedTargets, targetMap);
             const stillRequiresCommunity = nextTargets.some((item) => targetMap.get(item)?.requires_community_ids);
             return {
                 ...prev,
@@ -366,7 +387,7 @@ const SyncSchedulesPage = () => {
     const buildPayload = () => ({
         name: formState.name.trim(),
         description: formState.description.trim() || null,
-        target_codes: formState.target_codes,
+        target_codes: applyForcedTargetCodes(formState.target_codes, targetMap),
         community_ids: formState.community_ids,
         account_book_number: formState.account_book_number || null,
         account_book_name: formState.account_book_name || null,
@@ -807,7 +828,7 @@ const SyncSchedulesPage = () => {
                                                             checked={formState.target_codes.includes(target.code)}
                                                             onChange={() => toggleTarget(target.code)}
                                                         />
-                                                        <span>{target.label}</span>
+                                                        <span>{target.label}{target.forced_with?.length ? '（自动联动关联模块）' : ''}</span>
                                                     </label>
                                                 ))
                                             ) : (

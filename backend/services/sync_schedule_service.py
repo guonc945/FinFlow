@@ -16,6 +16,7 @@ from sqlalchemy import text
 
 WEEKDAY_CODES = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
 DEFAULT_TIMEZONE = "Asia/Shanghai"
+RECEIPT_BILL_REQUIRED_TARGET_CODES = ("bills", "deposit_records", "prepayment_records")
 
 
 def utcnow_naive() -> datetime:
@@ -34,6 +35,31 @@ def parse_json_list(raw_value: Optional[str]) -> List[Any]:
 
 def serialize_json_list(values: Optional[List[Any]]) -> str:
     return json.dumps(values or [], ensure_ascii=False)
+
+
+def normalize_sync_target_codes(values: Optional[List[Any]], valid_codes: Optional[set[str]] = None) -> List[str]:
+    normalized: List[str] = []
+    seen = set()
+
+    for value in values or []:
+        code = str(value or "").strip()
+        if not code or code in seen:
+            continue
+        if valid_codes is not None and code not in valid_codes:
+            continue
+        seen.add(code)
+        normalized.append(code)
+
+    if "receipt_bills" in seen:
+        for dependency_code in RECEIPT_BILL_REQUIRED_TARGET_CODES:
+            if valid_codes is not None and dependency_code not in valid_codes:
+                continue
+            if dependency_code in seen:
+                continue
+            seen.add(dependency_code)
+            normalized.append(dependency_code)
+
+    return normalized
 
 
 def normalize_weekdays(values: Optional[List[str]]) -> List[str]:
@@ -303,7 +329,10 @@ class SyncScheduleService:
                 if schedule.next_run_at is None or schedule.next_run_at > now:
                     raise RuntimeError("Schedule is not due")
 
-            target_codes = parse_json_list(schedule.target_codes)
+            target_codes = normalize_sync_target_codes(
+                parse_json_list(schedule.target_codes),
+                valid_codes=self._supported_targets,
+            )
             if not target_codes:
                 raise RuntimeError("Schedule has no targets configured")
 
@@ -351,7 +380,10 @@ class SyncScheduleService:
             "id": schedule.id,
             "name": schedule.name,
             "description": schedule.description or "",
-            "target_codes": parse_json_list(schedule.target_codes),
+            "target_codes": normalize_sync_target_codes(
+                parse_json_list(schedule.target_codes),
+                valid_codes=self._supported_targets,
+            ),
             "community_ids": parse_json_list(schedule.community_ids),
             "account_book_number": account_book_number,
             "account_book_name": account_book_name,

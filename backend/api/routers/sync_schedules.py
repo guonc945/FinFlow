@@ -19,8 +19,10 @@ from fetch_residents import sync_residents
 from scripts.fetch_projects import main as fetch_projects_main
 from services.sync_schedule_service import (
     DEFAULT_TIMEZONE,
+    RECEIPT_BILL_REQUIRED_TARGET_CODES,
     SyncScheduleService,
     compute_next_run_at,
+    normalize_sync_target_codes,
     normalize_weekdays,
     parse_json_list,
     serialize_json_list,
@@ -66,7 +68,13 @@ SYNC_TARGET_DEFINITIONS = [
     {"code": "residents", "label": "马克住户档案", "system": "mark", "requires_community_ids": True},
     {"code": "parks", "label": "马克车位档案", "system": "mark", "requires_community_ids": True},
     {"code": "bills", "label": "马克运营账单", "system": "mark", "requires_community_ids": True},
-    {"code": "receipt_bills", "label": "马克收款单", "system": "mark", "requires_community_ids": True},
+    {
+        "code": "receipt_bills",
+        "label": "马克收款单",
+        "system": "mark",
+        "requires_community_ids": True,
+        "forced_with": list(RECEIPT_BILL_REQUIRED_TARGET_CODES),
+    },
     {"code": "deposit_records", "label": "马克押金记录", "system": "mark", "requires_community_ids": True},
     {"code": "prepayment_records", "label": "马克预存款记录", "system": "mark", "requires_community_ids": True},
     {"code": "accounting_subjects", "label": "金蝶会计科目", "system": "kingdee", "requires_community_ids": False},
@@ -111,10 +119,7 @@ def _normalize_schedule_community_ids(values: Optional[List[Any]]) -> List[int]:
 
 
 def _validate_sync_schedule_payload(payload: schemas.SyncScheduleBase | schemas.SyncScheduleUpdate) -> Dict[str, Any]:
-    target_codes = [
-        code for code in dict.fromkeys([str(code).strip() for code in (payload.target_codes or [])])
-        if code in SYNC_TARGET_MAP
-    ]
+    target_codes = normalize_sync_target_codes(payload.target_codes, valid_codes=set(SYNC_TARGET_MAP))
     if not target_codes:
         raise HTTPException(status_code=400, detail="At least one valid sync target must be selected")
 
@@ -174,7 +179,10 @@ def _serialize_sync_schedule(schedule: models.SyncSchedule) -> Dict[str, Any]:
         "id": schedule.id,
         "name": schedule.name,
         "description": schedule.description,
-        "target_codes": parse_json_list(schedule.target_codes),
+        "target_codes": normalize_sync_target_codes(
+            parse_json_list(schedule.target_codes),
+            valid_codes=set(SYNC_TARGET_MAP),
+        ),
         "community_ids": _normalize_schedule_community_ids(parse_json_list(schedule.community_ids)),
         "account_book_number": schedule.account_book_number,
         "account_book_name": schedule.account_book_name,

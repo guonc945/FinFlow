@@ -84,11 +84,11 @@ const SyncProgressModal = ({
                             <div className="status-icon-rotating text-primary"><RefreshCw size={24} /></div>
                         )}
                         <div>
-                            <h3>{isCompleted ? (isFailed ? '同步失败' : '同步完成') : '正在同步收款账单数据'}</h3>
+                            <h3>{isCompleted ? (isFailed ? '同步失败' : '同步完成') : '正在同步收款单据及关联模块'}</h3>
                             <p className="text-secondary text-sm">
                                 {isCompleted
-                                    ? (isFailed ? '同步过程中发生错误' : `已完成 ${total} 个园区的同步`)
-                                    : `正在处理园区数据（共 ${total} 个）`}
+                                    ? (isFailed ? '收款单据联动同步过程中发生错误' : `已完成 ${total} 个园区的收款单据及关联模块同步`)
+                                    : `正在依次同步运营账单、押金、预存款、收款单据（共 ${total} 个园区）`}
                             </p>
                         </div>
                     </div>
@@ -124,7 +124,7 @@ const SyncProgressModal = ({
                     ) : (
                         <div className="flex items-center gap-2 text-warning text-sm bg-warning-bg p-3 rounded-lg border border-warning-border">
                             <Info size={16} />
-                            <span>同步正在后台运行，请勿刷新或关闭页面。</span>
+                            <span>联动同步正在后台运行，请勿刷新或关闭页面。</span>
                         </div>
                     )}
                 </div>
@@ -1434,7 +1434,7 @@ const ReceiptBills = () => {
                             <div className="flex gap-2 flex-wrap" style={{ justifyContent: 'flex-end' }}>
                                 <button className="btn-primary btn-refresh-list" onClick={handleSync}>
                                     <RefreshCw size={14} className={isSyncing && !['completed', 'failed', 'partially_completed'].includes(syncState.status) ? 'animate-spin' : ''} />
-                                    {isSyncing && !['completed', 'failed', 'partially_completed'].includes(syncState.status) ? '同步中...' : '同步收款账单'}
+                                    {isSyncing && !['completed', 'failed', 'partially_completed'].includes(syncState.status) ? '联动同步中...' : '同步收款单据（含关联模块）'}
                                 </button>
                                 <button className="btn-outline" onClick={() => void refreshReceiptViews()}>
                                     <RefreshCw size={14} /> 刷新列表

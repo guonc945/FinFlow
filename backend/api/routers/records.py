@@ -13,6 +13,7 @@ import models
 import schemas
 from api.bootstrap import _is_mssql
 from api.dependencies import get_allowed_community_ids, get_db
+from fetch_bills import sync_bills
 from fetch_deposit_records import sync_deposit_records
 from fetch_prepayment_records import sync_prepayment_records
 from fetch_receipt_bills import sync_receipt_bills
@@ -86,6 +87,58 @@ def _load_receipt_to_prepayment_recharge_relation(*args, **kwargs):
 
 def _load_receipt_to_prepayment_refund_relation(*args, **kwargs):
     return _main_attr("_load_receipt_to_prepayment_refund_relation")(*args, **kwargs)
+
+
+def _normalize_sync_community_ids(values: Optional[List[int]]) -> List[int]:
+    normalized: List[int] = []
+    seen = set()
+    for value in values or []:
+        try:
+            community_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if community_id in seen:
+            continue
+        seen.add(community_id)
+        normalized.append(community_id)
+    return normalized
+
+
+def sync_receipt_bills_with_related_modules(community_ids: List[int], task_id: str) -> None:
+    normalized_ids = _normalize_sync_community_ids(community_ids)
+    if not normalized_ids:
+        tracker.add_log(task_id, "No communities available for receipt sync.", "error")
+        tracker.update_status(task_id, "failed")
+        return
+
+    tracker.update_status(task_id, "running")
+    tracker.add_log(
+        task_id,
+        "为保证收款单关联完整性，本次将依次同步运营账单、押金、预存款、收款单据。",
+        "info",
+    )
+
+    str_ids = [str(cid) for cid in normalized_ids]
+    stages = [
+        ("运营账单", lambda: sync_bills(str_ids)),
+        ("押金记录", lambda: sync_deposit_records(normalized_ids)),
+        ("预存款记录", lambda: sync_prepayment_records(normalized_ids)),
+        ("收款单据", lambda: sync_receipt_bills(str_ids)),
+    ]
+
+    try:
+        for index, (stage_name, stage_runner) in enumerate(stages, start=1):
+            tracker.update_progress(task_id, min(index - 1, len(normalized_ids)), stage_name)
+            tracker.add_log(task_id, f"开始同步{stage_name}", "info")
+            stage_runner()
+            tracker.add_log(task_id, f"{stage_name}同步完成", "info")
+
+        tracker.update_progress(task_id, len(normalized_ids), "sync completed")
+        tracker.update_status(task_id, "completed")
+        tracker.add_log(task_id, "收款单据及其关联模块同步完成。", "info")
+    except Exception as exc:
+        tracker.add_log(task_id, f"收款单组合同步失败: {exc}", "error")
+        tracker.update_status(task_id, "failed")
 
 
 def _build_receipt_drilldown_sections(*args, **kwargs):
@@ -701,10 +754,10 @@ def sync_receipt_bills_endpoint(
 
     str_ids = [str(cid) for cid in community_ids]
     task_id = tracker.create_task(str_ids)
-    background_tasks.add_task(sync_receipt_bills, str_ids, task_id)
+    background_tasks.add_task(sync_receipt_bills_with_related_modules, community_ids, task_id)
 
     return {
-        "message": "Receipt bill synchronization started",
+        "message": "Receipt bill synchronization started with related bills, deposits and prepayments",
         "task_id": task_id,
         "community_ids": str_ids,
     }

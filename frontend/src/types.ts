@@ -527,6 +527,7 @@ export interface SyncScheduleTargetMeta {
     label: string;
     system: 'mark' | 'kingdee' | string;
     requires_community_ids: boolean;
+    forced_with?: string[];
 }
 
 export interface SyncScheduleMeta {
