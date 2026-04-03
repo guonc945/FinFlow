@@ -1,8 +1,9 @@
+# -*- coding: utf-8 -*-
 from importlib import import_module
 from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
-from sqlalchemy import or_
+from sqlalchemy import String, cast, or_
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 import models
@@ -35,6 +36,9 @@ def _decode_header_value(*args, **kwargs):
 
 @router.get("/api/charge-items", response_model=List[schemas.ChargeItemResponse])
 def get_charge_items(
+    request: Request,
+    community_id: Optional[str] = None,
+    search: Optional[str] = None,
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
@@ -42,14 +46,49 @@ def get_charge_items(
     allowed_community_ids: List[int] = Depends(get_allowed_community_ids),
 ):
     _require_api_permission(db, current_user, "charge_item.manage")
-    query = db.query(models.ChargeItem)
+    query = db.query(models.ChargeItem).options(
+        joinedload(models.ChargeItem.current_account_subject),
+        joinedload(models.ChargeItem.profit_loss_subject),
+        joinedload(models.ChargeItem.kingdee_tax_rate),
+    )
     if allowed_community_ids:
         c_ids = [str(cid) for cid in allowed_community_ids]
         query = query.filter(models.ChargeItem.communityid.in_(c_ids))
     else:
         return []
 
-    items = query.offset(skip).limit(limit).all()
+    account_book_number = _decode_header_value(request.headers.get("X-Account-Book-Number")) if request else None
+    if account_book_number:
+        book_community_rows = (
+            db.query(models.ProjectList.proj_id)
+            .join(
+                models.KingdeeAccountBook,
+                cast(models.ProjectList.kingdee_account_book_id, String) == cast(models.KingdeeAccountBook.id, String),
+            )
+            .filter(models.KingdeeAccountBook.number == account_book_number)
+            .all()
+        )
+        if not book_community_rows:
+            return []
+
+        allowed_set = {str(cid) for cid in allowed_community_ids}
+        book_set = {str(row[0]) for row in book_community_rows}
+        scoped_community_ids = list(allowed_set & book_set)
+        if not scoped_community_ids:
+            return []
+        query = query.filter(models.ChargeItem.communityid.in_(scoped_community_ids))
+
+    if community_id:
+        query = query.filter(models.ChargeItem.communityid == community_id)
+    if search:
+        search_filter = or_(
+            models.ChargeItem.item_name.ilike(f"%{search}%"),
+            cast(models.ChargeItem.item_id, String).ilike(f"%{search}%"),
+            models.ChargeItem.category_name.ilike(f"%{search}%"),
+        )
+        query = query.filter(search_filter)
+
+    items = query.order_by(models.ChargeItem.item_id.asc()).offset(skip).limit(limit).all()
     return items
 
 
@@ -114,8 +153,6 @@ def get_projects(
         return {"items": [], "total": 0}
 
     if current_account_book_only:
-        from sqlalchemy import String, cast
-
         account_book_number = _decode_header_value(request.headers.get("X-Account-Book-Number")) if request else None
         if not account_book_number:
             return {"items": [], "total": 0}

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Verify partition tables - Simple ASCII output for SQL Server
 验证分区表 - SQL Server 版本"""
 import os

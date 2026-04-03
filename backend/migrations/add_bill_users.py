@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 迁移脚本：创建 bill_users 从表，并从现有 bills.user_list JSON 数据回填
 """

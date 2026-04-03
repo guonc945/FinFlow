@@ -1,6 +1,9 @@
+# -*- coding: utf-8 -*-
 import re
+from decimal import Decimal, InvalidOperation
 from datetime import date, datetime
 from typing import Any, Callable, Dict, List, Optional
+import ast
 
 
 def _translate_datetime_format(fmt: str) -> str:
@@ -297,6 +300,68 @@ def _replace_placeholders(text: str, data: Dict[str, Any]) -> str:
     return _PLACEHOLDER_RE.sub(repl, text)
 
 
+def _safe_eval_arithmetic(expr: str) -> Optional[str]:
+    """
+    Evaluate simple arithmetic expressions safely.
+    Allowed tokens: digits, decimal point, whitespace, parentheses, + - * /
+    """
+    if not isinstance(expr, str):
+        return None
+
+    stripped = expr.strip()
+    if not stripped:
+        return None
+
+    if not re.fullmatch(r"[0-9\.\+\-\*\/\(\)\s]+", stripped):
+        return None
+
+    if "+" not in stripped and "*" not in stripped and "/" not in stripped:
+        return None
+
+    try:
+        tree = ast.parse(stripped, mode="eval")
+    except SyntaxError:
+        return None
+
+    def _eval(node: ast.AST) -> Decimal:
+        if isinstance(node, ast.Expression):
+            return _eval(node.body)
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, (int, float)):
+                return Decimal(str(node.value))
+            raise ValueError("Unsupported constant")
+        if isinstance(node, ast.UnaryOp):
+            value = _eval(node.operand)
+            if isinstance(node.op, ast.UAdd):
+                return value
+            if isinstance(node.op, ast.USub):
+                return -value
+            raise ValueError("Unsupported unary operator")
+        if isinstance(node, ast.BinOp):
+            left = _eval(node.left)
+            right = _eval(node.right)
+            if isinstance(node.op, ast.Add):
+                return left + right
+            if isinstance(node.op, ast.Sub):
+                return left - right
+            if isinstance(node.op, ast.Mult):
+                return left * right
+            if isinstance(node.op, ast.Div):
+                return left / right
+            raise ValueError("Unsupported binary operator")
+        raise ValueError("Unsupported expression")
+
+    try:
+        value = _eval(tree)
+    except (ValueError, ZeroDivisionError, InvalidOperation):
+        return None
+
+    normalized = format(value.normalize(), "f")
+    if "." in normalized:
+        normalized = normalized.rstrip("0").rstrip(".")
+    return normalized
+
+
 def _resolve_functions_once(text: str, data: Dict[str, Any]) -> str:
     def repl(match: re.Match[str]) -> str:
         fn_name = match.group(1).upper()
@@ -332,4 +397,6 @@ def evaluate_expression(expr: Any, data: Dict[str, Any]) -> str:
         previous = content
         content = _resolve_functions_once(content, data)
 
-    return _replace_placeholders(content, data)
+    resolved = _replace_placeholders(content, data)
+    calculated = _safe_eval_arithmetic(resolved)
+    return calculated if calculated is not None else resolved

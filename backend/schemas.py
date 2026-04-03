@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from pydantic import BaseModel, Field
 from typing import Optional, List, Any, Literal, Dict
 from datetime import date, datetime
@@ -826,6 +827,32 @@ class PaginatedSupplierResponse(BaseModel):
     items: List[SupplierResponse]
     total: int
 
+# TaxRate Schemas
+class TaxRateBase(BaseModel):
+    id: str
+    number: str
+    name: str
+    enable: Optional[str] = None
+    enable_title: Optional[str] = None
+    status: Optional[str] = None
+    source_created_time: Optional[str] = None
+    source_modified_time: Optional[str] = None
+    raw_data: Optional[str] = None
+
+class TaxRateResponse(TaxRateBase):
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+class TaxRateSyncRequest(BaseModel):
+    override_config: Optional[dict] = None
+
+class PaginatedTaxRateResponse(BaseModel):
+    items: List[TaxRateResponse]
+    total: int
+
 # KingdeeHouse Schemas
 class KingdeeHouseBase(BaseModel):
     id: str
@@ -1087,11 +1114,13 @@ class ChargeItemBase(BaseModel):
     remark: Optional[str] = None
     current_account_subject_id: Optional[str] = None
     profit_loss_subject_id: Optional[str] = None
+    kingdee_tax_rate_id: Optional[str] = None
 
 class ChargeItemResponse(ChargeItemBase):
     created_at: datetime
     current_account_subject: Optional[AccountingSubjectResponse] = None
     profit_loss_subject: Optional[AccountingSubjectResponse] = None
+    kingdee_tax_rate: Optional[TaxRateResponse] = None
 
     class Config:
         from_attributes = True
@@ -1099,6 +1128,7 @@ class ChargeItemResponse(ChargeItemBase):
 class ChargeItemUpdate(BaseModel):
     current_account_subject_id: Optional[str] = None
     profit_loss_subject_id: Optional[str] = None
+    kingdee_tax_rate_id: Optional[str] = None
 
 # KingdeeBankAccount Schemas
 class KingdeeBankAccountBase(BaseModel):

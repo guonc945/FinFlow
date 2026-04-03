@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 凭证生成引擎，负责解析模板表达式并生成金蝶凭证数据。
 
@@ -21,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models import (
     House, Park, Resident, ProjectList,
     KingdeeHouse, Customer, AuxiliaryData,
-    Bill, KingdeeBankAccount
+    Bill, KingdeeBankAccount, ChargeItem
 )
 from utils.expression_functions import evaluate_expression as evaluate_template_expression
 
@@ -41,6 +42,32 @@ def _normalize_id(val: Any) -> str:
     if re.fullmatch(r"\d+\.0+", text):
         return text.split(".")[0]
     return text
+
+
+def _resolve_tax_rate_value(
+    bill_data: Dict[str, Any],
+    target_prop: str,
+    db: Optional[Session] = None,
+    kd_cache: Optional[Dict[str, Any]] = None,
+) -> str:
+    charge_item_id = bill_data.get("charge_item_id")
+    normalized_item_id = _normalize_id(charge_item_id)
+    if not normalized_item_id:
+        return ""
+
+    charge_item = None
+    if kd_cache is not None:
+        charge_item = kd_cache.get("charge_items", {}).get(normalized_item_id)
+
+    if charge_item is None and db is not None:
+        try:
+            charge_item = db.query(ChargeItem).filter(ChargeItem.item_id == int(normalized_item_id)).first()
+        except (TypeError, ValueError):
+            return ""
+
+    if charge_item and charge_item.kingdee_tax_rate:
+        return getattr(charge_item.kingdee_tax_rate, target_prop, "") or ""
+    return ""
 
 
 # 金蝶衍生字段定义
@@ -109,6 +136,16 @@ KD_DERIVED_FIELDS = {
     'kd_pay_bank_name': {
         'source_field': 'community_id',
         'archive_model': 'bank_pay',
+        'target_prop': 'name',
+    },
+    'kd_tax_rate_number': {
+        'source_field': 'charge_item_id',
+        'archive_model': 'tax_rate',
+        'target_prop': 'number',
+    },
+    'kd_tax_rate_name': {
+        'source_field': 'charge_item_id',
+        'archive_model': 'tax_rate',
         'target_prop': 'name',
     },
 }
@@ -225,6 +262,9 @@ def resolve_kd_derived_field(
             bank = resolve_bank_account(0, direction, db)
             if bank:
                 return getattr(bank, target_prop, '') or ''
+
+        elif archive_model == 'tax_rate':
+            return _resolve_tax_rate_value(bill_data, target_prop, db=db)
 
     except Exception as e:
         logger.warning(f"解析金蝶衍生字段 '{field_name}' 失败: {e}")
@@ -471,7 +511,7 @@ def batch_preload_kd_cache(
     """
     批量预加载所有 bill 需要的金蝶关联数据，避免 N+1 查询。
 
-    返回缓存字典，包含 houses/parks/residents/projects/banks_receive/banks_pay。
+    返回缓存字典，包含 houses/parks/residents/projects/banks_receive/banks_pay/charge_items。
     """
     from sqlalchemy.orm import joinedload as _jl
 
@@ -482,6 +522,7 @@ def batch_preload_kd_cache(
         "projects": {},
         "banks_receive": {},
         "banks_pay": {},
+        "charge_items": {},
     }
 
     # 收集所有需要查询的 ID
@@ -595,6 +636,22 @@ def batch_preload_kd_cache(
     if default_pay:
         cache["banks_pay"]["_default"] = default_pay
 
+    charge_item_ids = set()
+    for bd in bills_data:
+        charge_item_id = _normalize_id(bd.get("charge_item_id"))
+        if charge_item_id:
+            charge_item_ids.add(charge_item_id)
+
+    if charge_item_ids:
+        rows = (
+            db.query(ChargeItem)
+            .options(_jl(ChargeItem.kingdee_tax_rate))
+            .filter(ChargeItem.item_id.in_([int(item_id) for item_id in charge_item_ids if item_id.isdigit()]))
+            .all()
+        )
+        for row in rows:
+            cache["charge_items"][str(row.item_id)] = row
+
     return cache
 
 
@@ -681,6 +738,9 @@ def _resolve_kd_field_cached(
                 bank = kd_cache.get(bank_key, {}).get("_default")
             if bank:
                 return getattr(bank, target_prop, "") or ""
+
+        elif archive_model == "tax_rate":
+            return _resolve_tax_rate_value(bill_data, target_prop, kd_cache=kd_cache)
 
     except Exception as e:
         logger.warning(f"缓存解析金蝶衍生字段 '{field_name}' 失败: {e}")

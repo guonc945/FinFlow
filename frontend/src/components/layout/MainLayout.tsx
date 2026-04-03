@@ -31,6 +31,7 @@ const MainLayout = () => {
             '/auxiliary-data-categories': { title: '辅助资料分类', subtitle: '维护金蝶财务档案中的辅助核算分类体系' },
             '/customers': { title: '客户管理', subtitle: '管理金蝶财务档案中的客户主数据' },
             '/suppliers': { title: '供应商管理', subtitle: '管理金蝶财务档案中的供应商主数据' },
+            '/tax-rates': { title: '税率档案', subtitle: '管理与同步金蝶财务档案中的税率资料' },
             '/kd-houses': { title: '金蝶房号', subtitle: '管理与同步金蝶财务档案中的房号资料' },
             '/bank-accounts': { title: '银行账户', subtitle: '管理与同步金蝶财务档案中的银行账户资料' },
             '/settings': { title: '系统设置', subtitle: '维护系统级参数、默认规则与运行配置' },

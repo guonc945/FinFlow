@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import json
 from typing import Any, Dict, List, Optional, Set
 
@@ -75,6 +76,7 @@ MENU_PERMISSION_DEFINITIONS = [
     {"key": "/auxiliary-data", "label": "辅助资料", "section": "金蝶财务", "group": "财务档案", "required": False, "admin_only": False, "default_enabled": True},
     {"key": "/customers", "label": "客户管理", "section": "金蝶财务", "group": "财务档案", "required": False, "admin_only": False, "default_enabled": True},
     {"key": "/suppliers", "label": "供应商管理", "section": "金蝶财务", "group": "财务档案", "required": False, "admin_only": False, "default_enabled": True},
+    {"key": "/tax-rates", "label": "税率档案", "section": "金蝶财务", "group": "财务档案", "required": False, "admin_only": False, "default_enabled": True},
     {"key": "/kd-houses", "label": "金蝶房号", "section": "金蝶财务", "group": "财务档案", "required": False, "admin_only": False, "default_enabled": True},
     {"key": "/bank-accounts", "label": "银行账户", "section": "金蝶财务", "group": "财务档案", "required": False, "admin_only": False, "default_enabled": True},
     {"key": "/vouchers/templates", "label": "凭证模板", "section": "集成中心", "group": "财务凭证", "required": False, "admin_only": False, "default_enabled": False},
@@ -329,4 +331,5 @@ def get_allowed_community_ids(
     ).all()
     
     return [r[0] for r in allowed_ids]
+
 

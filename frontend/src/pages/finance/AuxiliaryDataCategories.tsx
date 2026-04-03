@@ -1,13 +1,14 @@
-import { useState, useEffect } from 'react';
+﻿import { useState, useEffect } from 'react';
 import {
     RefreshCw, Tags,
-    Search, AlertTriangle, X
-, Filter , ChevronDown , ChevronUp } from 'lucide-react';
+    Search, Filter, ChevronDown, ChevronUp
+} from 'lucide-react';
 import axios from 'axios';
+import ConfirmModal from '../../components/common/ConfirmModal';
 import { useToast, ToastContainer } from '../../components/Toast';
 import { API_BASE_URL } from '../../services/apiBase';
 import './AccountingSubjects.css';
-import '../bills/Bills.css'; // Reusing consistency
+import '../bills/Bills.css';
 
 interface AuxiliaryDataCategory {
     id: string;
@@ -22,7 +23,7 @@ interface AuxiliaryDataCategory {
 const CTRL_STRATEGY_MAP: Record<string, string> = {
     '7': '私有',
     '5': '全局共享',
-    '6': '分级管控' // Some rows in 11.json had '6'
+    '6': '分级管控'
 };
 
 const AuxiliaryDataCategoriesPage = () => {
@@ -37,13 +38,13 @@ const AuxiliaryDataCategoriesPage = () => {
     const { toasts, showToast, removeToast } = useToast();
 
     useEffect(() => {
-        fetchCategories();
+        void fetchCategories();
     }, [currentPage, pageSize]);
 
     useEffect(() => {
         const timer = setTimeout(() => {
             setCurrentPage(1);
-            fetchCategories();
+            void fetchCategories();
         }, 300);
         return () => clearTimeout(timer);
     }, [searchTerm]);
@@ -54,7 +55,7 @@ const AuxiliaryDataCategoriesPage = () => {
             const skip = (currentPage - 1) * pageSize;
             const res = await axios.get(`${API_BASE_URL}/finance/auxiliary-data-categories`, {
                 params: {
-                    skip: skip,
+                    skip,
                     limit: pageSize,
                     search: searchTerm || undefined
                 }
@@ -80,8 +81,10 @@ const AuxiliaryDataCategoriesPage = () => {
         setLoading(true);
         try {
             await axios.post(`${API_BASE_URL}/finance/auxiliary-data-categories/sync`, {});
-            showToast('success', '同步任务已提交', '系统正在后台同步辅助资料分类数据，请稍后刷新。');
-            setTimeout(fetchCategories, 3000);
+            showToast('success', '同步任务已提交', '系统正在后台同步辅助资料分类数据，请稍后刷新');
+            setTimeout(() => {
+                void fetchCategories();
+            }, 3000);
         } catch (err: any) {
             showToast('error', '同步失败', err.response?.data?.detail || '无法启动同步任务');
         } finally {
@@ -89,7 +92,7 @@ const AuxiliaryDataCategoriesPage = () => {
         }
     };
 
-    const totalPages = Math.ceil(total / pageSize);
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
     return (
         <div className="page-container fade-in">
@@ -117,12 +120,8 @@ const AuxiliaryDataCategoriesPage = () => {
                                 />
                             </div>
                             <div className="divider-v"></div>
-                            <button
-                                onClick={handleSync}
-                                disabled={loading}
-                                className="btn-primary"
-                            >
-                                <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+                            <button onClick={() => setIsConfirmModalOpen(true)} disabled={loading} className="btn-primary">
+                                <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
                                 {loading ? '同步中...' : '立即同步'}
                             </button>
                         </div>
@@ -148,21 +147,11 @@ const AuxiliaryDataCategoriesPage = () => {
                             {categories.length > 0 ? (
                                 categories.map((item, index) => (
                                     <tr key={item.id} className="table-row hover:bg-slate-50/50 transition-colors border-b border-slate-50 group">
-                                        <td className="table-cell py-3 px-6 text-center font-medium text-slate-400">
-                                            {(currentPage - 1) * pageSize + index + 1}
-                                        </td>
-                                        <td className="table-cell py-3 px-6 font-mono text-slate-500 text-sm">
-                                            {item.number}
-                                        </td>
-                                        <td className="table-cell py-3 px-6 font-medium text-slate-800">
-                                            {item.name}
-                                        </td>
-                                        <td className="table-cell py-3 px-6 text-slate-500 text-sm italic">
-                                            {item.description || '-'}
-                                        </td>
-                                        <td className="table-cell py-3 px-6 text-slate-600 text-sm">
-                                            {item.createorg_name || '-'}
-                                        </td>
+                                        <td className="table-cell py-3 px-6 text-center font-medium text-slate-400">{(currentPage - 1) * pageSize + index + 1}</td>
+                                        <td className="table-cell py-3 px-6 font-mono text-slate-500 text-sm">{item.number}</td>
+                                        <td className="table-cell py-3 px-6 font-medium text-slate-800">{item.name}</td>
+                                        <td className="table-cell py-3 px-6 text-slate-500 text-sm italic">{item.description || '-'}</td>
+                                        <td className="table-cell py-3 px-6 text-slate-600 text-sm">{item.createorg_name || '-'}</td>
                                         <td className="table-cell py-3 px-6 text-center">
                                             {item.fissyspreset ?
                                                 <span className="text-xs font-medium text-amber-600 bg-amber-50 px-2.5 py-1 rounded-full border border-amber-200">是</span> :
@@ -198,28 +187,12 @@ const AuxiliaryDataCategoriesPage = () => {
                 </div>
 
                 <div className="pagination-footer p-4 bg-white/60 border-t border-slate-100 flex items-center justify-between text-sm">
-                    <div className="pagination-info text-slate-600">
-                        共 <span className="text-orange-600 font-bold mx-1">{total}</span> 个类别
-                    </div>
+                    <div className="pagination-info text-slate-600">共 <span className="text-orange-600 font-bold mx-1">{total}</span> 个类别</div>
                     <div className="pagination-controls flex items-center gap-4">
                         <div className="page-buttons flex items-center gap-2">
-                            <button
-                                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                                disabled={currentPage === 1 || loading}
-                                className="page-btn px-3 py-1.5 rounded border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-orange-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                            >
-                                上一页
-                            </button>
-                            <div className="current-page-display bg-orange-50 text-orange-700 w-8 h-8 rounded flex items-center justify-center font-medium border border-orange-100">
-                                {currentPage}
-                            </div>
-                            <button
-                                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                                disabled={currentPage >= totalPages || loading}
-                                className="page-btn px-3 py-1.5 rounded border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-orange-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                            >
-                                下一页
-                            </button>
+                            <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1 || loading} className="page-btn px-3 py-1.5 rounded border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-orange-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">上一页</button>
+                            <div className="current-page-display bg-orange-50 text-orange-700 w-8 h-8 rounded flex items-center justify-center font-medium border border-orange-100">{currentPage}</div>
+                            <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages || loading} className="page-btn px-3 py-1.5 rounded border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-orange-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">下一页</button>
                         </div>
                     </div>
                 </div>
@@ -227,29 +200,15 @@ const AuxiliaryDataCategoriesPage = () => {
 
             <ToastContainer toasts={toasts} removeToast={removeToast} />
 
-            {/* Confirm Modal */}
-            {isConfirmModalOpen && (
-                <div className="modal-overlay fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="modal-content bg-white w-full max-w-md rounded-2xl shadow-xl overflow-hidden animate-fade-in border border-slate-100">
-                        <div className="modal-header p-6 pb-0 flex items-start justify-between">
-                            <div className="confirm-icon-wrapper w-12 h-12 rounded-full bg-orange-50 flex items-center justify-center text-orange-500 shrink-0">
-                                <AlertTriangle size={24} />
-                            </div>
-                            <button className="modal-close text-slate-400 hover:text-slate-600 transition-colors p-1" onClick={() => setIsConfirmModalOpen(false)}>
-                                <X size={20} />
-                            </button>
-                        </div>
-                        <div className="modal-body p-6 pt-4">
-                            <h2 className="modal-title font-bold text-lg text-slate-800 mb-2">同步分类列表</h2>
-                            <p className="modal-desc text-slate-600 text-sm leading-relaxed">确定要从金蝶星空系统同步辅助资料分类吗？这将会更新现有的所有类别定义。</p>
-                        </div>
-                        <div className="modal-footer p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-3 rounded-b-2xl">
-                            <button className="btn-cancel px-4 py-2 font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors" onClick={() => setIsConfirmModalOpen(false)}>取消</button>
-                            <button className="btn-confirm px-4 py-2 font-medium text-white bg-orange-600 rounded-lg hover:bg-orange-700 shadow-sm shadow-orange-200 transition-colors" onClick={handleSync}>执行同步</button>
-                        </div>
-                    </div>
-                </div>
-            )}
+            <ConfirmModal
+                isOpen={isConfirmModalOpen}
+                title="同步分类列表"
+                message="确定要从金蝶星空系统同步辅助资料分类吗？这将更新现有的所有分类定义。"
+                confirmText="执行同步"
+                loading={loading}
+                onCancel={() => setIsConfirmModalOpen(false)}
+                onConfirm={handleSync}
+            />
         </div>
     );
 };

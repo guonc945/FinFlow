@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import json
 from datetime import datetime
 from uuid import uuid4
@@ -44,7 +45,7 @@ def receive_oa_callback(data: schemas.OACallback, db: Session = Depends(get_db))
 
 @router.get("/api/journals", response_model=list[schemas.CashJournalResponse])
 def list_journals(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    journals = db.query(models.CashJournal).offset(skip).limit(limit).all()
+    journals = db.query(models.CashJournal).order_by(models.CashJournal.id.asc()).offset(skip).limit(limit).all()
     return journals
 
 

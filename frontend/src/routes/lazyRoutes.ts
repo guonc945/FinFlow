@@ -39,6 +39,7 @@ export const Residents = lazyWithPreload(() => import('../pages/residents'));
 export const Parks = lazyWithPreload(() => import('../pages/parks'));
 export const Customers = lazyWithPreload(() => import('../pages/finance/Customers'));
 export const Suppliers = lazyWithPreload(() => import('../pages/finance/Suppliers'));
+export const TaxRates = lazyWithPreload(() => import('../pages/finance/TaxRates'));
 export const KingdeeHouses = lazyWithPreload(() => import('../pages/finance/KingdeeHouses'));
 export const AuxiliaryDataPage = lazyWithPreload(() => import('../pages/finance/AuxiliaryData'));
 export const AuxiliaryDataCategoriesPage = lazyWithPreload(() => import('../pages/finance/AuxiliaryDataCategories'));
@@ -63,6 +64,7 @@ const routePreloaders: Record<string, () => Promise<unknown>> = {
     '/accounting-subjects': AccountingSubjects.preload,
     '/customers': Customers.preload,
     '/suppliers': Suppliers.preload,
+    '/tax-rates': TaxRates.preload,
     '/kd-houses': KingdeeHouses.preload,
     '/auxiliary-data': AuxiliaryDataPage.preload,
     '/auxiliary-data-categories': AuxiliaryDataCategoriesPage.preload,

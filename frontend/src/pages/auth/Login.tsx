@@ -75,10 +75,6 @@ const Login = () => {
                         {isLoading ? '登录中...' : '登录'}
                     </button>
                 </form>
-
-                <div className="login-footer">
-                    <p>技术支持：郭年超</p>
-                </div>
             </div>
         </div>
     );

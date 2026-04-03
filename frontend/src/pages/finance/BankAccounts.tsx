@@ -1,39 +1,37 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
     RefreshCw,
-    Search, AlertTriangle, X,
+    Search,
     Filter, ChevronDown, ChevronUp
 } from 'lucide-react';
 import axios from 'axios';
+import ConfirmModal from '../../components/common/ConfirmModal';
 import { useToast, ToastContainer } from '../../components/Toast';
 import { API_BASE_URL } from '../../services/apiBase';
 import './AccountingSubjects.css';
 import '../bills/Bills.css';
 
-// 账户性质映射
 const ACCTTYPE_MAP: Record<string, { label: string; color: string }> = {
-    'in_out': { label: '收支户', color: '#2563eb' },
-    'in': { label: '收入户', color: '#10b981' },
-    'out': { label: '支出户', color: '#f59e0b' },
+    in_out: { label: '收支账户', color: '#2563eb' },
+    in: { label: '收入账户', color: '#10b981' },
+    out: { label: '支出账户', color: '#f59e0b' },
 };
 
-// 账户类型映射
 const ACCTSTYLE_MAP: Record<string, string> = {
-    'basic': '基本存款账户',
-    'normal': '一般存款账户',
-    'temp': '临时存款账户',
-    'spcl': '专用存款账户',
-    'fgn_curr': '经常项目外汇账户',
-    'fng_fin': '资本项目外汇账户',
+    basic: '基本存款账户',
+    normal: '一般存款账户',
+    temp: '临时存款账户',
+    spcl: '专用存款账户',
+    fgn_curr: '经常项目外汇账户',
+    fng_fin: '资本项目外汇账户',
 };
 
-// 账户状态映射
 const ACCTSTATUS_MAP: Record<string, { label: string; bg: string; color: string; border: string }> = {
-    'normal': { label: '正常', bg: '#dcfce7', color: '#15803d', border: '#86efac' },
-    'closing': { label: '销户中', bg: '#fef3c7', color: '#b45309', border: '#fcd34d' },
-    'changing': { label: '变更中', bg: '#dbeafe', color: '#1d4ed8', border: '#93c5fd' },
-    'closed': { label: '已销户', bg: '#fee2e2', color: '#b91c1c', border: '#fca5a5' },
-    'freeze': { label: '冻结', bg: '#ede9fe', color: '#6d28d9', border: '#d8b4fe' },
+    normal: { label: '正常', bg: '#dcfce7', color: '#15803d', border: '#86efac' },
+    closing: { label: '销户中', bg: '#fef3c7', color: '#b45309', border: '#fcd34d' },
+    changing: { label: '变更中', bg: '#dbeafe', color: '#1d4ed8', border: '#93c5fd' },
+    closed: { label: '已销户', bg: '#fee2e2', color: '#b91c1c', border: '#fca5a5' },
+    freeze: { label: '冻结', bg: '#ede9fe', color: '#6d28d9', border: '#d8b4fe' },
 };
 
 interface KingdeeBankAccount {
@@ -75,7 +73,6 @@ const BankAccounts = () => {
     const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
     const { toasts, showToast, removeToast } = useToast();
 
-    // Re-fetch when search changes, reset to page 1
     useEffect(() => {
         const timer = setTimeout(() => {
             setDebouncedSearchTerm(searchTerm);
@@ -85,7 +82,7 @@ const BankAccounts = () => {
     }, [searchTerm]);
 
     useEffect(() => {
-        fetchAccounts();
+        void fetchAccounts();
     }, [currentPage, pageSize, debouncedSearchTerm]);
 
     const fetchAccounts = async () => {
@@ -94,7 +91,7 @@ const BankAccounts = () => {
             const skip = (currentPage - 1) * pageSize;
             const res = await axios.get(`${API_BASE_URL}/finance/kd-bank-accounts`, {
                 params: {
-                    skip: skip,
+                    skip,
                     limit: pageSize,
                     search: debouncedSearchTerm || undefined
                 }
@@ -120,16 +117,18 @@ const BankAccounts = () => {
         setLoading(true);
         try {
             await axios.post(`${API_BASE_URL}/finance/kd-bank-accounts/sync`, {});
-            showToast('success', '同步任务已提交', '系统正在后台处理数据同步，请在 1-2 分钟后尝试刷新列表。');
-            setTimeout(fetchAccounts, 3000);
+            showToast('success', '同步任务已提交', '系统正在后台处理银行账户同步，请在 1-2 分钟后刷新列表查看结果');
+            setTimeout(() => {
+                void fetchAccounts();
+            }, 3000);
         } catch (err: any) {
-            showToast('error', '同步异常', err.response?.data?.error || err.response?.data?.detail || err.message || '由于网络或授权原因，同步请求未能成功发送');
+            showToast('error', '同步异常', err.response?.data?.error || err.response?.data?.detail || err.message || '由于网络或授权原因，同步请求未能成功发起');
         } finally {
             setLoading(false);
         }
     };
 
-    const totalPages = Math.ceil(total / pageSize);
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
     const getAcctStatusBadge = (acctstatus?: string) => {
         const info = ACCTSTATUS_MAP[acctstatus || ''] || { label: acctstatus || '未知', bg: '#f1f5f9', color: '#64748b', border: '#e2e8f0' };
@@ -177,7 +176,7 @@ const BankAccounts = () => {
                                 <Search size={14} className="search-icon" />
                                 <input
                                     type="text"
-                                    placeholder="搜索银行账号、账户名称或开户行..."
+                                    placeholder="搜索银行账号、账户简称或开户行..."
                                     value={searchTerm}
                                     onChange={e => setSearchTerm(e.target.value)}
                                 />
@@ -188,7 +187,7 @@ const BankAccounts = () => {
                                 disabled={loading}
                                 className="btn-primary"
                             >
-                                <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+                                <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
                                 {loading ? '同步中...' : '立即同步'}
                             </button>
                         </div>
@@ -286,7 +285,7 @@ const BankAccounts = () => {
                     <div className="pagination-info">
                         共 <span className="text-primary font-bold">{total}</span> 条记录
                         <span className="mx-2 text-slate-300">|</span>
-                        第 {currentPage} / {totalPages || 1} 页
+                        第 {currentPage} / {totalPages} 页
                     </div>
                     <div className="pagination-controls">
                         <div className="page-size-selector">
@@ -329,29 +328,15 @@ const BankAccounts = () => {
             </div>
             <ToastContainer toasts={toasts} removeToast={removeToast} />
 
-            {/* 同步确认弹窗 */}
-            {isConfirmModalOpen && (
-                <div className="modal-overlay">
-                    <div className="modal-content confirm-modal animate-fade-in">
-                        <div className="modal-header">
-                            <div className="confirm-icon-wrapper">
-                                <AlertTriangle size={32} />
-                            </div>
-                            <button className="modal-close" onClick={() => setIsConfirmModalOpen(false)}>
-                                <X size={20} />
-                            </button>
-                        </div>
-                        <div className="modal-body">
-                            <h2 className="modal-title">同步银行账户信息</h2>
-                            <p className="modal-desc">确定要从金蝶星空系统同步银行账户信息吗？这将会通过配置的"金蝶银行账户查询"接口拉取最新数据并在后台更新。</p>
-                        </div>
-                        <div className="modal-footer">
-                            <button className="btn-cancel" onClick={() => setIsConfirmModalOpen(false)}>取消</button>
-                            <button className="btn-confirm" onClick={handleSync}>确定同步</button>
-                        </div>
-                    </div>
-                </div>
-            )}
+            <ConfirmModal
+                isOpen={isConfirmModalOpen}
+                title="同步银行账户信息"
+                message="确定要从金蝶星空系统同步银行账户信息吗？这将通过已配置的“金蝶银行账户查询”接口拉取最新数据，并在后台更新本地银行账户档案。"
+                confirmText="确定同步"
+                loading={loading}
+                onCancel={() => setIsConfirmModalOpen(false)}
+                onConfirm={handleSync}
+            />
         </div>
     );
 };

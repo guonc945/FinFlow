@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from sqlalchemy import Column, String, Float, DateTime, Date, Text, Boolean, Integer, BigInteger, ForeignKey, CHAR, DECIMAL, ForeignKeyConstraint, Index, Table
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -94,6 +95,7 @@ class ChargeItem(Base):
     # 鏄犲皠浼氳绉戠洰
     current_account_subject_id = Column(String(50), ForeignKey("accounting_subjects.id"), nullable=True)
     profit_loss_subject_id = Column(String(50), ForeignKey("accounting_subjects.id"), nullable=True)
+    kingdee_tax_rate_id = Column(String(50), ForeignKey("tax_rates.id"), nullable=True)
 
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
@@ -101,6 +103,7 @@ class ChargeItem(Base):
     # 鍏崇郴鏄犲皠
     current_account_subject = relationship("AccountingSubject", foreign_keys=[current_account_subject_id])
     profit_loss_subject = relationship("AccountingSubject", foreign_keys=[profit_loss_subject_id])
+    kingdee_tax_rate = relationship("TaxRate", foreign_keys=[kingdee_tax_rate_id])
 
 class ProjectList(Base):
     __tablename__ = "projects_lists"
@@ -1001,6 +1004,22 @@ class Supplier(Base):
 
     raw_data = Column(Text) # 瀹屾暣鐨勫師濮?JSON 鏁版嵁
     
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+class TaxRate(Base):
+    __tablename__ = "tax_rates"
+
+    id = Column(String(50), primary_key=True)
+    number = Column(String(50), nullable=False, index=True)
+    name = Column(String(200), nullable=False)
+    enable = Column(String(10))
+    enable_title = Column(String(50))
+    status = Column(String(10))
+    source_created_time = Column(String(30))
+    source_modified_time = Column(String(30))
+    raw_data = Column(Text)
+
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 

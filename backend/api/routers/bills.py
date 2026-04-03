@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import csv
 import io
 from datetime import datetime
@@ -705,14 +706,36 @@ def get_sync_status(task_id: str):
 
 @router.get("/api/bills/charge-items")
 def get_bill_charge_items(
+    x_account_book_number: Optional[str] = Header(None, alias="X-Account-Book-Number"),
     db: Session = Depends(get_db),
     allowed_community_ids: List[int] = Depends(get_allowed_community_ids)
 ):
     """Get all distinct charge items from existing projects and charge items mapping."""
     if not allowed_community_ids:
         return []
+
+    account_book_number = _decode_header_value(x_account_book_number) if x_account_book_number else None
+    if not account_book_number:
+        return []
+
+    book_community_rows = (
+        db.query(models.ProjectList.proj_id)
+        .join(
+            models.KingdeeAccountBook,
+            cast(models.ProjectList.kingdee_account_book_id, String) == cast(models.KingdeeAccountBook.id, String),
+        )
+        .filter(models.KingdeeAccountBook.number == account_book_number)
+        .all()
+    )
+    if not book_community_rows:
+        return []
+
+    allowed_set = {int(cid) for cid in allowed_community_ids}
+    book_set = {int(row[0]) for row in book_community_rows}
+    scoped_community_ids = list(allowed_set & book_set)
+    if not scoped_community_ids:
+        return []
         
-    from sqlalchemy import cast, String
     query = db.query(
         models.ChargeItem.item_name,
         models.ProjectList.proj_name,
@@ -720,7 +743,7 @@ def get_bill_charge_items(
     ).join(
         models.ProjectList, models.ChargeItem.communityid == cast(models.ProjectList.proj_id, String)
     ).filter(
-        models.ProjectList.proj_id.in_(allowed_community_ids)
+        models.ProjectList.proj_id.in_(scoped_community_ids)
     )
     
     items = query.all()

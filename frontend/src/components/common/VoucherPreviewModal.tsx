@@ -56,25 +56,66 @@ const VoucherPreviewModal = ({
   };
   const acctView = data?.accounting_view;
   const kdJson = data?.kingdee_json;
-  const moneyToCents = (value: any): number => {
+  type DecimalValue = { int: bigint; scale: number };
+  const ZERO_DECIMAL: DecimalValue = { int: 0n, scale: 0 };
+  const parseDecimal = (value: any): DecimalValue => {
     const raw = String(value ?? "").replace(/,/g, "").trim();
-    if (!raw) return 0;
+    if (!raw) return ZERO_DECIMAL;
 
-    const sign = raw.startsWith("-") ? -1 : 1;
+    const sign = raw.startsWith("-") ? -1n : 1n;
     const normalized = raw.replace(/^[+-]/, "");
-    const [intPartRaw = "0", fracPartRaw = ""] = normalized.split(".");
-    const intPart = intPartRaw.replace(/\D/g, "") || "0";
-    const fracPart = (fracPartRaw.replace(/\D/g, "") + "00").slice(0, 2);
+    if (!/^\d*(\.\d*)?$/.test(normalized)) return ZERO_DECIMAL;
 
-    return sign * (Number(intPart) * 100 + Number(fracPart));
+    const [intPartRaw = "0", fracPartRaw = ""] = normalized.split(".");
+    const intPart = intPartRaw.replace(/^0+(?=\d)/, "") || "0";
+    const fracPart = fracPartRaw.replace(/0+$/, "");
+    const digits = `${intPart}${fracPart}`.replace(/^0+(?=\d)/, "") || "0";
+    return { int: BigInt(digits) * sign, scale: fracPart.length };
   };
-  const centsToMoney = (cents: number): number => cents / 100;
+  const alignDecimal = (
+    left: DecimalValue,
+    right: DecimalValue,
+  ): [bigint, bigint, number] => {
+    const scale = Math.max(left.scale, right.scale);
+    const leftFactor = 10n ** BigInt(scale - left.scale);
+    const rightFactor = 10n ** BigInt(scale - right.scale);
+    return [left.int * leftFactor, right.int * rightFactor, scale];
+  };
+  const addDecimal = (left: DecimalValue, right: DecimalValue): DecimalValue => {
+    const [l, r, scale] = alignDecimal(left, right);
+    return { int: l + r, scale };
+  };
+  const subDecimal = (left: DecimalValue, right: DecimalValue): DecimalValue => {
+    const [l, r, scale] = alignDecimal(left, right);
+    return { int: l - r, scale };
+  };
+  const compareDecimal = (left: DecimalValue, right: DecimalValue): number => {
+    const [l, r] = alignDecimal(left, right);
+    if (l === r) return 0;
+    return l > r ? 1 : -1;
+  };
+  const decimalToString = (value: DecimalValue): string => {
+    if (value.int === 0n) return "0";
+    const negative = value.int < 0n;
+    const absText = (negative ? -value.int : value.int).toString();
+    if (value.scale === 0) return `${negative ? "-" : ""}${absText}`;
+    const zeroPad = Math.max(value.scale - absText.length + 1, 0);
+    const padded = `${"0".repeat(zeroPad)}${absText}`;
+    const splitAt = padded.length - value.scale;
+    const intPart = padded.slice(0, splitAt) || "0";
+    const fracPart = padded.slice(splitAt).replace(/0+$/, "");
+    if (!fracPart) return `${negative ? "-" : ""}${intPart}`;
+    return `${negative ? "-" : ""}${intPart}.${fracPart}`;
+  };
+  const decimalToNumber = (value: DecimalValue): number =>
+    Number(decimalToString(value));
+  const decimalIsPositive = (value: DecimalValue): boolean => value.int > 0n;
   const buildKingdeeJsonFromEntries = (entries: any[]) => {
     if (!kdJson?.data?.[0]) return kdJson;
     const header = kdJson.data[0];
     const mappedEntries = entries.map((entry: any, idx: number) => {
-      const debit = centsToMoney(moneyToCents(entry.debit));
-      const credit = centsToMoney(moneyToCents(entry.credit));
+      const debit = decimalToString(parseDecimal(entry.debit_exact ?? entry.debit));
+      const credit = decimalToString(parseDecimal(entry.credit_exact ?? entry.credit));
       const kdEntry: any = {
         seq: idx + 1,
         edescription: entry.summary || "",
@@ -227,9 +268,9 @@ const VoucherPreviewModal = ({
     const merged: any[] = [];
     const indexMap = new Map<string, number>();
     entries.forEach((entry, sourceIndex) => {
-      const debitCents = moneyToCents(entry.debit);
-      const creditCents = moneyToCents(entry.credit);
-      const direction = debitCents > 0 ? "debit" : "credit";
+      const debitDecimal = parseDecimal(entry.debit);
+      const creditDecimal = parseDecimal(entry.credit);
+      const direction = decimalIsPositive(debitDecimal) ? "debit" : "credit";
       const accountKey = `${entry.account_display || ""}|${entry.account_code || ""}`;
       const assgrpKey = JSON.stringify(normalizeAssgrp(entry.assgrp));
       const businessSortBucket = getEntryBusinessSortBucket(entry);
@@ -238,8 +279,14 @@ const VoucherPreviewModal = ({
       if (indexMap.has(key)) {
         const idx = indexMap.get(key) as number;
         const target = merged[idx];
-        target.debit_cents = Number(target.debit_cents || 0) + debitCents;
-        target.credit_cents = Number(target.credit_cents || 0) + creditCents;
+        target.debit_decimal = addDecimal(
+          target.debit_decimal || ZERO_DECIMAL,
+          debitDecimal,
+        );
+        target.credit_decimal = addDecimal(
+          target.credit_decimal || ZERO_DECIMAL,
+          creditDecimal,
+        );
         target.source_line_no_min = Math.min(
           Number(target.source_line_no_min || sourceLineNo),
           sourceLineNo,
@@ -257,8 +304,8 @@ const VoucherPreviewModal = ({
       indexMap.set(key, merged.length);
       merged.push({
         ...entry,
-        debit_cents: debitCents,
-        credit_cents: creditCents,
+        debit_decimal: debitDecimal,
+        credit_decimal: creditDecimal,
         localrate: Number(entry.localrate || 1),
         source_line_no_min: sourceLineNo,
         source_index_min: sourceIndex,
@@ -307,8 +354,10 @@ const VoucherPreviewModal = ({
 
     return sortedMerged.map((entry, idx) => ({
       ...entry,
-      debit: centsToMoney(Number(entry.debit_cents || 0)),
-      credit: centsToMoney(Number(entry.credit_cents || 0)),
+      debit_exact: decimalToString(entry.debit_decimal || ZERO_DECIMAL),
+      credit_exact: decimalToString(entry.credit_decimal || ZERO_DECIMAL),
+      debit: decimalToNumber(entry.debit_decimal || ZERO_DECIMAL),
+      credit: decimalToNumber(entry.credit_decimal || ZERO_DECIMAL),
       line_no: idx + 1,
     }));
   };
@@ -326,40 +375,52 @@ const VoucherPreviewModal = ({
     }
 
     const jsonEntries = effectiveKingdeeJson.data[0].entries as any[];
-    const displayedDebitCents = displayedEntries.reduce(
-      (sum: number, entry: any) => sum + moneyToCents(entry.debit),
-      0,
+    const displayedDebit = displayedEntries.reduce(
+      (sum: DecimalValue, entry: any) =>
+        addDecimal(sum, parseDecimal(entry.debit_exact ?? entry.debit)),
+      ZERO_DECIMAL,
     );
-    const displayedCreditCents = displayedEntries.reduce(
-      (sum: number, entry: any) => sum + moneyToCents(entry.credit),
-      0,
+    const displayedCredit = displayedEntries.reduce(
+      (sum: DecimalValue, entry: any) =>
+        addDecimal(sum, parseDecimal(entry.credit_exact ?? entry.credit)),
+      ZERO_DECIMAL,
     );
-    const jsonDebitCents = jsonEntries.reduce(
-      (sum: number, entry: any) => sum + moneyToCents(entry.debitori),
-      0,
+    const jsonDebit = jsonEntries.reduce(
+      (sum: DecimalValue, entry: any) =>
+        addDecimal(sum, parseDecimal(entry.debitori)),
+      ZERO_DECIMAL,
     );
-    const jsonCreditCents = jsonEntries.reduce(
-      (sum: number, entry: any) => sum + moneyToCents(entry.creditori),
-      0,
+    const jsonCredit = jsonEntries.reduce(
+      (sum: DecimalValue, entry: any) =>
+        addDecimal(sum, parseDecimal(entry.creditori)),
+      ZERO_DECIMAL,
     );
-    const jsonLocalDebitCents = jsonEntries.reduce(
-      (sum: number, entry: any) => sum + moneyToCents(entry.debitlocal),
-      0,
+    const jsonLocalDebit = jsonEntries.reduce(
+      (sum: DecimalValue, entry: any) =>
+        addDecimal(sum, parseDecimal(entry.debitlocal)),
+      ZERO_DECIMAL,
     );
-    const jsonLocalCreditCents = jsonEntries.reduce(
-      (sum: number, entry: any) => sum + moneyToCents(entry.creditlocal),
-      0,
+    const jsonLocalCredit = jsonEntries.reduce(
+      (sum: DecimalValue, entry: any) =>
+        addDecimal(sum, parseDecimal(entry.creditlocal)),
+      ZERO_DECIMAL,
     );
 
-    if (jsonDebitCents !== jsonCreditCents) {
+    const rightFloatDiff = subDecimal(jsonDebit, jsonCredit);
+    const leftFloatDiff = subDecimal(jsonCredit, jsonDebit);
+    if (rightFloatDiff.int !== 0n || leftFloatDiff.int !== 0n) {
       return { ok: false, message: "JSON 借贷金额不平衡，已阻止推送。" };
     }
-    if (jsonLocalDebitCents !== jsonLocalCreditCents) {
+
+    const rightLocalDiff = subDecimal(jsonLocalDebit, jsonLocalCredit);
+    const leftLocalDiff = subDecimal(jsonLocalCredit, jsonLocalDebit);
+    if (rightLocalDiff.int !== 0n || leftLocalDiff.int !== 0n) {
       return { ok: false, message: "JSON 本位币借贷金额不平衡，已阻止推送。" };
     }
+
     if (
-      jsonDebitCents !== displayedDebitCents ||
-      jsonCreditCents !== displayedCreditCents
+      compareDecimal(jsonDebit, displayedDebit) !== 0 ||
+      compareDecimal(jsonCredit, displayedCredit) !== 0
     ) {
       return { ok: false, message: "JSON 金额与当前凭证视图不一致，已阻止推送。" };
     }

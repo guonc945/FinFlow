@@ -1,4 +1,5 @@
-﻿import json
+# -*- coding: utf-8 -*-
+import json
 import hashlib
 import re
 import uuid
@@ -8,7 +9,7 @@ from datetime import datetime, timedelta
 from urllib.parse import quote
 from utils.crypto import encrypt_value
 from fastapi import FastAPI, Depends, HTTPException, Query, Request, status, BackgroundTasks, Header
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
@@ -914,7 +915,10 @@ _extract_kingdee_push_message = voucher_helper_module._extract_kingdee_push_mess
 _finalize_bill_push_records = voucher_helper_module._finalize_bill_push_records
 
 
-app = FastAPI(title="FinFlow Middleware")
+app = FastAPI(
+    title="FinFlow Middleware",
+    default_response_class=JSONResponse,
+)
 app.include_router(archives_router_module.router)
 app.include_router(bills_router_module.router)
 app.include_router(external_services_router_module.router)
@@ -1143,6 +1147,7 @@ MENU_PERMISSION_DEFINITIONS = [
     {"key": "/auxiliary-data", "label": "辅助资料", "section": "金蝶财务", "group": "财务档案", "required": False, "admin_only": False, "default_enabled": True},
     {"key": "/customers", "label": "客户管理", "section": "金蝶财务", "group": "财务档案", "required": False, "admin_only": False, "default_enabled": True},
     {"key": "/suppliers", "label": "供应商管理", "section": "金蝶财务", "group": "财务档案", "required": False, "admin_only": False, "default_enabled": True},
+    {"key": "/tax-rates", "label": "税率档案", "section": "金蝶财务", "group": "财务档案", "required": False, "admin_only": False, "default_enabled": True},
     {"key": "/kd-houses", "label": "金蝶房号", "section": "金蝶财务", "group": "财务档案", "required": False, "admin_only": False, "default_enabled": True},
     {"key": "/bank-accounts", "label": "银行账户", "section": "金蝶财务", "group": "财务档案", "required": False, "admin_only": False, "default_enabled": True},
     {"key": "/vouchers/templates", "label": "凭证模板", "section": "集成中心", "group": "财务凭证", "required": False, "admin_only": False, "default_enabled": False},
@@ -1682,16 +1687,27 @@ def _validate_voucher_json_amounts(kingdee_json: Dict[str, Any]) -> None:
         debit_local += _try_parse_decimal(entry.get("debitlocal")) or Decimal("0")
         credit_local += _try_parse_decimal(entry.get("creditlocal")) or Decimal("0")
 
-    tolerance = Decimal("0.000001")
-    if abs(debit_ori - credit_ori) > tolerance:
+    right_diff_ori = debit_ori - credit_ori
+    left_diff_ori = credit_ori - debit_ori
+    if right_diff_ori != Decimal("0") or left_diff_ori != Decimal("0"):
         raise HTTPException(
             status_code=400,
-            detail=f"Voucher JSON debit/credit not balanced: debitori={debit_ori} creditori={credit_ori}",
+            detail=(
+                "Voucher JSON debit/credit not balanced "
+                f"(right_diff={right_diff_ori}, left_diff={left_diff_ori}): "
+                f"debitori={debit_ori} creditori={credit_ori}"
+            ),
         )
-    if abs(debit_local - credit_local) > tolerance:
+    right_diff_local = debit_local - credit_local
+    left_diff_local = credit_local - debit_local
+    if right_diff_local != Decimal("0") or left_diff_local != Decimal("0"):
         raise HTTPException(
             status_code=400,
-            detail=f"Voucher JSON local debit/credit not balanced: debitlocal={debit_local} creditlocal={credit_local}",
+            detail=(
+                "Voucher JSON local debit/credit not balanced "
+                f"(right_diff={right_diff_local}, left_diff={left_diff_local}): "
+                f"debitlocal={debit_local} creditlocal={credit_local}"
+            ),
         )
 
 

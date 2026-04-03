@@ -266,9 +266,20 @@ export interface ChargeItem {
     item_name: string;
     current_account_subject_id?: string;
     profit_loss_subject_id?: string;
+    kingdee_tax_rate_id?: string;
     current_account_subject?: AccountingSubject;
     profit_loss_subject?: AccountingSubject;
+    kingdee_tax_rate?: TaxRateBrief;
     created_at: string;
+}
+
+export interface TaxRateBrief {
+    id: string;
+    number: string;
+    name: string;
+    enable?: string;
+    enable_title?: string;
+    status?: string;
 }
 
 export interface KingdeeProject {

@@ -13,6 +13,7 @@ from utils.variable_parser import resolve_dict_variables, resolve_variables
 
 router = APIRouter()
 logger = logging.getLogger("project_sync")
+TAX_RATE_SYNC_STATUS_KEY = "TAX_RATE_SYNC_STATUS"
 
 
 def _main_attr(name: str):
@@ -25,6 +26,26 @@ def get_archive_config(*args, **kwargs):
 
 def save_archive_config(*args, **kwargs):
     return _main_attr("save_archive_config")(*args, **kwargs)
+
+
+def _save_tax_rate_sync_status(db_session: Session, payload: Dict[str, object]) -> None:
+    import json
+
+    value = json.dumps(payload, ensure_ascii=False)
+    var = db_session.query(models.GlobalVariable).filter(models.GlobalVariable.key == TAX_RATE_SYNC_STATUS_KEY).first()
+    if var:
+        var.value = value
+        var.category = "sync_status"
+        var.description = "Tax rate sync latest status"
+    else:
+        var = models.GlobalVariable(
+            key=TAX_RATE_SYNC_STATUS_KEY,
+            value=value,
+            description="Tax rate sync latest status",
+            category="sync_status",
+        )
+        db_session.add(var)
+    db_session.commit()
 
 # ===================== Accounting Subject Management (Legacy/Specific) =====================
 
@@ -827,6 +848,353 @@ def sync_suppliers(
             
     background_tasks.add_task(run_sync, user_ctx)
     return {"message": "Supplier sync started"}
+
+# ===================== Tax Rate Management =====================
+
+@router.get("/api/finance/tax-rates", response_model=schemas.PaginatedTaxRateResponse)
+def get_tax_rates(
+    skip: int = 0,
+    limit: int = 100,
+    search: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    query = db.query(models.TaxRate)
+    if search:
+        search_filter = f"%{search}%"
+        query = query.filter(
+            (models.TaxRate.number.ilike(search_filter)) |
+            (models.TaxRate.name.ilike(search_filter))
+        )
+    total = query.count()
+    items = query.order_by(models.TaxRate.number).offset(skip).limit(limit).all()
+    return {"items": items, "total": total}
+
+
+@router.get("/api/finance/tax-rates/sync-status")
+def get_tax_rate_sync_status(db: Session = Depends(get_db)):
+    import json
+
+    var = db.query(models.GlobalVariable).filter(models.GlobalVariable.key == TAX_RATE_SYNC_STATUS_KEY).first()
+    if not var or not var.value:
+        return {
+            "status": "idle",
+            "message": "尚未执行税率同步",
+            "started_at": None,
+            "finished_at": None,
+            "total_synced": 0,
+            "api_id": 32,
+        }
+
+    try:
+        payload = json.loads(var.value)
+        if isinstance(payload, dict):
+            return payload
+    except Exception:
+        pass
+
+    return {
+        "status": "unknown",
+        "message": "税率同步状态记录已损坏",
+        "started_at": None,
+        "finished_at": None,
+        "total_synced": 0,
+        "api_id": 32,
+    }
+
+@router.post("/api/finance/tax-rates/sync")
+def sync_tax_rates(
+    request: schemas.TaxRateSyncRequest,
+    background_tasks: BackgroundTasks,
+    user_ctx: Dict[str, str] = Depends(get_user_context),
+    db: Session = Depends(get_db)
+):
+    """Sync tax rates using the configured Kingdee API (ExternalApi ID 32)."""
+    from database import SessionLocal
+
+    def run_sync(user_context: Dict[str, str]):
+        db_session = SessionLocal()
+        from datetime import datetime
+
+        started_at = datetime.utcnow().replace(microsecond=0).isoformat()
+        try:
+            import json
+            import requests
+            from services.external_auth import ExternalAuthService
+
+            _save_tax_rate_sync_status(
+                db_session,
+                {
+                    "status": "running",
+                    "message": "税率同步任务执行中",
+                    "started_at": started_at,
+                    "finished_at": None,
+                    "total_synced": 0,
+                    "api_id": 32,
+                },
+            )
+
+            api_record = db_session.query(models.ExternalApi).filter(models.ExternalApi.id == 32).first()
+            if not api_record:
+                api_record = db_session.query(models.ExternalApi).filter(models.ExternalApi.name == "获取税率").first()
+            if not api_record:
+                logger.error("No configuration found for tax rates: ExternalApi id=32 / name=获取税率 not found.")
+                _save_tax_rate_sync_status(
+                    db_session,
+                    {
+                        "status": "failed",
+                        "message": "未找到 ID=32 或名称为“获取税率”的接口配置",
+                        "started_at": started_at,
+                        "finished_at": datetime.utcnow().replace(microsecond=0).isoformat(),
+                        "total_synced": 0,
+                        "api_id": 32,
+                    },
+                )
+                return
+
+            service_id = api_record.service_id
+            service = db_session.query(models.ExternalService).filter(models.ExternalService.id == service_id).first()
+            if not service:
+                logger.error(f"Service with ID {service_id} not found")
+                _save_tax_rate_sync_status(
+                    db_session,
+                    {
+                        "status": "failed",
+                        "message": f"未找到服务 ID={service_id}",
+                        "started_at": started_at,
+                        "finished_at": datetime.utcnow().replace(microsecond=0).isoformat(),
+                        "total_synced": 0,
+                        "api_id": 32,
+                    },
+                )
+                return
+
+            auth = ExternalAuthService(db=db_session, service_record=service, user_context=user_context)
+            try:
+                auth.get_token()
+            except Exception as e:
+                logger.error(f"Auth failed: {e}")
+                _save_tax_rate_sync_status(
+                    db_session,
+                    {
+                        "status": "failed",
+                        "message": f"认证失败: {str(e)}",
+                        "started_at": started_at,
+                        "finished_at": datetime.utcnow().replace(microsecond=0).isoformat(),
+                        "total_synced": 0,
+                        "api_id": 32,
+                    },
+                )
+                return
+
+            full_url = api_record.url_path
+            if not full_url.startswith("http"):
+                full_url = (service.base_url or "") + full_url
+            url = resolve_variables(full_url or "", db_session, user_context=user_context)
+
+            user_headers = api_record.request_headers or {}
+            if isinstance(user_headers, str):
+                try:
+                    user_headers = json.loads(user_headers)
+                except Exception:
+                    user_headers = {}
+            user_headers = resolve_dict_variables(user_headers, db_session, user_context=user_context)
+
+            body_template = api_record.request_body
+            body = {}
+            try:
+                if isinstance(body_template, str):
+                    body = json.loads(body_template) if body_template else {}
+                else:
+                    body = body_template
+            except Exception:
+                body = {}
+            body = resolve_dict_variables(body, db_session, user_context=user_context)
+
+            if not body:
+                body = {"data": {}}
+            if "data" not in body:
+                body["data"] = {}
+
+            page_size = body.get("pageSize")
+            if not page_size or not isinstance(page_size, int) or page_size <= 0:
+                body["pageSize"] = 1000
+            else:
+                body["pageSize"] = page_size
+
+            try:
+                db_session.query(models.TaxRate).delete()
+                db_session.commit()
+            except Exception as e:
+                logger.warning(f"Failed to clear tax_rates table: {e}")
+                db_session.rollback()
+
+            page_no = 1
+            total_synced = 0
+            prev_page_ids = []
+
+            while True:
+                body["pageNo"] = page_no
+                logger.info(f"Syncing tax rates page {page_no}...")
+
+                success = False
+                data = {}
+
+                for attempt in range(2):
+                    headers = auth.get_auth_headers()
+                    if isinstance(user_headers, dict):
+                        for k, v in user_headers.items():
+                            if isinstance(v, str) and "{access_token}" in v and service.access_token:
+                                v = v.replace("{access_token}", service.access_token)
+                            headers[k] = str(v)
+
+                    auth_failed = False
+                    try:
+                        resp = requests.request(api_record.method or "POST", url, headers=headers, json=body)
+                        if resp.status_code == 401:
+                            auth_failed = True
+                        else:
+                            try:
+                                resp_json = resp.json()
+                                if isinstance(resp_json, dict) and str(resp_json.get("errorCode")) == "401":
+                                    auth_failed = True
+                            except Exception:
+                                pass
+
+                        if auth_failed:
+                            if attempt == 0:
+                                auth.invalidate_token()
+                                service = db_session.query(models.ExternalService).filter(models.ExternalService.id == service_id).first()
+                                auth.service_record = service
+                                continue
+                            if resp.status_code != 200:
+                                resp.raise_for_status()
+                            raise Exception(f"Auth Error: {resp.text}")
+
+                        resp.raise_for_status()
+                        try:
+                            data = resp.json()
+                        except Exception:
+                            data = {}
+
+                        success = True
+                        break
+
+                    except Exception as e:
+                        if attempt == 1:
+                            raise e
+                        if not auth_failed:
+                            raise e
+
+                if not success:
+                    break
+
+                rows = []
+                last_page = True
+
+                if "data" in data and isinstance(data["data"], dict):
+                    if "rows" in data["data"]:
+                        rows = data["data"]["rows"]
+                    if "lastPage" in data["data"]:
+                        last_page = str(data["data"]["lastPage"]).lower() == "true"
+                elif "data" in data and isinstance(data["data"], list):
+                    rows = data["data"]
+                elif "rows" in data:
+                    rows = data["rows"]
+                    if "lastPage" in data:
+                        last_page = str(data["lastPage"]).lower() == "true"
+                elif isinstance(data, list):
+                    rows = data
+
+                if isinstance(rows, list) and rows:
+                    count = 0
+                    current_page_ids = []
+                    unique_rows = {}
+
+                    for row in rows:
+                        if not isinstance(row, dict):
+                            continue
+
+                        api_native_id = str(row.get("id", "")).strip()
+                        number = str(row.get("number", "")).strip()
+                        if not api_native_id and not number:
+                            continue
+                        if api_native_id:
+                            current_page_ids.append(api_native_id)
+
+                        row_id = api_native_id or number
+                        tax_rate_data = {
+                            "id": row_id,
+                            "number": number or row_id,
+                            "name": str(row.get("name", "") or ""),
+                            "enable": str(row.get("enable", "") or ""),
+                            "enable_title": str(row.get("enable_title", "") or ""),
+                            "status": str(row.get("status", "") or ""),
+                            "source_created_time": str(row.get("createtime", "") or ""),
+                            "source_modified_time": str(row.get("modifytime", "") or ""),
+                            "raw_data": json.dumps(row, ensure_ascii=False),
+                        }
+                        unique_rows[row_id] = tax_rate_data
+
+                    unique_list = list(unique_rows.values())
+                    count += _upsert_rows(
+                        db_session=db_session,
+                        model=models.TaxRate,
+                        rows=unique_list,
+                        conflict_fields=["id"],
+                        immutable_fields={"id", "created_at"},
+                        batch_size=100,
+                    )
+                    total_synced += count
+
+                    if len(current_page_ids) > 0 and current_page_ids == prev_page_ids:
+                        logger.info("Tax rates pagination repeated, breaking.")
+                        break
+                    prev_page_ids = current_page_ids
+
+                    if len(rows) < body["pageSize"]:
+                        last_page = True
+                else:
+                    last_page = True
+
+                if last_page:
+                    break
+
+                page_no += 1
+
+            logger.info(f"Finished. Total synced tax rates: {total_synced}")
+            _save_tax_rate_sync_status(
+                db_session,
+                {
+                    "status": "success",
+                    "message": f"税率同步完成，共写入 {total_synced} 条记录",
+                    "started_at": started_at,
+                    "finished_at": datetime.utcnow().replace(microsecond=0).isoformat(),
+                    "total_synced": total_synced,
+                    "api_id": int(api_record.id),
+                },
+            )
+
+        except Exception as e:
+            logger.error(f"Sync tax rates failed: {e}")
+            try:
+                _save_tax_rate_sync_status(
+                    db_session,
+                    {
+                        "status": "failed",
+                        "message": f"税率同步失败: {str(e)}",
+                        "started_at": started_at,
+                        "finished_at": datetime.utcnow().replace(microsecond=0).isoformat(),
+                        "total_synced": 0,
+                        "api_id": 32,
+                    },
+                )
+            except Exception:
+                pass
+        finally:
+            db_session.close()
+
+    background_tasks.add_task(run_sync, user_ctx)
+    return {"message": "Tax rate sync started", "api_id": 32}
 
 # ===================== Kingdee House Management =====================
 

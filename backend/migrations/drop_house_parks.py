@@ -1,8 +1,9 @@
+# -*- coding: utf-8 -*-
 """
 迁移脚本：清理历史冗余表 house_parks（方案 A）。
 
 说明：
-- 方案 A 中，房屋-车位关系以 parks.house_fk -> houses.id 为准。
+- 方案 A 中，房屋 - 车位关系以 parks.house_fk -> houses.id 为准。
 - 旧的 house_parks 表不再使用，可安全删除。
 """
 

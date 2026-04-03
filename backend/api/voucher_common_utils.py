@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import json
 from importlib import import_module
 from typing import Any, Dict, List, Optional, Set

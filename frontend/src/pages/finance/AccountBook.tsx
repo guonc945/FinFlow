@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
-import { RefreshCw, BookOpen, Search, AlertTriangle, X , Filter , ChevronDown , ChevronUp } from 'lucide-react';
+﻿import { useEffect, useState } from 'react';
+import { RefreshCw, BookOpen, Search, Filter, ChevronDown, ChevronUp } from 'lucide-react';
+import ConfirmModal from '../../components/common/ConfirmModal';
 import { useToast, ToastContainer } from '../../components/Toast';
 import { getAccountBooks, syncAccountBooks } from '../../api/accountBook';
 import type { AccountBook } from '../../types/accountBook';
@@ -18,13 +19,13 @@ const AccountBookPage = () => {
     const { toasts, showToast, removeToast } = useToast();
 
     useEffect(() => {
-        fetchAccountBooks();
+        void fetchAccountBooks();
     }, [currentPage, pageSize]);
 
     useEffect(() => {
         const timer = setTimeout(() => {
             setCurrentPage(1);
-            fetchAccountBooks();
+            void fetchAccountBooks();
         }, 300);
         return () => clearTimeout(timer);
     }, [searchTerm]);
@@ -54,16 +55,18 @@ const AccountBookPage = () => {
         setLoading(true);
         try {
             await syncAccountBooks();
-            showToast('success', '同步任务已提交', '系统正在后台同步数据，稍后请刷新列表。');
-            setTimeout(fetchAccountBooks, 3000);
+            showToast('success', '同步任务已提交', '系统正在后台同步账簿数据，请稍后刷新列表查看结果');
+            setTimeout(() => {
+                void fetchAccountBooks();
+            }, 3000);
         } catch (err: any) {
-            showToast('error', '同步异常', err.response?.data?.error || err.message || '同步请求未能成功发送');
+            showToast('error', '同步异常', err.response?.data?.error || err.message || '同步请求未能成功发起');
         } finally {
             setLoading(false);
         }
     };
 
-    const totalPages = Math.ceil(total / pageSize);
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
     return (
         <div className="page-container fade-in">
@@ -92,11 +95,11 @@ const AccountBookPage = () => {
                             </div>
                             <div className="divider-v"></div>
                             <button
-                                onClick={handleSync}
+                                onClick={() => setIsConfirmModalOpen(true)}
                                 disabled={loading}
                                 className="btn-primary"
                             >
-                                <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+                                <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
                                 {loading ? '同步中...' : '立即同步'}
                             </button>
                         </div>
@@ -125,21 +128,11 @@ const AccountBookPage = () => {
                             {accountBooks.length > 0 ? (
                                 accountBooks.map((item, index) => (
                                     <tr key={item.id} className="table-row hover:bg-slate-50/50 transition-colors border-b border-slate-50 group">
-                                        <td className="table-cell py-3 px-6 text-center font-medium text-slate-400">
-                                            {(currentPage - 1) * pageSize + index + 1}
-                                        </td>
-                                        <td className="table-cell py-3 px-6 font-mono text-slate-500 text-sm">
-                                            {item.number}
-                                        </td>
-                                        <td className="table-cell py-3 px-6 font-medium text-slate-800">
-                                            {item.name}
-                                        </td>
-                                        <td className="table-cell py-3 px-6 text-slate-600 text-sm">
-                                            {item.org_name || '-'}
-                                        </td>
-                                        <td className="table-cell py-3 px-6 text-slate-600 text-sm">
-                                            {item.accountingsys_name || '-'}
-                                        </td>
+                                        <td className="table-cell py-3 px-6 text-center font-medium text-slate-400">{(currentPage - 1) * pageSize + index + 1}</td>
+                                        <td className="table-cell py-3 px-6 font-mono text-slate-500 text-sm">{item.number}</td>
+                                        <td className="table-cell py-3 px-6 font-medium text-slate-800">{item.name}</td>
+                                        <td className="table-cell py-3 px-6 text-slate-600 text-sm">{item.org_name || '-'}</td>
+                                        <td className="table-cell py-3 px-6 text-slate-600 text-sm">{item.accountingsys_name || '-'}</td>
                                         <td className="table-cell py-3 px-6 text-center">
                                             {item.booknature === '1' ?
                                                 <span className="text-xs font-medium text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full border border-indigo-200">主账簿</span> :
@@ -148,12 +141,8 @@ const AccountBookPage = () => {
                                                     <span className="text-xs font-medium text-slate-500 bg-slate-50 px-2.5 py-1 rounded-full border border-slate-200">{item.booknature || '-'}</span>
                                             }
                                         </td>
-                                        <td className="table-cell py-3 px-6 text-slate-600 text-sm">
-                                            {item.accounttable_name || '-'}
-                                        </td>
-                                        <td className="table-cell py-3 px-6 text-center text-slate-600 text-sm">
-                                            {item.basecurrency_name || '-'}
-                                        </td>
+                                        <td className="table-cell py-3 px-6 text-slate-600 text-sm">{item.accounttable_name || '-'}</td>
+                                        <td className="table-cell py-3 px-6 text-center text-slate-600 text-sm">{item.basecurrency_name || '-'}</td>
                                         <td className="table-cell py-3 px-6 text-center">
                                             {item.status === 'C' ?
                                                 <span className="text-xs font-medium text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">已审核</span> :
@@ -166,12 +155,8 @@ const AccountBookPage = () => {
                                         </td>
                                         <td className="table-cell py-3 px-6 text-center">
                                             {item.enable === '1' || item.enable === '可用' ?
-                                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>可用
-                                                </span> :
-                                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200">
-                                                    <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>禁用
-                                                </span>
+                                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>可用</span> :
+                                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200"><span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>禁用</span>
                                             }
                                         </td>
                                     </tr>
@@ -201,19 +186,12 @@ const AccountBookPage = () => {
                     <div className="pagination-info text-slate-600">
                         共 <span className="text-indigo-600 font-bold mx-1">{total}</span> 条记录
                         <span className="mx-3 text-slate-300">|</span>
-                        当前第 {currentPage} 页 / 共 {totalPages || 1} 页
+                        当前第 {currentPage} 页 / 共 {totalPages} 页
                     </div>
                     <div className="pagination-controls flex items-center gap-4">
                         <div className="page-size-selector flex items-center gap-2 text-slate-600">
                             <span>每页显示:</span>
-                            <select
-                                value={pageSize}
-                                onChange={e => {
-                                    setPageSize(Number(e.target.value));
-                                    setCurrentPage(1);
-                                }}
-                                className="page-size-select bg-white border border-slate-200 rounded px-2 py-1 outline-none focus:ring-1 focus:ring-indigo-500"
-                            >
+                            <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setCurrentPage(1); }} className="page-size-select bg-white border border-slate-200 rounded px-2 py-1 outline-none focus:ring-1 focus:ring-indigo-500">
                                 <option value={20}>20</option>
                                 <option value={50}>50</option>
                                 <option value={100}>100</option>
@@ -221,23 +199,9 @@ const AccountBookPage = () => {
                             </select>
                         </div>
                         <div className="page-buttons flex items-center gap-2">
-                            <button
-                                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                                disabled={currentPage === 1 || loading}
-                                className="page-btn px-3 py-1.5 rounded border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                            >
-                                上一页
-                            </button>
-                            <div className="current-page-display bg-indigo-50 text-indigo-700 w-8 h-8 rounded flex items-center justify-center font-medium border border-indigo-100">
-                                {currentPage}
-                            </div>
-                            <button
-                                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                                disabled={currentPage >= totalPages || loading}
-                                className="page-btn px-3 py-1.5 rounded border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                            >
-                                下一页
-                            </button>
+                            <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1 || loading} className="page-btn px-3 py-1.5 rounded border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">上一页</button>
+                            <div className="current-page-display bg-indigo-50 text-indigo-700 w-8 h-8 rounded flex items-center justify-center font-medium border border-indigo-100">{currentPage}</div>
+                            <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages || loading} className="page-btn px-3 py-1.5 rounded border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">下一页</button>
                         </div>
                     </div>
                 </div>
@@ -245,31 +209,15 @@ const AccountBookPage = () => {
 
             <ToastContainer toasts={toasts} removeToast={removeToast} />
 
-            {/* Confirm Modal */}
-            {isConfirmModalOpen && (
-                <div className="modal-overlay fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="modal-content bg-white w-full max-w-md rounded-2xl shadow-xl overflow-hidden animate-fade-in border border-slate-100">
-                        <div className="modal-header p-6 pb-0 flex items-start justify-between">
-                            <div className="confirm-icon-wrapper w-12 h-12 rounded-full bg-amber-50 flex items-center justify-center text-amber-500 shrink-0">
-                                <AlertTriangle size={24} />
-                            </div>
-                            <button className="modal-close text-slate-400 hover:text-slate-600 transition-colors p-1" onClick={() => setIsConfirmModalOpen(false)}>
-                                <X size={20} />
-                            </button>
-                        </div>
-                        <div className="modal-body p-6 pt-4">
-                            <h2 className="modal-title font-bold text-lg text-slate-800 mb-2">同步系统账簿</h2>
-                            <p className="modal-desc text-slate-600 text-sm leading-relaxed">
-                                确定要从金蝶星空系统拉取最新的账簿信息吗？这将会请求接口并在后台更新全量账簿数据。
-                            </p>
-                        </div>
-                        <div className="modal-footer p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-3 rounded-b-2xl">
-                            <button className="btn-cancel px-4 py-2 font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors" onClick={() => setIsConfirmModalOpen(false)}>取消返回</button>
-                            <button className="btn-confirm px-4 py-2 font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 shadow-sm shadow-indigo-200 transition-colors" onClick={handleSync}>确定同步</button>
-                        </div>
-                    </div>
-                </div>
-            )}
+            <ConfirmModal
+                isOpen={isConfirmModalOpen}
+                title="同步系统账簿"
+                message="确定要从金蝶星空系统拉取最新的账簿信息吗？这将请求接口并在后台更新全量账簿数据。"
+                confirmText="确定同步"
+                loading={loading}
+                onCancel={() => setIsConfirmModalOpen(false)}
+                onConfirm={handleSync}
+            />
         </div>
     );
 };

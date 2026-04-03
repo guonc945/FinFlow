@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Execute Bills Partitioned Table Setup Script
 执行账单分区表安装脚本

@@ -6,6 +6,7 @@ import type {
     PushResult,
     VoucherPreview,
     ChargeItem,
+    TaxRateBrief,
     House,
     Project,
     ReceiptBillDetail,
@@ -614,6 +615,13 @@ export const syncChargeItems = async (communityIds?: number[]) => {
 
 export const updateChargeItem = async (itemId: number, data: Partial<ChargeItem>) => {
     const response = await axios.put(`${API_BASE_URL}/charge-items/${itemId}`, data);
+    return response.data;
+};
+
+export const getTaxRates = async (query: { skip?: number; limit?: number; search?: string } = {}) => {
+    const response = await axios.get<{ items: TaxRateBrief[]; total: number }>(`${API_BASE_URL}/finance/tax-rates`, {
+        params: query,
+    });
     return response.data;
 };
 

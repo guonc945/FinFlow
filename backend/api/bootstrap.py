@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
@@ -248,6 +249,11 @@ def _ensure_charge_and_project_columns():
                     conn.execute(text("ALTER TABLE charge_items ADD updated_at DATETIME2 NULL"))
                 else:
                     conn.execute(text("ALTER TABLE charge_items ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"))
+            if "kingdee_tax_rate_id" not in charge_cols:
+                if _is_mssql():
+                    conn.execute(text("ALTER TABLE charge_items ADD kingdee_tax_rate_id NVARCHAR(50) NULL"))
+                else:
+                    conn.execute(text("ALTER TABLE charge_items ADD COLUMN kingdee_tax_rate_id VARCHAR(50)"))
 
         if "projects_lists" in tables:
             project_cols = {c["name"] for c in inspector.get_columns("projects_lists")}

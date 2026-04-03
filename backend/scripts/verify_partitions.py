@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Verify partition tables - Simple ASCII output"""
 import os
 import psycopg2

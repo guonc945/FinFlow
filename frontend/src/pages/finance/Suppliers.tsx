@@ -1,14 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
     RefreshCw,
-    Search, AlertTriangle, X
-    , Filter, ChevronDown, ChevronUp
+    Search,
+    Filter, ChevronDown, ChevronUp
 } from 'lucide-react';
 import axios from 'axios';
+import ConfirmModal from '../../components/common/ConfirmModal';
 import { useToast, ToastContainer } from '../../components/Toast';
 import { API_BASE_URL } from '../../services/apiBase';
 import './AccountingSubjects.css';
-import '../bills/Bills.css'; // Reusing the same styling for consistency
+import '../bills/Bills.css';
 
 interface Supplier {
     id: string;
@@ -38,7 +39,6 @@ const Suppliers = () => {
     const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
     const { toasts, showToast, removeToast } = useToast();
 
-    // Re-fetch when search changes, reset to page 1
     useEffect(() => {
         const timer = setTimeout(() => {
             setDebouncedSearchTerm(searchTerm);
@@ -48,7 +48,7 @@ const Suppliers = () => {
     }, [searchTerm]);
 
     useEffect(() => {
-        fetchSuppliers();
+        void fetchSuppliers();
     }, [currentPage, pageSize, debouncedSearchTerm]);
 
     const fetchSuppliers = async () => {
@@ -57,7 +57,7 @@ const Suppliers = () => {
             const skip = (currentPage - 1) * pageSize;
             const res = await axios.get(`${API_BASE_URL}/finance/suppliers`, {
                 params: {
-                    skip: skip,
+                    skip,
                     limit: pageSize,
                     search: debouncedSearchTerm || undefined
                 }
@@ -83,16 +83,18 @@ const Suppliers = () => {
         setLoading(true);
         try {
             await axios.post(`${API_BASE_URL}/finance/suppliers/sync`, {});
-            showToast('success', '同步任务已提交', '系统正在后台处理数据同步，请在 1-2 分钟后尝试刷新列表。');
-            setTimeout(fetchSuppliers, 3000);
+            showToast('success', '同步任务已提交', '系统正在后台处理供应商同步，请在 1-2 分钟后刷新列表查看结果');
+            setTimeout(() => {
+                void fetchSuppliers();
+            }, 3000);
         } catch (err: any) {
-            showToast('error', '同步异常', err.response?.data?.error || err.response?.data?.detail || err.message || '由于网络或授权原因，同步请求未能成功发送');
+            showToast('error', '同步异常', err.response?.data?.error || err.response?.data?.detail || err.message || '由于网络或授权原因，同步请求未能成功发起');
         } finally {
             setLoading(false);
         }
     };
 
-    const totalPages = Math.ceil(total / pageSize);
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
     return (
         <div className="page-container fade-in">
@@ -125,7 +127,7 @@ const Suppliers = () => {
                                 disabled={loading}
                                 className="btn-primary"
                             >
-                                <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+                                <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
                                 {loading ? '同步中...' : '立即同步'}
                             </button>
                         </div>
@@ -203,7 +205,7 @@ const Suppliers = () => {
                     <div className="pagination-info">
                         共 <span className="text-primary font-bold">{total}</span> 条记录
                         <span className="mx-2 text-slate-300">|</span>
-                        第 {currentPage} / {totalPages || 1} 页
+                        第 {currentPage} / {totalPages} 页
                     </div>
                     <div className="pagination-controls">
                         <div className="page-size-selector">
@@ -246,29 +248,15 @@ const Suppliers = () => {
             </div>
             <ToastContainer toasts={toasts} removeToast={removeToast} />
 
-            {/* Confirm Modal */}
-            {isConfirmModalOpen && (
-                <div className="modal-overlay">
-                    <div className="modal-content confirm-modal animate-fade-in">
-                        <div className="modal-header">
-                            <div className="confirm-icon-wrapper">
-                                <AlertTriangle size={32} />
-                            </div>
-                            <button className="modal-close" onClick={() => setIsConfirmModalOpen(false)}>
-                                <X size={20} />
-                            </button>
-                        </div>
-                        <div className="modal-body">
-                            <h2 className="modal-title">同步供应商</h2>
-                            <p className="modal-desc">确定要从金蝶星空系统同步供应商信息吗？这将会通过配置的接口拉取最新数据并在后台更新。</p>
-                        </div>
-                        <div className="modal-footer">
-                            <button className="btn-cancel" onClick={() => setIsConfirmModalOpen(false)}>取消</button>
-                            <button className="btn-confirm" onClick={handleSync}>确定同步</button>
-                        </div>
-                    </div>
-                </div>
-            )}
+            <ConfirmModal
+                isOpen={isConfirmModalOpen}
+                title="同步供应商档案"
+                message="确定要从金蝶星空系统同步供应商信息吗？这将通过已配置的接口拉取最新数据，并在后台更新本地供应商档案。"
+                confirmText="确定同步"
+                loading={loading}
+                onCancel={() => setIsConfirmModalOpen(false)}
+                onConfirm={handleSync}
+            />
         </div>
     );
 };

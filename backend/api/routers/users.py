@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import hashlib
 from datetime import datetime
 from typing import Any, Dict, Optional

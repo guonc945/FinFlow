@@ -5,6 +5,8 @@ import DataTable from '../../components/data/DataTable';
 import { getChargeItems, updateChargeItem, getProjects, syncChargeItems } from '../../services/api';
 import type { ChargeItem } from '../../types';
 import AccountingSubjectSelector from '../../components/finance/AccountingSubjectSelector';
+import TaxRateSelector from '../../components/finance/TaxRateSelector';
+import { useToast, ToastContainer } from '../../components/Toast';
 import '../bills/Bills.css';
 import '../houses/Houses.css';
 import './ChargeItems.css';
@@ -15,6 +17,7 @@ const ChargeItems = () => {
     const [isSyncing, setIsSyncing] = useState(false);
     const [editingItem, setEditingItem] = useState<ChargeItem | null>(null);
     const [isSaving, setIsSaving] = useState(false);
+    const { toasts, showToast, removeToast } = useToast();
 
     // Pagination state
     const [page, setPage] = useState(1);
@@ -83,7 +86,7 @@ const ChargeItems = () => {
 
     const handleSync = async () => {
         if (selectedProjectIds.length === 0) {
-            alert('请至少选择一个园区进行同步');
+            showToast('info', '请至少选择一个园区进行同步');
             return;
         }
 
@@ -91,10 +94,10 @@ const ChargeItems = () => {
         try {
             await syncChargeItems(selectedProjectIds.map(id => parseInt(id, 10)));
             await fetchItems();
-            alert('收费项目同步完成');
+            showToast('success', '收费项目同步完成');
         } catch (error) {
             console.error('Sync failed:', error);
-            alert('同步失败，请重试');
+            showToast('error', '同步失败，请重试');
         } finally {
             setIsSyncing(false);
         }
@@ -111,6 +114,7 @@ const ChargeItems = () => {
             await updateChargeItem(editingItem.item_id, {
                 current_account_subject_id: editingItem.current_account_subject_id,
                 profit_loss_subject_id: editingItem.profit_loss_subject_id,
+                kingdee_tax_rate_id: editingItem.kingdee_tax_rate_id,
             });
             setEditingItem(null);
             await fetchItems();
@@ -123,7 +127,15 @@ const ChargeItems = () => {
 
     const columns = [
         { key: 'item_id' as keyof ChargeItem, title: 'ID', width: 80 },
-        { key: 'communityid' as keyof ChargeItem, title: '社区ID', width: 100 },
+        {
+            key: 'communityid' as keyof ChargeItem,
+            title: '园区名称',
+            width: 160,
+            render: (val: any) => {
+                const project = projects.find((p) => String(p.proj_id) === String(val));
+                return project?.proj_name || '-';
+            }
+        },
         { key: 'category_name' as keyof ChargeItem, title: '分类名称', width: 150 },
         { key: 'item_name' as keyof ChargeItem, title: '收费项名称', width: 220 },
         { key: 'charge_type_str' as keyof ChargeItem, title: '收费类型', width: 120 },
@@ -151,11 +163,23 @@ const ChargeItems = () => {
             ) : <span className="text-slate-300">未设置</span>
         },
         {
+            key: 'kingdee_tax_rate' as keyof ChargeItem,
+            title: '金蝶税率档案',
+            width: 220,
+            render: (val: any) => val ? (
+                <div className="flex flex-col">
+                    <span className="text-sm font-medium">{val.name}</span>
+                    <span className="text-xs text-slate-400 font-mono">{val.number}</span>
+                </div>
+            ) : <span className="text-slate-300">未设置</span>
+        },
+        {
             key: 'created_at' as keyof ChargeItem,
             title: '同步时间',
             width: 120,
             render: (val: any) => new Date(val).toLocaleDateString()
         },
+
         {
             key: 'actions' as keyof ChargeItem,
             title: '操作',
@@ -333,7 +357,7 @@ const ChargeItems = () => {
                                     <AlertCircle size={18} className="text-primary" />
                                     <h3>配置会计核算映射</h3>
                                 </div>
-                                <div className="kd-house-mapping-subtitle">为收费项设置往来科目与损益科目，用于后续自动制证。</div>
+                                <div className="kd-house-mapping-subtitle">为收费项设置往来科目、损益科目和税率档案映射，用于后续自动制证。</div>
                             </div>
                             <button className="kd-house-mapping-close" onClick={() => setEditingItem(null)} type="button" aria-label="关闭">
                                 <X size={20} />
@@ -375,10 +399,23 @@ const ChargeItems = () => {
                                         });
                                     }}
                                 />
+
+                                <TaxRateSelector
+                                    label="金蝶税率档案映射"
+                                    placeholder="搜索或选择金蝶税率档案..."
+                                    value={editingItem.kingdee_tax_rate ? `${editingItem.kingdee_tax_rate.number} ${editingItem.kingdee_tax_rate.name}` : editingItem.kingdee_tax_rate_id}
+                                    onSelect={(taxRate) => {
+                                        setEditingItem({
+                                            ...editingItem,
+                                            kingdee_tax_rate_id: taxRate?.id || undefined,
+                                            kingdee_tax_rate: taxRate || undefined
+                                        });
+                                    }}
+                                />
                             </div>
 
                             <div className="kd-house-mapping-hint">
-                                提示：科目编码/名称支持模糊搜索；保存后会影响凭证模板生成结果。
+                                {'提示：这里配置的金蝶税率档案，会在凭证模板字段选择中的“金蝶税率编码 / 金蝶税率名称”里按“运营账单.收费项目 -> 收费项目 -> 金蝶税率档案”自动解析。'}
                             </div>
                         </div>
 
@@ -394,6 +431,8 @@ const ChargeItems = () => {
                     </div>
                 </div>
             )}
+
+            <ToastContainer toasts={toasts} removeToast={removeToast} />
         </div>
     );
 };
@@ -404,3 +443,8 @@ const Loader2 = ({ className, size }: { className?: string, size?: number }) => 
 );
 
 export default ChargeItems;
+
+
+
+
+

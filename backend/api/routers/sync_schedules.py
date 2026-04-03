@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import json
 from importlib import import_module
 from typing import Any, Dict, List, Optional
@@ -46,6 +47,8 @@ def sync_customers(*args, **kwargs):
 def sync_suppliers(*args, **kwargs):
     return _get_main_sync_endpoint("sync_suppliers")(*args, **kwargs)
 
+def sync_tax_rates(*args, **kwargs):
+    return _get_main_sync_endpoint("sync_tax_rates")(*args, **kwargs)
 def sync_kd_houses(*args, **kwargs):
     return _get_main_sync_endpoint("sync_kd_houses")(*args, **kwargs)
 
@@ -80,6 +83,7 @@ SYNC_TARGET_DEFINITIONS = [
     {"code": "accounting_subjects", "label": "金蝶会计科目", "system": "kingdee", "requires_community_ids": False},
     {"code": "customers", "label": "金蝶客户", "system": "kingdee", "requires_community_ids": False},
     {"code": "suppliers", "label": "金蝶供应商", "system": "kingdee", "requires_community_ids": False},
+    {"code": "tax_rates", "label": "金蝶税率档案", "system": "kingdee", "requires_community_ids": False},
     {"code": "kd_houses", "label": "金蝶房号", "system": "kingdee", "requires_community_ids": False},
     {"code": "account_books", "label": "金蝶账簿", "system": "kingdee", "requires_community_ids": False},
     {"code": "auxiliary_data_categories", "label": "金蝶辅助资料分类", "system": "kingdee", "requires_community_ids": False},
@@ -388,6 +392,14 @@ def _handle_suppliers_sync(schedule_data: Dict[str, Any], user_context: Dict[str
     )
 
 
+def _handle_tax_rates_sync(schedule_data: Dict[str, Any], user_context: Dict[str, str]) -> Dict[str, Any]:
+    return _run_finance_sync_task(
+        sync_tax_rates,
+        schemas.TaxRateSyncRequest(),
+        user_context,
+    )
+
+
 def _handle_kd_houses_sync(schedule_data: Dict[str, Any], user_context: Dict[str, str]) -> Dict[str, Any]:
     return _run_finance_sync_task(
         sync_kd_houses,
@@ -454,6 +466,7 @@ _register_sync_target_handler("prepayment_records", _handle_prepayment_records_s
 _register_sync_target_handler("accounting_subjects", _handle_accounting_subjects_sync)
 _register_sync_target_handler("customers", _handle_customers_sync)
 _register_sync_target_handler("suppliers", _handle_suppliers_sync)
+_register_sync_target_handler("tax_rates", _handle_tax_rates_sync)
 _register_sync_target_handler("kd_houses", _handle_kd_houses_sync)
 _register_sync_target_handler("account_books", _handle_account_books_sync)
 _register_sync_target_handler("auxiliary_data_categories", _handle_auxiliary_data_categories_sync)
@@ -727,5 +740,6 @@ def list_latest_sync_schedule_executions(
         item["schedule_name"] = execution.schedule.name if execution.schedule else ""
         result.append(item)
     return result
+
 
 

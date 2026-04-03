@@ -198,6 +198,7 @@ const Sidebar = () => {
                         { path: '/auxiliary-data', label: '辅助资料', icon: Layers },
                         { path: '/customers', label: '客户管理', icon: Users },
                         { path: '/suppliers', label: '供应商管理', icon: Users },
+                        { path: '/tax-rates', label: '税率档案', icon: Tags },
                         { path: '/kd-houses', label: '金蝶房号', icon: Home },
                         { path: '/bank-accounts', label: '银行账户', icon: Landmark },
                     ],

@@ -14,7 +14,7 @@ def mount_frontend_assets(app: FastAPI) -> None:
 
 
 def _frontend_file_response(relative_path: str) -> FileResponse:
-    return FileResponse(FRONTEND_DIST_DIR / relative_path)
+    return FileResponse(FRONTEND_DIST_DIR / relative_path, media_type="text/html; charset=utf-8")
 
 
 @router.get("/")

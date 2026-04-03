@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import json
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Set
@@ -79,6 +80,8 @@ BILL_FIELD_LABELS: Dict[str, str] = {
     "kd_receive_bank_name": "收款银行账户名称",
     "kd_pay_bank_number": "付款银行账户编码",
     "kd_pay_bank_name": "付款银行账户名称",
+    "kd_tax_rate_number": "金蝶税率编码",
+    "kd_tax_rate_name": "金蝶税率名称",
     "customer_name": "账单关联客户名称",
     "customer_id": "账单关联客户ID",
     "receive_date": "支付日期",
@@ -97,6 +100,8 @@ RECEIPT_BILL_KD_DERIVED_FIELDS: Set[str] = {
     "kd_receive_bank_name",
     "kd_pay_bank_number",
     "kd_pay_bank_name",
+    "kd_tax_rate_number",
+    "kd_tax_rate_name",
 }
 
 RECEIPT_BILL_RUNTIME_EXTRA_FIELDS: Set[str] = {"community_name", "payer_name", "deal_type_label"}
@@ -145,6 +150,8 @@ RECEIPT_BILL_FIELD_LABELS: Dict[str, str] = {
     "kd_receive_bank_name": "收款银行账户名称",
     "kd_pay_bank_number": "付款银行账户编码",
     "kd_pay_bank_name": "付款银行账户名称",
+    "kd_tax_rate_number": "金蝶税率编码",
+    "kd_tax_rate_name": "金蝶税率名称",
 }
 
 DEPOSIT_RECORD_RUNTIME_EXTRA_FIELDS: Set[str] = {"operate_type_label", "resident_name"}

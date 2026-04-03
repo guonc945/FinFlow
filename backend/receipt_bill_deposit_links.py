@@ -1,4 +1,5 @@
-﻿from typing import Dict, Iterable, List, Optional
+# -*- coding: utf-8 -*-
+from typing import Dict, Iterable, List, Optional
 
 import database
 import models

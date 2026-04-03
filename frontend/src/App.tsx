@@ -34,6 +34,7 @@ import {
   Parks,
   Customers,
   Suppliers,
+  TaxRates,
   KingdeeHouses,
   AuxiliaryDataPage,
   AuxiliaryDataCategoriesPage,
@@ -112,6 +113,7 @@ function App() {
             <Route path="accounting-subjects" element={<MenuRoute menuKey="/accounting-subjects"><RouteElement variant="table"><AccountingSubjects /></RouteElement></MenuRoute>} />
             <Route path="customers" element={<MenuRoute menuKey="/customers"><RouteElement variant="table"><Customers /></RouteElement></MenuRoute>} />
             <Route path="suppliers" element={<MenuRoute menuKey="/suppliers"><RouteElement variant="table"><Suppliers /></RouteElement></MenuRoute>} />
+            <Route path="tax-rates" element={<MenuRoute menuKey="/tax-rates"><RouteElement variant="table"><TaxRates /></RouteElement></MenuRoute>} />
             <Route path="kd-houses" element={<MenuRoute menuKey="/kd-houses"><RouteElement variant="table"><KingdeeHouses /></RouteElement></MenuRoute>} />
             <Route path="auxiliary-data" element={<MenuRoute menuKey="/auxiliary-data"><RouteElement variant="table"><AuxiliaryDataPage /></RouteElement></MenuRoute>} />
             <Route path="auxiliary-data-categories" element={<MenuRoute menuKey="/auxiliary-data-categories"><RouteElement variant="table"><AuxiliaryDataCategoriesPage /></RouteElement></MenuRoute>} />

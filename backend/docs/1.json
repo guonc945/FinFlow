@@ -1,0 +1,24 @@
+{
+  "data": {
+    "filter": "[null]",
+    "lastPage": true,
+    "pageNo": 1,
+    "pageSize": 1000,
+    "rows": [
+      {
+        "id": "2429055325681469443",
+        "number": "MYS-WHT5",
+        "name": "预扣税5%",
+        "enable": "0",
+        "enable_title": "禁用",
+        "status": "C",
+        "createtime": "2026-03-06 00:00:00",
+        "modifytime": "2026-03-06 00:00:00"
+      }
+    ],
+    "totalCount": 81
+  },
+  "errorCode": "0",
+  "message": null,
+  "status": true
+}
