@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 import json
+from datetime import datetime
 from importlib import import_module
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
@@ -89,6 +91,14 @@ SYNC_TARGET_DEFINITIONS = [
     {"code": "auxiliary_data_categories", "label": "金蝶辅助资料分类", "system": "kingdee", "requires_community_ids": False},
     {"code": "auxiliary_data", "label": "金蝶辅助资料", "system": "kingdee", "requires_community_ids": False},
     {"code": "bank_accounts", "label": "金蝶银行账户", "system": "kingdee", "requires_community_ids": False},
+    {
+        "code": "receipt_voucher_auto_push",
+        "label": "收款单凭证自动推送",
+        "system": "kingdee",
+        "requires_community_ids": False,
+        "requires_account_book": True,
+        "auto_resolve_communities": True,
+    },
 ]
 
 SYNC_TARGET_MAP = {item["code"]: item for item in SYNC_TARGET_DEFINITIONS}
@@ -150,6 +160,11 @@ def _validate_sync_schedule_payload(payload: schemas.SyncScheduleBase | schemas.
     if requires_communities and not community_ids:
         raise HTTPException(status_code=400, detail="Selected Mark targets require at least one community")
 
+    account_book_number = str(payload.account_book_number or "").strip() or None
+    requires_account_book = any(bool(SYNC_TARGET_MAP[code].get("requires_account_book")) for code in target_codes)
+    if requires_account_book and not account_book_number:
+        raise HTTPException(status_code=400, detail="Selected targets require an account book")
+
     timezone_name = str(payload.timezone or DEFAULT_TIMEZONE).strip() or DEFAULT_TIMEZONE
     name = str(payload.name or "").strip()
     if not name:
@@ -160,7 +175,7 @@ def _validate_sync_schedule_payload(payload: schemas.SyncScheduleBase | schemas.
         "description": str(payload.description or "").strip() or None,
         "target_codes": target_codes,
         "community_ids": community_ids,
-        "account_book_number": str(payload.account_book_number or "").strip() or None,
+        "account_book_number": account_book_number,
         "account_book_name": str(payload.account_book_name or "").strip() or None,
         "schedule_type": schedule_type,
         "interval_minutes": interval_minutes if schedule_type == "interval" else None,
@@ -255,6 +270,64 @@ def _resolve_schedule_community_ids(schedule_data: Dict[str, Any]) -> List[int]:
         return [row[0] for row in db.query(models.ProjectList.proj_id).order_by(models.ProjectList.proj_id).all()]
     finally:
         db.close()
+
+
+def _resolve_schedule_account_book(
+    db: Session,
+    schedule_data: Dict[str, Any],
+) -> models.KingdeeAccountBook:
+    account_book_number = str(schedule_data.get("account_book_number") or "").strip()
+    if not account_book_number:
+        raise RuntimeError("Schedule account book is not configured.")
+
+    account_book = (
+        db.query(models.KingdeeAccountBook)
+        .filter(models.KingdeeAccountBook.number == account_book_number)
+        .first()
+    )
+    if not account_book:
+        raise RuntimeError(f"Account book not found: {account_book_number}")
+    return account_book
+
+
+def _resolve_account_book_community_ids(
+    db: Session,
+    account_book: models.KingdeeAccountBook,
+) -> List[int]:
+    rows = (
+        db.query(models.ProjectList.proj_id)
+        .filter(models.ProjectList.kingdee_account_book_id == account_book.id)
+        .order_by(models.ProjectList.proj_id.asc())
+        .all()
+    )
+    return [int(row[0]) for row in rows if row and row[0] is not None]
+
+
+def _resolve_schedule_operator(
+    db: Session,
+    user_context: Dict[str, str],
+) -> models.User:
+    user_id = str(user_context.get("current_user_id") or "").strip()
+    operator: Optional[models.User] = None
+    if user_id.isdigit():
+        operator = db.query(models.User).filter(models.User.id == int(user_id)).first()
+
+    if operator is None:
+        username = str(user_context.get("current_username") or "").strip()
+        if username:
+            operator = db.query(models.User).filter(models.User.username == username).first()
+
+    if operator is None:
+        raise RuntimeError("Schedule operator user not found.")
+    return operator
+
+
+def _resolve_schedule_run_date(schedule_data: Dict[str, Any]):
+    timezone_name = str(schedule_data.get("timezone") or DEFAULT_TIMEZONE).strip() or DEFAULT_TIMEZONE
+    try:
+        return datetime.now(ZoneInfo(timezone_name)).date()
+    except Exception:
+        return datetime.now().date()
 
 
 def _build_tracker_result(task_id: str, fallback_message: str) -> Dict[str, Any]:
@@ -439,6 +512,187 @@ def _handle_bank_accounts_sync(schedule_data: Dict[str, Any], user_context: Dict
         user_context,
     )
 
+
+def _handle_receipt_voucher_auto_push(schedule_data: Dict[str, Any], user_context: Dict[str, str]) -> Dict[str, Any]:
+    db = database.SessionLocal()
+    try:
+        account_book = _resolve_schedule_account_book(db, schedule_data)
+        operator = _resolve_schedule_operator(db, user_context)
+        community_ids = _resolve_account_book_community_ids(db, account_book)
+
+        if not community_ids:
+            return {
+                "status": "failed",
+                "message": f"账簿 {account_book.number} 未绑定任何园区，无法执行自动推送。",
+                "logs": [{"type": "error", "message": f"账簿 {account_book.number} 未绑定任何园区。"}],
+                "task_id": None,
+            }
+
+        run_date = _resolve_schedule_run_date(schedule_data)
+        receipts = (
+            db.query(models.ReceiptBill)
+            .filter(
+                models.ReceiptBill.community_id.in_(community_ids),
+                models.ReceiptBill.deal_date == run_date,
+            )
+            .order_by(models.ReceiptBill.community_id.asc(), models.ReceiptBill.id.asc())
+            .all()
+        )
+
+        if not receipts:
+            return {
+                "status": "success",
+                "message": f"账簿 {account_book.number} 在 {run_date.isoformat()} 没有待处理收款单。",
+                "logs": [
+                    {
+                        "type": "info",
+                        "message": f"已扫描 {len(community_ids)} 个园区，未找到 {run_date.isoformat()} 的收款单。",
+                    }
+                ],
+                "task_id": None,
+            }
+
+        preview_voucher = _get_main_sync_endpoint("preview_voucher_for_receipt")
+        push_voucher = _get_main_sync_endpoint("push_voucher_to_kingdee")
+
+        logs: List[Dict[str, str]] = []
+        pushed_count = 0
+        skipped_count = 0
+        failed_count = 0
+
+        for receipt in receipts:
+            receipt_code = str(receipt.receipt_id or receipt.id)
+
+            try:
+                preview_result = preview_voucher(
+                    int(receipt.id),
+                    int(receipt.community_id),
+                    str(account_book.id),
+                    str(account_book.name or ""),
+                    str(account_book.number or ""),
+                    True,
+                    operator,
+                    db,
+                    community_ids,
+                )
+            except HTTPException as exc:
+                failed_count += 1
+                logs.append({
+                    "type": "error",
+                    "message": f"收款单 {receipt_code} 预览失败：{exc.detail if isinstance(exc.detail, str) else str(exc.detail)}",
+                })
+                db.rollback()
+                continue
+            except Exception as exc:
+                failed_count += 1
+                logs.append({
+                    "type": "error",
+                    "message": f"收款单 {receipt_code} 预览异常：{str(exc)}",
+                })
+                db.rollback()
+                continue
+
+            if not preview_result.get("matched"):
+                failed_count += 1
+                logs.append({
+                    "type": "error",
+                    "message": f"收款单 {receipt_code} 未匹配到凭证模板，已跳过。",
+                })
+                continue
+
+            if preview_result.get("push_blocked"):
+                skipped_count += 1
+                push_block_reason = str(preview_result.get("push_block_reason") or "").strip()
+                logs.append({
+                    "type": "warning",
+                    "message": (
+                        f"收款单 {receipt_code} 已存在推送记录，已跳过。"
+                        f"{push_block_reason if not push_block_reason else ' ' + push_block_reason}"
+                    ).strip(),
+                })
+                continue
+
+            kingdee_json = preview_result.get("kingdee_json")
+            if not isinstance(kingdee_json, dict) or not kingdee_json:
+                failed_count += 1
+                logs.append({
+                    "type": "error",
+                    "message": f"收款单 {receipt_code} 未生成有效金蝶 JSON，已跳过。",
+                })
+                continue
+
+            payload = schemas.VoucherPushRequest(
+                kingdee_json=kingdee_json,
+                bills=preview_result.get("source_bills") or [],
+                force_push=False,
+            )
+
+            try:
+                push_result = push_voucher(
+                    payload,
+                    str(account_book.id),
+                    str(account_book.name or ""),
+                    str(account_book.number or ""),
+                    operator,
+                    db,
+                    community_ids,
+                )
+            except HTTPException as exc:
+                failed_count += 1
+                logs.append({
+                    "type": "error",
+                    "message": f"收款单 {receipt_code} 推送失败：{exc.detail if isinstance(exc.detail, str) else str(exc.detail)}",
+                })
+                db.rollback()
+                continue
+            except Exception as exc:
+                failed_count += 1
+                logs.append({
+                    "type": "error",
+                    "message": f"收款单 {receipt_code} 推送异常：{str(exc)}",
+                })
+                db.rollback()
+                continue
+
+            if push_result.get("success"):
+                pushed_count += 1
+                voucher_number = str(push_result.get("voucher_number") or "").strip()
+                logs.append({
+                    "type": "info",
+                    "message": (
+                        f"收款单 {receipt_code} 推送成功。"
+                        if not voucher_number
+                        else f"收款单 {receipt_code} 推送成功，凭证号 {voucher_number}。"
+                    ),
+                })
+            else:
+                failed_count += 1
+                logs.append({
+                    "type": "error",
+                    "message": f"收款单 {receipt_code} 推送失败：{push_result.get('message') or '未知错误'}",
+                })
+
+        scanned_count = len(receipts)
+        status = "success" if failed_count == 0 else "failed"
+        message = (
+            f"账簿 {account_book.number} 自动推送完成：扫描 {scanned_count} 张，"
+            f"成功 {pushed_count} 张，跳过 {skipped_count} 张，失败 {failed_count} 张。"
+        )
+        return {
+            "status": status,
+            "message": message,
+            "logs": logs[:500],
+            "task_id": None,
+            "scanned_receipts": scanned_count,
+            "pushed_receipts": pushed_count,
+            "skipped_receipts": skipped_count,
+            "failed_receipts": failed_count,
+            "account_book_number": account_book.number,
+            "run_date": run_date.isoformat(),
+        }
+    finally:
+        db.close()
+
 SYNC_TARGET_HANDLERS: Dict[str, Any] = {}
 
 
@@ -472,6 +726,7 @@ _register_sync_target_handler("account_books", _handle_account_books_sync)
 _register_sync_target_handler("auxiliary_data_categories", _handle_auxiliary_data_categories_sync)
 _register_sync_target_handler("auxiliary_data", _handle_auxiliary_data_sync)
 _register_sync_target_handler("bank_accounts", _handle_bank_accounts_sync)
+_register_sync_target_handler("receipt_voucher_auto_push", _handle_receipt_voucher_auto_push)
 
 
 @router.on_event("startup")

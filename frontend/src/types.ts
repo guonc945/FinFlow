@@ -538,6 +538,8 @@ export interface SyncScheduleTargetMeta {
     label: string;
     system: 'mark' | 'kingdee' | string;
     requires_community_ids: boolean;
+    requires_account_book?: boolean;
+    auto_resolve_communities?: boolean;
     forced_with?: string[];
 }
 
@@ -583,6 +585,12 @@ export interface SyncScheduleExecutionTargetResult {
     logs?: Array<{ type?: string; message?: string; time?: string }>;
     task_id?: string | null;
     traceback?: string;
+    scanned_receipts?: number;
+    pushed_receipts?: number;
+    skipped_receipts?: number;
+    failed_receipts?: number;
+    account_book_number?: string;
+    run_date?: string;
 }
 
 export interface SyncScheduleExecution {

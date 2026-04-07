@@ -33,6 +33,7 @@ import type {
     Project,
     SyncSchedule,
     SyncScheduleExecution,
+    SyncScheduleExecutionTargetResult,
     SyncScheduleMeta,
     SyncScheduleTargetMeta,
 } from '../../../types';
@@ -130,6 +131,36 @@ const describeSchedule = (schedule: SyncSchedule) => {
     return `每日 ${schedule.daily_time || '00:00'}`;
 };
 
+const hasExecutionTargetMetrics = (target: SyncScheduleExecutionTargetResult) =>
+    [
+        target.scanned_receipts,
+        target.pushed_receipts,
+        target.skipped_receipts,
+        target.failed_receipts,
+    ].some((value) => typeof value === 'number');
+
+const renderExecutionTargetMetrics = (target: SyncScheduleExecutionTargetResult) => {
+    const metrics = [
+        { label: '扫描', value: target.scanned_receipts },
+        { label: '成功', value: target.pushed_receipts },
+        { label: '跳过', value: target.skipped_receipts },
+        { label: '失败', value: target.failed_receipts },
+    ].filter((item) => typeof item.value === 'number');
+
+    if (metrics.length === 0) return null;
+
+    return (
+        <div className="execution-target-metrics">
+            {metrics.map((item) => (
+                <span key={item.label}>
+                    <strong>{item.value}</strong>
+                    {item.label}
+                </span>
+            ))}
+        </div>
+    );
+};
+
 const SyncSchedulesPage = () => {
     const { toasts, showToast, removeToast } = useToast();
     const [meta, setMeta] = useState<SyncScheduleMeta | null>(null);
@@ -181,6 +212,16 @@ const SyncSchedulesPage = () => {
 
     const requiresCommunitySelection = useMemo(
         () => formState.target_codes.some((code) => targetMap.get(code)?.requires_community_ids),
+        [formState.target_codes, targetMap]
+    );
+
+    const requiresAccountBookSelection = useMemo(
+        () => formState.target_codes.some((code) => targetMap.get(code)?.requires_account_book),
+        [formState.target_codes, targetMap]
+    );
+
+    const autoResolvedCommunityTargets = useMemo(
+        () => formState.target_codes.filter((code) => targetMap.get(code)?.auto_resolve_communities),
         [formState.target_codes, targetMap]
     );
 
@@ -401,6 +442,10 @@ const SyncSchedulesPage = () => {
 
     const handleSubmit = async (event: FormEvent) => {
         event.preventDefault();
+        if (requiresAccountBookSelection && !formState.account_book_number) {
+            showToast('error', '缺少账簿', '当前目标必须选择账簿，系统会按该账簿自动解析关联园区。');
+            return;
+        }
         setSaving(true);
         try {
             const payload = buildPayload();
@@ -706,13 +751,33 @@ const SyncSchedulesPage = () => {
                                                 <span><XCircle size={14} /> 失败 {execution.failed_targets}</span>
                                             </div>
                                             {execution.result_payload.length > 0 && (
-                                                <div className="execution-target-list">
-                                                    {execution.result_payload.map((target) => (
-                                                        <span key={`${execution.id}-${target.code}`} className={`execution-target-pill ${target.status}`}>
-                                                            {(targetMap.get(target.code)?.label || target.code)} · {formatExecutionStatus(target.status)}
-                                                        </span>
-                                                    ))}
-                                                </div>
+                                                <>
+                                                    <div className="execution-target-list">
+                                                        {execution.result_payload.map((target) => (
+                                                            <span key={`${execution.id}-${target.code}`} className={`execution-target-pill ${target.status}`}>
+                                                                {(targetMap.get(target.code)?.label || target.code)} · {formatExecutionStatus(target.status)}
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                    <div className="execution-target-detail-list">
+                                                        {execution.result_payload.map((target) => (
+                                                            <div key={`${execution.id}-${target.code}-detail`} className={`execution-target-detail ${target.status}`}>
+                                                                <div className="execution-target-detail-head">
+                                                                    <strong>{targetMap.get(target.code)?.label || target.code}</strong>
+                                                                    <span>{formatExecutionStatus(target.status)}</span>
+                                                                </div>
+                                                                <p>{target.message || '暂无执行摘要'}</p>
+                                                                {(target.account_book_number || target.run_date) && (
+                                                                    <div className="execution-target-meta">
+                                                                        {target.account_book_number && <span>账簿：{target.account_book_number}</span>}
+                                                                        {target.run_date && <span>业务日期：{target.run_date}</span>}
+                                                                    </div>
+                                                                )}
+                                                                {hasExecutionTargetMetrics(target) && renderExecutionTargetMetrics(target)}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </>
                                             )}
                                         </div>
                                     ))}
@@ -976,13 +1041,18 @@ const SyncSchedulesPage = () => {
                                 <label className="field">
                                     <span>账簿上下文</span>
                                     <select value={formState.account_book_number} onChange={handleAccountBookChange}>
-                                        <option value="">不限定账簿</option>
+                                        <option value="">{requiresAccountBookSelection ? '请选择账簿' : '不限定账簿'}</option>
                                         {accountBooks.map((book) => (
                                             <option key={book.id} value={book.number || ''}>
                                                 {(book.number || '未编码')} · {book.name}
                                             </option>
                                         ))}
                                     </select>
+                                    <small>
+                                        {requiresAccountBookSelection
+                                            ? '当前目标必须选择账簿，系统会自动遍历该账簿映射的园区，并处理执行当天的收款单。'
+                                            : '如选择账簿，上下文会传递给相关同步或推送目标。'}
+                                    </small>
                                 </label>
 
                                 <label className="field toggle-field">
@@ -996,6 +1066,16 @@ const SyncSchedulesPage = () => {
                                     </button>
                                 </label>
                             </div>
+
+                            {autoResolvedCommunityTargets.length > 0 && (
+                                <div className="field">
+                                    <span>自动推送说明</span>
+                                    <div className="schedule-inline-note">
+                                        已选择 {autoResolvedCommunityTargets.length} 个按账簿自动解析园区的目标。
+                                        执行时会直接使用所选账簿绑定的园区，并筛选收款日期为执行当天的收款单。
+                                    </div>
+                                </div>
+                            )}
 
                             <div className="schedule-form-footer">
                                 <button type="button" className="sync-action ghost" onClick={closeFormModal}>

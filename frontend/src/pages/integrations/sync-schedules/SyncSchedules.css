@@ -431,6 +431,87 @@
     color: #c2410c;
 }
 
+.execution-target-detail-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+.execution-target-detail {
+    padding: 12px 14px;
+    border-radius: 16px;
+    border: 1px solid rgba(226, 232, 240, 0.92);
+    background: #f8fafc;
+}
+
+.execution-target-detail.success {
+    border-color: rgba(16, 185, 129, 0.22);
+    background: rgba(236, 253, 245, 0.62);
+}
+
+.execution-target-detail.failed,
+.execution-target-detail.partial {
+    border-color: rgba(249, 115, 22, 0.22);
+    background: rgba(255, 247, 237, 0.72);
+}
+
+.execution-target-detail-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    align-items: flex-start;
+}
+
+.execution-target-detail-head strong {
+    font-size: 13px;
+}
+
+.execution-target-detail-head span {
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.execution-target-detail p {
+    margin: 8px 0 0;
+    color: #475569;
+    line-height: 1.6;
+    font-size: 13px;
+}
+
+.execution-target-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    margin-top: 8px;
+    color: #64748b;
+    font-size: 12px;
+}
+
+.execution-target-metrics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.execution-target-metrics span {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 9px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.82);
+    color: #334155;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.execution-target-metrics strong {
+    font-size: 13px;
+}
+
 .timeline-item {
     display: grid;
     grid-template-columns: 18px minmax(0, 1fr);
@@ -554,6 +635,20 @@
 .field textarea {
     resize: vertical;
     min-height: 90px;
+}
+
+.field small,
+.schedule-inline-note {
+    color: #64748b;
+    line-height: 1.6;
+}
+
+.schedule-inline-note {
+    padding: 12px 14px;
+    border-radius: 14px;
+    border: 1px solid rgba(191, 219, 254, 0.9);
+    background: rgba(239, 246, 255, 0.88);
+    font-size: 13px;
 }
 
 .target-group-panel,

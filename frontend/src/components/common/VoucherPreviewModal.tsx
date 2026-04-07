@@ -236,6 +236,11 @@ const VoucherPreviewModal = ({
     : [];
   const sourceBillSummary = data?.source_bill_push_summary || {};
   const pushBlocked = Boolean(data?.push_blocked);
+  const skippedBills = Array.isArray(data?.skipped_bills)
+    ? data.skipped_bills
+    : [];
+  const strictMatchBlocked =
+    Boolean(data?.partial_matched) || skippedBills.length > 0;
   const normalizeAssgrp = (assgrp: any): Array<[string, string]> => {
     if (!assgrp || typeof assgrp !== "object") return [];
     return Object.entries(assgrp)
@@ -665,6 +670,7 @@ const VoucherPreviewModal = ({
     !isLoading &&
     !error &&
     data?.matched &&
+    !strictMatchBlocked &&
     !pushBlocked &&
     bookedDateValidation.ok &&
     voucherAmountValidation.ok;
@@ -746,7 +752,7 @@ const VoucherPreviewModal = ({
           fontFamily: uiFont,
         }}
       >
-        {/* 标题栏*/}
+        {/* Header */}
         <div
           style={{
             display: "flex",
@@ -788,7 +794,11 @@ const VoucherPreviewModal = ({
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-            {!!effectiveKingdeeJson && !isLoading && !error && data?.matched && (
+            {!!effectiveKingdeeJson &&
+              !isLoading &&
+              !error &&
+              data?.matched &&
+              !strictMatchBlocked && (
               <button
                 onClick={() => setIsJsonOpen(true)}
                 style={{
@@ -812,7 +822,8 @@ const VoucherPreviewModal = ({
               !!effectiveKingdeeJson &&
               !isLoading &&
               !error &&
-              data?.matched && (
+              data?.matched &&
+              !strictMatchBlocked && (
                 <button
                   onClick={handlePushVoucher}
                   disabled={isPushing || pushBlocked || !voucherAmountValidation.ok}
@@ -862,7 +873,7 @@ const VoucherPreviewModal = ({
             </button>
           </div>
         </div>
-        {/* 内容区*/}
+        {/* Content */}
         <div
           style={{
             flex: 1,
@@ -913,7 +924,7 @@ const VoucherPreviewModal = ({
                 {error}
               </p>
             </div>
-          ) : data && !data.matched ? (
+          ) : data && (!data.matched || strictMatchBlocked) ? (
             <div
               style={{
                 display: "flex",
@@ -925,18 +936,82 @@ const VoucherPreviewModal = ({
               }}
             >
               <AlertTriangle size={40} />
-              <p style={{ margin: 0, fontWeight: 600 }}>未匹配到适用模板</p>
-              <p
-                style={{
-                  fontSize: "0.8rem",
-                  color: "#94a3b8",
-                  textAlign: "center",
-                }}
-              >
-                已检查 {data.templates_checked}
-                个模板，没有找到符合当前账单条件的凭证模板。
-                <br /> 请前往“凭证模板中心”创建或调整模板的触发条件。
-              </p>
+              {strictMatchBlocked ? (
+                <>
+                  <p style={{ margin: 0, fontWeight: 600 }}>
+                    存在未完整匹配的关联数据，已阻止生成和推送
+                  </p>
+                  <p
+                    style={{
+                      fontSize: "0.8rem",
+                      color: "#94a3b8",
+                      textAlign: "center",
+                    }}
+                  >
+                    {data?.message ||
+                      "当前收款单存在未匹配或无法合并的关联数据，必须全部成功匹配后才能继续。"}
+                  </p>
+                  {skippedBills.length > 0 && (
+                    <div
+                      style={{
+                        width: "100%",
+                        maxWidth: "760px",
+                        padding: "0.9rem 1rem",
+                        borderRadius: "0.75rem",
+                        border: "1px solid #fed7aa",
+                        background: "#fff7ed",
+                        color: "#9a3412",
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: "0.78rem",
+                          fontWeight: 700,
+                          marginBottom: "0.5rem",
+                        }}
+                      >
+                        未通过校验的关联数据
+                      </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: "0.35rem",
+                          fontSize: "0.76rem",
+                          lineHeight: 1.5,
+                        }}
+                      >
+                        {skippedBills.slice(0, 10).map((item: any, index: number) => (
+                          <div
+                            key={`${item?.community_id ?? "0"}-${item?.bill_id ?? index}-${index}`}
+                          >
+                            {`${item?.community_id ?? "-"}:${item?.bill_id ?? "-"} - ${
+                              item?.reason || "template not matched"
+                            }`}
+                          </div>
+                        ))}
+                        {skippedBills.length > 10 && (
+                          <div>{`另有 ${skippedBills.length - 10} 条未展示`}</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p style={{ margin: 0, fontWeight: 600 }}>未匹配到适用模板</p>
+                  <p
+                    style={{
+                      fontSize: "0.8rem",
+                      color: "#94a3b8",
+                      textAlign: "center",
+                    }}
+                  >
+                    已检查 {data.templates_checked} 个模板，没有找到符合当前账单条件的凭证模板。
+                    <br /> 请前往“凭证模板中心”创建或调整模板的触发条件。
+                  </p>
+                </>
+              )}
             </div>
           ) : data ? (
             <>
@@ -1119,8 +1194,8 @@ const VoucherPreviewModal = ({
                       >
                         未推送 {sourceBillSummary.not_pushed || 0} / 推送中
                         {sourceBillSummary.pushing || 0} / 已推送
-                        {sourceBillSummary.success || 0} / 失败
-                        {sourceBillSummary.failed || 0}
+                        {sourceBillSummary.success || 0} / 失败 {sourceBillSummary.failed || 0}
+                        
                       </div>
                     </div>
                     {pushBlocked && (
@@ -1148,7 +1223,7 @@ const VoucherPreviewModal = ({
                     flexDirection: "column",
                   }}
                 >
-                  {/* 平衡状态*/}
+                  {/* Balance Status */}
                   <div
                     style={{
                       display: "flex",
@@ -1557,7 +1632,7 @@ const VoucherPreviewModal = ({
           </div>
         </div>
       )}
-      {/* 动画 keyframes */}
+      {/* keyframes */}
       <style>{`                 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }                 @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }                 @keyframes spin { to { transform: rotate(360deg); } }             `}</style>
     </div>
   );

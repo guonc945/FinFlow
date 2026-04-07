@@ -512,6 +512,40 @@ def _validate_voucher_json_amounts(kingdee_json: Dict[str, Any]) -> None:
         )
 
 
+def _build_blocked_preview_response(
+    message: str,
+    skipped_bills: List[Dict[str, Any]],
+    **extra_fields: Any,
+) -> Dict[str, Any]:
+    normalized_skipped: List[Dict[str, Any]] = []
+    for item in skipped_bills or []:
+        normalized_skipped.append({
+            "bill_id": int(item.get("bill_id") or 0),
+            "community_id": int(item.get("community_id") or 0),
+            "reason": str(item.get("reason") or "template not matched"),
+        })
+
+    blocked_details = "; ".join(
+        [
+            f"{item['community_id']}:{item['bill_id']} -> {item['reason']}"
+            for item in normalized_skipped[:20]
+        ]
+    )
+
+    response: Dict[str, Any] = {
+        "matched": False,
+        "partial_matched": bool(normalized_skipped),
+        "matched_bills": 0,
+        "skipped_bills": normalized_skipped,
+        "message": message,
+        "blocked_details": blocked_details,
+        "push_blocked": True,
+        "push_block_reason": message,
+    }
+    response.update(extra_fields)
+    return response
+
+
 def _try_parse_datetime(value: Any) -> Optional[datetime]:
     if value is None:
         return None
@@ -2073,11 +2107,29 @@ def preview_voucher_for_receipt(
                 skipped_bills.append({
                     "bill_id": int(related_bill.id),
                     "community_id": int(related_bill.community_id),
-                    "reason": "template not matched",
+                    "reason": (
+                        str(result.get("message") or "").strip()
+                        if isinstance(result, dict)
+                        else ""
+                    ) or "template not matched",
                 })
                 continue
 
             previews.append(result)
+
+        if skipped_bills:
+            return _build_blocked_preview_response(
+                "存在未匹配的关联运营账单，必须全部匹配成功后才能生成和推送凭证",
+                skipped_bills,
+                matched_root_source="receipt_bills",
+                matched_via_receipt=False,
+                matched_bills=len(previews),
+                receipt_summary=_build_receipt_summary_payload(receipt_bill),
+                selected_bills=source_bills,
+                selected_bill_push_summary=source_bill_push_summary,
+                source_bills=source_bills,
+                source_bill_push_summary=source_bill_push_summary,
+            )
 
         if previews:
             first_preview = previews[0]
@@ -2102,6 +2154,20 @@ def preview_voucher_for_receipt(
 
             previews = header_compatible_previews
             merged_bizdate = max([d for d in merged_bizdates if d], default=str(first_header.get("bizdate") or ""))
+
+            if skipped_bills:
+                return _build_blocked_preview_response(
+                    "关联运营账单的凭证表头不一致，必须全部一致后才能生成和推送凭证",
+                    skipped_bills,
+                    matched_root_source="receipt_bills",
+                    matched_via_receipt=False,
+                    matched_bills=len(previews),
+                    receipt_summary=_build_receipt_summary_payload(receipt_bill),
+                    selected_bills=source_bills,
+                    selected_bill_push_summary=source_bill_push_summary,
+                    source_bills=source_bills,
+                    source_bill_push_summary=source_bill_push_summary,
+                )
 
             matched_source_bills: List[Dict[str, Any]] = []
             seen_source_keys = set()
@@ -2475,11 +2541,24 @@ def preview_voucher_for_receipts(
                 allowed_community_ids=allowed_community_ids,
             )
             if not result.get("matched"):
-                skipped_bills.append({
-                    "bill_id": int(ref["receipt_bill_id"]),
-                    "community_id": int(ref["community_id"]),
-                    "reason": "template not matched",
-                })
+                nested_skipped = result.get("skipped_bills") if isinstance(result, dict) else None
+                if nested_skipped:
+                    for skipped in nested_skipped:
+                        skipped_bills.append({
+                            "bill_id": int(skipped.get("bill_id") or 0),
+                            "community_id": int(skipped.get("community_id") or 0),
+                            "reason": str(skipped.get("reason") or "template not matched"),
+                        })
+                else:
+                    skipped_bills.append({
+                        "bill_id": int(ref["receipt_bill_id"]),
+                        "community_id": int(ref["community_id"]),
+                        "reason": (
+                            str(result.get("message") or "").strip()
+                            if isinstance(result, dict)
+                            else ""
+                        ) or "template not matched",
+                    })
                 continue
             previews.append(result)
         except HTTPException as exc:
@@ -2489,12 +2568,15 @@ def preview_voucher_for_receipts(
                 "reason": exc.detail if isinstance(exc.detail, str) else str(exc.detail),
             })
 
-    if not previews:
-        details = "; ".join([f"{b['community_id']}:{b['bill_id']} -> {b['reason']}" for b in skipped_bills[:20]])
-        raise HTTPException(
-            status_code=400,
-            detail=("No vouchers could be generated" + (f": {details}" if details else "")),
+    if skipped_bills:
+        return _build_blocked_preview_response(
+            "存在未匹配的收款单或关联数据，必须全部匹配成功后才能生成和推送凭证",
+            skipped_bills,
+            matched_bills=len(previews),
         )
+
+    if not previews:
+        raise HTTPException(status_code=400, detail="No vouchers could be generated")
 
     first_preview = previews[0]
     first_header = ((first_preview.get("kingdee_json") or {}).get("data") or [{}])[0]
@@ -2518,6 +2600,13 @@ def preview_voucher_for_receipts(
 
     previews = header_compatible_previews
     merged_bizdate = max([d for d in merged_bizdates if d], default=str(first_header.get("bizdate") or ""))
+
+    if skipped_bills:
+        return _build_blocked_preview_response(
+            "存在表头不一致的收款单，必须全部一致后才能生成和推送凭证",
+            skipped_bills,
+            matched_bills=len(previews),
+        )
 
     source_bills: List[Dict[str, Any]] = []
     seen_source_keys = set()
@@ -3002,11 +3091,24 @@ def preview_voucher_for_bills(
                 allowed_community_ids=allowed_community_ids,
             )
             if not result.get("matched"):
-                skipped_bills.append({
-                    "bill_id": int(ref["bill_id"]),
-                    "community_id": int(ref["community_id"]),
-                    "reason": "template not matched",
-                })
+                nested_skipped = result.get("skipped_bills") if isinstance(result, dict) else None
+                if nested_skipped:
+                    for skipped in nested_skipped:
+                        skipped_bills.append({
+                            "bill_id": int(skipped.get("bill_id") or 0),
+                            "community_id": int(skipped.get("community_id") or 0),
+                            "reason": str(skipped.get("reason") or "template not matched"),
+                        })
+                else:
+                    skipped_bills.append({
+                        "bill_id": int(ref["bill_id"]),
+                        "community_id": int(ref["community_id"]),
+                        "reason": (
+                            str(result.get("message") or "").strip()
+                            if isinstance(result, dict)
+                            else ""
+                        ) or "template not matched",
+                    })
                 continue
             previews.append(result)
         except HTTPException as exc:
@@ -3016,12 +3118,15 @@ def preview_voucher_for_bills(
                 "reason": exc.detail if isinstance(exc.detail, str) else str(exc.detail),
             })
 
-    if not previews:
-        details = "; ".join([f"{b['community_id']}:{b['bill_id']} -> {b['reason']}" for b in skipped_bills[:20]])
-        raise HTTPException(
-            status_code=400,
-            detail=("No vouchers could be generated" + (f": {details}" if details else ""))
+    if skipped_bills:
+        return _build_blocked_preview_response(
+            "存在未匹配的账单或关联数据，必须全部匹配成功后才能生成和推送凭证",
+            skipped_bills,
+            matched_bills=len(previews),
         )
+
+    if not previews:
+        raise HTTPException(status_code=400, detail="No vouchers could be generated")
 
     # Merge across different templates; keep business date flexible so receipts from
     # different transaction days in the same batch can still produce a single voucher.
@@ -3049,6 +3154,13 @@ def preview_voucher_for_bills(
 
     previews = header_compatible_previews
     merged_bizdate = max([d for d in merged_bizdates if d], default=str(first_header.get("bizdate") or ""))
+
+    if skipped_bills:
+        return _build_blocked_preview_response(
+            "存在表头不一致的账单，必须全部一致后才能生成和推送凭证",
+            skipped_bills,
+            matched_bills=len(previews),
+        )
 
     source_bills: List[Dict[str, Any]] = []
     seen_source_keys = set()
