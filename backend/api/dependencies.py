@@ -83,7 +83,8 @@ MENU_PERMISSION_DEFINITIONS = [
     {"key": "/vouchers/categories", "label": "模板分类", "section": "集成中心", "group": "财务凭证", "required": False, "admin_only": False, "default_enabled": False},
     {"key": "/oa-center", "label": "泛微协同", "section": "泛微协同", "group": "协同入口", "required": False, "admin_only": False, "default_enabled": True},
     {"key": "/integrations/reporting", "label": "报表设计", "section": "集成中心", "group": "集成能力", "required": False, "admin_only": False, "default_enabled": False},
-    {"key": "/integrations/sync-schedules", "label": "同步计划", "section": "集成中心", "group": "集成能力", "required": False, "admin_only": False, "default_enabled": False},
+    {"key": "/integrations/data-sync-schedules", "label": "数据同步", "section": "集成中心", "group": "计划任务", "required": False, "admin_only": False, "default_enabled": False},
+    {"key": "/integrations/voucher-push-schedules", "label": "凭证推送", "section": "集成中心", "group": "计划任务", "required": False, "admin_only": False, "default_enabled": False},
     {"key": "/integrations/credentials", "label": "接口认证", "section": "集成中心", "group": "接口接入", "required": False, "admin_only": False, "default_enabled": False},
     {"key": "/integrations/apis", "label": "接口管理", "section": "集成中心", "group": "接口接入", "required": False, "admin_only": False, "default_enabled": False},
     {"key": "/report-center", "label": "报表中心", "section": "报表中心", "group": "数据展示", "required": False, "admin_only": False, "default_enabled": True},
@@ -111,6 +112,13 @@ API_PERMISSION_DEFINITIONS = [
 MENU_PERMISSION_ROLE_MAP = {item["role"]: item for item in MENU_PERMISSION_ROLE_DEFINITIONS}
 MENU_PERMISSION_DEFINITION_MAP = {item["key"]: item for item in MENU_PERMISSION_DEFINITIONS}
 API_PERMISSION_DEFINITION_MAP = {item["key"]: item for item in API_PERMISSION_DEFINITIONS}
+
+LEGACY_MENU_KEY_ALIASES: Dict[str, List[str]] = {
+    "/integrations/sync-schedules": [
+        "/integrations/data-sync-schedules",
+        "/integrations/voucher-push-schedules",
+    ],
+}
 
 
 def _ordered_permission_keys(definitions: List[Dict[str, Any]], keys: Set[str], key_field: str) -> List[str]:
@@ -180,7 +188,14 @@ def _get_role_menu_keys(db: Session, role: str) -> List[str]:
         .all()
     )
     if rows:
-        persisted_keys = {row[0] for row in rows if row[0] in allowed_definition_keys}
+        persisted_keys: Set[str] = set()
+        for row in rows:
+            key = row[0]
+            if key in allowed_definition_keys:
+                persisted_keys.add(key)
+            for alias_key in LEGACY_MENU_KEY_ALIASES.get(key, []):
+                if alias_key in allowed_definition_keys:
+                    persisted_keys.add(alias_key)
         return _ordered_permission_keys(MENU_PERMISSION_DEFINITIONS, persisted_keys | required_keys, "key")
 
     return _ordered_permission_keys(

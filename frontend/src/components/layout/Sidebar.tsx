@@ -35,6 +35,7 @@ interface NavItem {
     label: string;
     icon: LucideIcon;
     key?: string;
+    permissionKeys?: string[];
     adminOnly?: boolean;
     children?: NavItem[];
 }
@@ -120,7 +121,8 @@ const Sidebar = () => {
                 if (isAdmin) return true;
                 if (!item.path) return true;
                 if (!hasExplicitMenuPermissions) return !item.adminOnly;
-                return allowedMenuKeySet.has(item.path);
+                const permissionKeys = item.permissionKeys?.length ? item.permissionKeys : [item.path];
+                return permissionKeys.some((key) => allowedMenuKeySet.has(key));
             })
             .map((item) => {
                 if (!item.children) return item;
@@ -236,8 +238,26 @@ const Sidebar = () => {
                         { path: '/vouchers/categories', label: '模板分类', icon: Tags },
                     ],
                 },
+                {
+                    key: 'integration-schedules',
+                    label: '计划任务',
+                    icon: CalendarClock,
+                    children: [
+                        {
+                            path: '/integrations/data-sync-schedules',
+                            label: '数据同步',
+                            icon: CalendarClock,
+                            permissionKeys: ['/integrations/data-sync-schedules', '/integrations/sync-schedules'],
+                        },
+                        {
+                            path: '/integrations/voucher-push-schedules',
+                            label: '凭证推送',
+                            icon: CalendarClock,
+                            permissionKeys: ['/integrations/voucher-push-schedules', '/integrations/sync-schedules'],
+                        },
+                    ],
+                },
                 { path: '/integrations/reporting', label: '报表设计', icon: BarChart3 },
-                { path: '/integrations/sync-schedules', label: '同步计划', icon: CalendarClock },
             ],
         },
         { path: '/report-center', label: '报表中心', icon: BarChart3 },

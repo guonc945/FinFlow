@@ -25,7 +25,8 @@ import {
   Account,
   CredentialsManager,
   APIManager,
-  SyncSchedulesPage,
+  DataSyncSchedulesPage,
+  VoucherPushSchedulesPage,
   VoucherTemplates,
   TemplateCategories,
   AccountingSubjects,
@@ -109,6 +110,7 @@ function App() {
             <Route path="reports" element={<Navigate to="/integrations/reporting" replace />} />
             <Route path="integrations" element={<Navigate to="/integrations/reporting" replace />} />
             <Route path="integrations/reports" element={<Navigate to="/integrations/reporting" replace />} />
+            <Route path="integrations/sync-schedules" element={<Navigate to="/integrations/data-sync-schedules" replace />} />
             <Route path="integrations/reporting" element={<MenuRoute menuKey="/integrations/reporting" apiKey="reporting.manage"><RouteElement variant="dashboard"><Reports /></RouteElement></MenuRoute>} />
             <Route path="accounting-subjects" element={<MenuRoute menuKey="/accounting-subjects"><RouteElement variant="table"><AccountingSubjects /></RouteElement></MenuRoute>} />
             <Route path="customers" element={<MenuRoute menuKey="/customers"><RouteElement variant="table"><Customers /></RouteElement></MenuRoute>} />
@@ -126,7 +128,30 @@ function App() {
             <Route path="organizations" element={<MenuRoute menuKey="/organizations" apiKey="organization.manage"><RouteElement variant="table"><Organizations /></RouteElement></MenuRoute>} />
             <Route path="integrations/credentials" element={<MenuRoute menuKey="/integrations/credentials" apiKey="credential.manage"><RouteElement variant="settings"><CredentialsManager /></RouteElement></MenuRoute>} />
             <Route path="integrations/apis" element={<MenuRoute menuKey="/integrations/apis" apiKey="api_registry.manage"><RouteElement variant="table"><APIManager /></RouteElement></MenuRoute>} />
-            <Route path="integrations/sync-schedules" element={<MenuRoute menuKey="/integrations/sync-schedules" apiKey="sync_schedule.manage"><RouteElement variant="table"><SyncSchedulesPage /></RouteElement></MenuRoute>} />
+            <Route
+              path="integrations/data-sync-schedules"
+              element={
+                <MenuRoute
+                  menuKey="/integrations/data-sync-schedules"
+                  fallbackMenuKeys={['/integrations/sync-schedules']}
+                  apiKey="sync_schedule.manage"
+                >
+                  <RouteElement variant="table"><DataSyncSchedulesPage /></RouteElement>
+                </MenuRoute>
+              }
+            />
+            <Route
+              path="integrations/voucher-push-schedules"
+              element={
+                <MenuRoute
+                  menuKey="/integrations/voucher-push-schedules"
+                  fallbackMenuKeys={['/integrations/sync-schedules']}
+                  apiKey="sync_schedule.manage"
+                >
+                  <RouteElement variant="table"><VoucherPushSchedulesPage /></RouteElement>
+                </MenuRoute>
+              }
+            />
             <Route path="vouchers/templates" element={<MenuRoute menuKey="/vouchers/templates" apiKey="voucher_template.manage"><RouteElement variant="settings"><VoucherTemplates /></RouteElement></MenuRoute>} />
             <Route path="vouchers/categories" element={<MenuRoute menuKey="/vouchers/categories" apiKey="voucher_template.manage"><RouteElement variant="settings"><TemplateCategories /></RouteElement></MenuRoute>} />
             <Route path="settings" element={<MenuRoute menuKey="/settings" apiKey="setting.manage"><RouteElement variant="settings"><Settings /></RouteElement></MenuRoute>} />

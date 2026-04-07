@@ -40,6 +40,8 @@ import type {
 import type { AccountBook } from '../../../types/accountBook';
 import './SyncSchedules.css';
 
+type ScheduleModuleType = 'data-sync' | 'voucher-push';
+
 type ScheduleFormState = {
     name: string;
     description: string;
@@ -55,26 +57,122 @@ type ScheduleFormState = {
     enabled: boolean;
 };
 
-const weekdayOrder = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+type ScheduleModuleCopy = {
+    eyebrow: string;
+    title: string;
+    subtitle: string;
+    summaryCaption: string;
+    loadingText: string;
+    emptyText: string;
+    createTitle: string;
+    editTitle: string;
+    modalDescription: string;
+    namePlaceholder: string;
+    descriptionPlaceholder: string;
+    targetPanelTitle: string;
+    targetPanelDescription: string;
+    markEmptyText: string;
+    kingdeeEmptyText: string;
+    executionSubtitle: string;
+    autoResolvedTitle: string;
+    enabledCaption: string;
+    runningCaption: string;
+    failedCaption: string;
+    scheduleListDescription: string;
+    accountBookLabel: string;
+    accountBookMetaLabel: string;
+    communityMetaLabel: string;
+    communityMetaEmptyText: string;
+    accountBookRequiredMessage: string;
+    accountBookHelperText: string;
+    autoResolvedDescription: string;
+    createSuccessTitle: string;
+    updateSuccessTitle: string;
+    deleteSuccessTitle: string;
+    toggleSuccessTitle: string;
+    runSuccessTitle: string;
+    loadErrorText: string;
+    targetRequiredMessage: string;
+};
 
-const applyForcedTargetCodes = (targetCodes: string[], targetMap: Map<string, SyncScheduleTargetMeta>) => {
-    const seen = new Set<string>();
-    const normalized: string[] = [];
+const VOUCHER_PUSH_TARGET_CODE = 'receipt_voucher_auto_push';
+const WEEKDAY_ORDER = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 
-    for (const code of targetCodes) {
-        if (!code || seen.has(code)) continue;
-        seen.add(code);
-        normalized.push(code);
-
-        const forcedTargets = targetMap.get(code)?.forced_with || [];
-        for (const forcedCode of forcedTargets) {
-            if (!forcedCode || seen.has(forcedCode)) continue;
-            seen.add(forcedCode);
-            normalized.push(forcedCode);
-        }
-    }
-
-    return normalized;
+const MODULE_COPY: Record<ScheduleModuleType, ScheduleModuleCopy> = {
+    'data-sync': {
+        eyebrow: 'Data Sync Control',
+        title: '数据同步计划',
+        subtitle: '独立管理马克业务与金蝶基础档案同步计划，支持配置目标、园区、账簿、频率与手动执行。',
+        summaryCaption: '当前已配置的数据同步计划数量',
+        loadingText: '数据同步计划加载中...',
+        emptyText: '还没有数据同步计划，先创建一个吧。',
+        createTitle: '新建数据同步计划',
+        editTitle: '编辑数据同步计划',
+        modalDescription: '复用现有同步能力，配置独立的定时规则和数据范围。',
+        namePlaceholder: '例如：凌晨基础资料同步',
+        descriptionPlaceholder: '说明这个计划负责同步哪些数据、适用于什么场景',
+        targetPanelTitle: '同步目标',
+        targetPanelDescription: '可跨马克与金蝶组合配置，同一计划会分发到多个独立目标执行。',
+        markEmptyText: '暂无可用的马克同步目标',
+        kingdeeEmptyText: '暂无可用的金蝶同步目标',
+        executionSubtitle: '查看计划级明细与最近执行情况',
+        autoResolvedTitle: '自动解析说明',
+        enabledCaption: '会被调度服务自动扫描执行',
+        runningCaption: '后台正在处理中的计划数量',
+        failedCaption: '最近一次执行失败或部分成功的计划数量',
+        scheduleListDescription: '每个计划可组合多个同步目标，并独立配置执行频率。',
+        accountBookLabel: '账簿上下文',
+        accountBookMetaLabel: '账簿上下文',
+        communityMetaLabel: '园区范围',
+        communityMetaEmptyText: '不适用',
+        accountBookRequiredMessage: '当前所选目标要求必须选择账簿。',
+        accountBookHelperText: '如目标需要账簿，执行时会自动传入当前所选账簿。',
+        autoResolvedDescription: '已选择 {count} 个会按账簿自动解析园区的目标。',
+        createSuccessTitle: '创建成功',
+        updateSuccessTitle: '更新成功',
+        deleteSuccessTitle: '删除成功',
+        toggleSuccessTitle: '状态已更新',
+        runSuccessTitle: '已开始执行',
+        loadErrorText: '无法获取数据同步计划配置，请稍后重试',
+        targetRequiredMessage: '请至少选择一个同步目标',
+    },
+    'voucher-push': {
+        eyebrow: 'Voucher Push Control',
+        title: '凭证推送计划',
+        subtitle: '独立管理收款单凭证自动推送计划，按账簿、频率严格执行。',
+        summaryCaption: '当前已配置的凭证推送计划数量',
+        loadingText: '凭证推送计划加载中...',
+        emptyText: '还没有凭证推送计划，先创建一个吧。',
+        createTitle: '新建凭证推送计划',
+        editTitle: '编辑凭证推送计划',
+        modalDescription: '配置自动遍历账簿关联园区并推送当天收款单凭证的独立计划。',
+        namePlaceholder: '例如：每日收款单凭证推送',
+        descriptionPlaceholder: '说明这个计划对应哪个账簿、执行时间和推送规则',
+        targetPanelTitle: '推送目标',
+        targetPanelDescription: '当前模块仅支持运管收款单目标，请在保存前完成明确勾选。',
+        markEmptyText: '凭证推送模块不提供马克侧目标',
+        kingdeeEmptyText: '暂无可用的凭证推送目标',
+        executionSubtitle: '查看凭证推送计划的执行明细与最近执行情况',
+        autoResolvedTitle: '自动推送说明',
+        enabledCaption: '到达计划时间后会自动扫描当天待推送收款单',
+        runningCaption: '后台正在校验和推送的计划数量',
+        failedCaption: '最近一次执行失败或部分成功的计划数量',
+        scheduleListDescription: '每个计划对应一个凭证自动推送场景，需显式选择推送目标并配置执行账簿。',
+        accountBookLabel: '执行账簿',
+        accountBookMetaLabel: '执行账簿',
+        communityMetaLabel: '自动解析园区',
+        communityMetaEmptyText: '按账簿解析',
+        accountBookRequiredMessage: '凭证推送计划必须选择账簿，系统会按账簿自动解析关联园区。',
+        accountBookHelperText: '系统会使用所选账簿自动解析园区，并处理执行当天的收款单。',
+        autoResolvedDescription: '已选择 {count} 个会按账簿自动解析园区的目标。',
+        createSuccessTitle: '创建成功',
+        updateSuccessTitle: '更新成功',
+        deleteSuccessTitle: '删除成功',
+        toggleSuccessTitle: '状态已更新',
+        runSuccessTitle: '已开始执行',
+        loadErrorText: '无法获取凭证推送计划配置，请稍后重试',
+        targetRequiredMessage: '请先选择推送目标后再保存',
+    },
 };
 
 const createEmptyForm = (timezone: string): ScheduleFormState => ({
@@ -125,19 +223,40 @@ const describeSchedule = (schedule: SyncSchedule) => {
         return `每 ${schedule.interval_minutes || 0} 分钟执行`;
     }
     if (schedule.schedule_type === 'weekly') {
-        const labels = schedule.weekly_days.join(' / ') || 'MON';
-        return `每周 ${labels} ${schedule.daily_time || '00:00'}`;
+        return `每周 ${schedule.weekly_days.join(' / ') || 'MON'} ${schedule.daily_time || '00:00'}`;
     }
     return `每日 ${schedule.daily_time || '00:00'}`;
 };
 
+const isVoucherPushTargetCode = (code?: string | null) => String(code || '').trim() === VOUCHER_PUSH_TARGET_CODE;
+
+const isTargetVisibleForModule = (code: string, moduleType: ScheduleModuleType) =>
+    moduleType === 'voucher-push' ? isVoucherPushTargetCode(code) : !isVoucherPushTargetCode(code);
+
+const applyForcedTargetCodes = (targetCodes: string[], targetMap: Map<string, SyncScheduleTargetMeta>) => {
+    const seen = new Set<string>();
+    const normalized: string[] = [];
+
+    for (const code of targetCodes) {
+        if (!code || seen.has(code)) continue;
+        seen.add(code);
+        normalized.push(code);
+
+        const forcedTargets = targetMap.get(code)?.forced_with || [];
+        for (const forcedCode of forcedTargets) {
+            if (!forcedCode || seen.has(forcedCode)) continue;
+            seen.add(forcedCode);
+            normalized.push(forcedCode);
+        }
+    }
+
+    return normalized;
+};
+
 const hasExecutionTargetMetrics = (target: SyncScheduleExecutionTargetResult) =>
-    [
-        target.scanned_receipts,
-        target.pushed_receipts,
-        target.skipped_receipts,
-        target.failed_receipts,
-    ].some((value) => typeof value === 'number');
+    [target.scanned_receipts, target.pushed_receipts, target.skipped_receipts, target.failed_receipts].some(
+        (value) => typeof value === 'number'
+    );
 
 const renderExecutionTargetMetrics = (target: SyncScheduleExecutionTargetResult) => {
     const metrics = [
@@ -161,8 +280,10 @@ const renderExecutionTargetMetrics = (target: SyncScheduleExecutionTargetResult)
     );
 };
 
-const SyncSchedulesPage = () => {
+export const SyncSchedulesPage = ({ moduleType = 'data-sync' }: { moduleType?: ScheduleModuleType }) => {
     const { toasts, showToast, removeToast } = useToast();
+    const copy = MODULE_COPY[moduleType];
+
     const [meta, setMeta] = useState<SyncScheduleMeta | null>(null);
     const [schedules, setSchedules] = useState<SyncSchedule[]>([]);
     const [selectedScheduleId, setSelectedScheduleId] = useState<number | null>(null);
@@ -205,10 +326,19 @@ const SyncSchedulesPage = () => {
     }, [meta]);
 
     const groupedTargets = useMemo(() => {
-        const mark = (meta?.targets || []).filter((item) => item.system === 'mark');
-        const kingdee = (meta?.targets || []).filter((item) => item.system === 'kingdee');
-        return { mark, kingdee };
+        const targets = meta?.targets || [];
+        return {
+            mark: targets.filter((item) => item.system === 'mark'),
+            kingdee: targets.filter((item) => item.system === 'kingdee'),
+        };
     }, [meta]);
+
+    const defaultTargetTab = useMemo<'mark' | 'kingdee'>(
+        () => (moduleType === 'voucher-push' || groupedTargets.mark.length === 0 ? 'kingdee' : 'mark'),
+        [groupedTargets.mark.length, moduleType]
+    );
+
+    const visibleTargetTab = moduleType === 'voucher-push' ? 'kingdee' : activeTargetTab;
 
     const requiresCommunitySelection = useMemo(
         () => formState.target_codes.some((code) => targetMap.get(code)?.requires_community_ids),
@@ -222,16 +352,6 @@ const SyncSchedulesPage = () => {
 
     const autoResolvedCommunityTargets = useMemo(
         () => formState.target_codes.filter((code) => targetMap.get(code)?.auto_resolve_communities),
-        [formState.target_codes, targetMap]
-    );
-
-    const markSelectedCount = useMemo(
-        () => formState.target_codes.filter((code) => targetMap.get(code)?.system === 'mark').length,
-        [formState.target_codes, targetMap]
-    );
-
-    const kingdeeSelectedCount = useMemo(
-        () => formState.target_codes.filter((code) => targetMap.get(code)?.system === 'kingdee').length,
         [formState.target_codes, targetMap]
     );
 
@@ -252,26 +372,44 @@ const SyncSchedulesPage = () => {
             getAccountBooks(0, 500),
         ]);
 
-        setMeta(metaRes);
-        setSchedules(scheduleRes);
-        setLatestExecutions(latestRunRes);
+        const filteredTargets = (metaRes.targets || []).filter((target) =>
+            isTargetVisibleForModule(target.code, moduleType)
+        );
+        const filteredSchedules = scheduleRes.filter((schedule) =>
+            schedule.target_codes.some((code) => isTargetVisibleForModule(code, moduleType))
+        );
+        const visibleScheduleIds = new Set(filteredSchedules.map((item) => item.id));
+
+        setMeta({
+            ...metaRes,
+            targets: filteredTargets,
+        });
+        setSchedules(filteredSchedules);
+        setLatestExecutions(latestRunRes.filter((item) => visibleScheduleIds.has(item.schedule_id)));
         setProjects(Array.isArray(projectRes) ? projectRes : (projectRes?.items || []));
         setAccountBooks(accountBookRes?.items || []);
-
+        setSelectedScheduleId((prev) => {
+            if (prev && filteredSchedules.some((item) => item.id === prev)) {
+                return prev;
+            }
+            return filteredSchedules[0]?.id ?? null;
+        });
         setFormState((prev) => ({
             ...prev,
             timezone: prev.timezone || metaRes.default_timezone || 'Asia/Shanghai',
         }));
-
-        setSelectedScheduleId((prev) => {
-            if (prev && scheduleRes.some((item) => item.id === prev)) return prev;
-            return scheduleRes[0]?.id ?? null;
-        });
     };
 
     const loadSelectedExecutions = async (scheduleId: number) => {
         const data = await getSyncScheduleExecutions(scheduleId, 20);
         setSelectedExecutions(data);
+    };
+
+    const refreshAll = async (scheduleId?: number | null) => {
+        await loadBaseData();
+        if (scheduleId) {
+            await loadSelectedExecutions(scheduleId);
+        }
     };
 
     useEffect(() => {
@@ -283,17 +421,25 @@ const SyncSchedulesPage = () => {
             } catch (error) {
                 console.error(error);
                 if (mounted) {
-                    showToast('error', '加载失败', '无法获取同步计划配置，请稍后重试');
+                    showToast('error', '加载失败', copy.loadErrorText);
                 }
             } finally {
-                if (mounted) setLoading(false);
+                if (mounted) {
+                    setLoading(false);
+                }
             }
         };
         void boot();
         return () => {
             mounted = false;
         };
-    }, [showToast]);
+    }, [copy.loadErrorText, moduleType, showToast]);
+
+    useEffect(() => {
+        if (groupedTargets.mark.length === 0 && activeTargetTab === 'mark') {
+            setActiveTargetTab('kingdee');
+        }
+    }, [activeTargetTab, groupedTargets.mark.length]);
 
     useEffect(() => {
         if (!selectedScheduleId) {
@@ -313,35 +459,24 @@ const SyncSchedulesPage = () => {
             }
         }, 30000);
         return () => window.clearInterval(timer);
-    }, [selectedScheduleId]);
-
-    const refreshAll = async (scheduleId?: number | null) => {
-        await loadBaseData();
-        if (scheduleId) {
-            await loadSelectedExecutions(scheduleId);
-        }
-    };
+    }, [selectedScheduleId, moduleType]);
 
     const openCreateModal = () => {
         setEditingSchedule(null);
-        setActiveTargetTab('mark');
+        setActiveTargetTab(defaultTargetTab);
         setFormState(createEmptyForm(meta?.default_timezone || 'Asia/Shanghai'));
         setFormOpen(true);
     };
 
     const openEditModal = (schedule: SyncSchedule) => {
         setEditingSchedule(schedule);
-        const hasMarkTarget = schedule.target_codes.some((code) => targetMap.get(code)?.system === 'mark');
-        const hasKingdeeTarget = schedule.target_codes.some((code) => targetMap.get(code)?.system === 'kingdee');
-        if (hasMarkTarget || !hasKingdeeTarget) {
-            setActiveTargetTab('mark');
-        } else {
-            setActiveTargetTab('kingdee');
-        }
+        const editableTargetCodes = schedule.target_codes.filter((code) => targetMap.has(code));
+        const hasMarkTarget = editableTargetCodes.some((code) => targetMap.get(code)?.system === 'mark');
+        setActiveTargetTab(moduleType === 'voucher-push' ? 'kingdee' : hasMarkTarget ? 'mark' : 'kingdee');
         setFormState({
             name: schedule.name,
             description: schedule.description || '',
-            target_codes: [...schedule.target_codes],
+            target_codes: editableTargetCodes,
             community_ids: [...schedule.community_ids],
             account_book_number: schedule.account_book_number || '',
             account_book_name: schedule.account_book_name || '',
@@ -366,7 +501,10 @@ const SyncSchedulesPage = () => {
             const requestedTargets = hasCode
                 ? prev.target_codes.filter((item) => item !== code)
                 : [...prev.target_codes, code];
-            const nextTargets = applyForcedTargetCodes(requestedTargets, targetMap);
+            const nextTargets = applyForcedTargetCodes(
+                requestedTargets.filter((item) => targetMap.has(item)),
+                targetMap
+            );
             const stillRequiresCommunity = nextTargets.some((item) => targetMap.get(item)?.requires_community_ids);
             return {
                 ...prev,
@@ -383,7 +521,7 @@ const SyncSchedulesPage = () => {
                 : [...prev.weekly_days, code];
             return {
                 ...prev,
-                weekly_days: weekdayOrder.filter((item) => next.includes(item)),
+                weekly_days: WEEKDAY_ORDER.filter((item) => next.includes(item)),
             };
         });
     };
@@ -413,7 +551,10 @@ const SyncSchedulesPage = () => {
     };
 
     const handleClearCommunities = () => {
-        setFormState((prev) => ({ ...prev, community_ids: [] }));
+        setFormState((prev) => ({
+            ...prev,
+            community_ids: [],
+        }));
     };
 
     const handleAccountBookChange = (event: ChangeEvent<HTMLSelectElement>) => {
@@ -428,7 +569,10 @@ const SyncSchedulesPage = () => {
     const buildPayload = () => ({
         name: formState.name.trim(),
         description: formState.description.trim() || null,
-        target_codes: applyForcedTargetCodes(formState.target_codes, targetMap),
+        target_codes: applyForcedTargetCodes(
+            formState.target_codes.filter((code) => targetMap.has(code)),
+            targetMap
+        ),
         community_ids: formState.community_ids,
         account_book_number: formState.account_book_number || null,
         account_book_name: formState.account_book_name || null,
@@ -442,27 +586,35 @@ const SyncSchedulesPage = () => {
 
     const handleSubmit = async (event: FormEvent) => {
         event.preventDefault();
-        if (requiresAccountBookSelection && !formState.account_book_number) {
-            showToast('error', '缺少账簿', '当前目标必须选择账簿，系统会按该账簿自动解析关联园区。');
+        const payload = buildPayload();
+
+        if (payload.target_codes.length === 0) {
+            showToast('error', '缺少目标', copy.targetRequiredMessage);
             return;
         }
+
+        if (requiresAccountBookSelection && !payload.account_book_number) {
+            showToast('error', '缺少账簿', copy.accountBookRequiredMessage);
+            return;
+        }
+
         setSaving(true);
         try {
-            const payload = buildPayload();
-            let saved: SyncSchedule;
-            if (editingSchedule) {
-                saved = await updateSyncSchedule(editingSchedule.id, payload);
-                showToast('success', '保存成功', '同步计划已更新');
-            } else {
-                saved = await createSyncSchedule(payload);
-                showToast('success', '创建成功', '新的同步计划已创建');
-            }
+            const saved = editingSchedule
+                ? await updateSyncSchedule(editingSchedule.id, payload)
+                : await createSyncSchedule(payload);
+
+            showToast(
+                'success',
+                editingSchedule ? copy.updateSuccessTitle : copy.createSuccessTitle,
+                editingSchedule ? `${copy.title}已更新` : `新的${copy.title}已创建`
+            );
             setFormOpen(false);
             setSelectedScheduleId(saved.id);
             await refreshAll(saved.id);
         } catch (error: any) {
             console.error(error);
-            showToast('error', '保存失败', error.response?.data?.detail || error.message || '同步计划保存失败');
+            showToast('error', '保存失败', error.response?.data?.detail || error.message || `${copy.title}保存失败`);
         } finally {
             setSaving(false);
         }
@@ -503,12 +655,15 @@ const SyncSchedulesPage = () => {
 
     const handleRunNow = (schedule: SyncSchedule) => {
         openConfirm({
-            title: '立即执行同步计划',
-            message: `确定立即执行「${schedule.name}」吗？系统会按当前配置复用现有同步能力，并将各同步目标分发到独立进程处理。`,
+            title: `立即执行${copy.title}`,
+            message:
+                moduleType === 'voucher-push'
+                    ? `确定立即执行「${schedule.name}」吗？系统会先完成凭证预览校验，再推送金蝶。`
+                    : `确定立即执行「${schedule.name}」吗？系统会按当前配置执行同步目标。`,
             confirmText: '立即执行',
             onConfirm: async () => {
                 await runSyncScheduleNow(schedule.id);
-                showToast('success', '执行已提交', '同步计划已经进入执行队列');
+                showToast('success', copy.runSuccessTitle, `${copy.title}已经进入执行队列`);
                 await refreshAll(schedule.id);
             },
         });
@@ -517,7 +672,7 @@ const SyncSchedulesPage = () => {
     const handleToggle = async (schedule: SyncSchedule) => {
         try {
             await toggleSyncSchedule(schedule.id, !schedule.enabled);
-            showToast('success', schedule.enabled ? '计划已停用' : '计划已启用');
+            showToast('success', copy.toggleSuccessTitle, schedule.enabled ? `${copy.title}已停用` : `${copy.title}已启用`);
             await refreshAll(schedule.id);
         } catch (error: any) {
             console.error(error);
@@ -527,19 +682,19 @@ const SyncSchedulesPage = () => {
 
     const handleDelete = (schedule: SyncSchedule) => {
         openConfirm({
-            title: '删除同步计划',
-            message: `删除后将无法恢复「${schedule.name}」的计划配置，但历史执行记录会一并移除。`,
+            title: `删除${copy.title}`,
+            message: `删除后将无法恢复「${schedule.name}」的计划配置，历史执行记录也会被一并移除。`,
             confirmText: '删除计划',
             variant: 'danger',
             onConfirm: async () => {
                 await deleteSyncSchedule(schedule.id);
-                showToast('success', '删除成功', '同步计划已删除');
+                showToast('success', copy.deleteSuccessTitle, `${copy.title}已删除`);
                 await refreshAll();
             },
         });
     };
 
-    const renderTargetPills = (schedule: SyncSchedule) => (
+    const renderSchedulePills = (schedule: SyncSchedule) => (
         <div className="schedule-pill-group">
             {schedule.target_codes.map((code) => (
                 <span key={code} className="schedule-pill">
@@ -549,15 +704,18 @@ const SyncSchedulesPage = () => {
         </div>
     );
 
+    const autoResolvedDescription = copy.autoResolvedDescription.replace(
+        '{count}',
+        String(autoResolvedCommunityTargets.length)
+    );
+
     return (
         <div className="sync-schedules-page">
             <section className="sync-schedules-hero">
                 <div>
-                    <p className="sync-schedules-eyebrow">Unified Sync Control</p>
-                    <h1>定时同步管理</h1>
-                    <p className="sync-schedules-subtitle">
-                        统一管理马克业务与金蝶基础档案同步计划，支持自定义频率、园区范围、账簿上下文和手动执行。
-                    </p>
+                    <p className="sync-schedules-eyebrow">{copy.eyebrow}</p>
+                    <h1>{copy.title}</h1>
+                    <p className="sync-schedules-subtitle">{copy.subtitle}</p>
                 </div>
                 <div className="sync-schedules-actions">
                     <button className="sync-action ghost" onClick={() => void refreshAll(selectedScheduleId)}>
@@ -575,22 +733,22 @@ const SyncSchedulesPage = () => {
                 <div className="sync-summary-card">
                     <span>计划总数</span>
                     <strong>{summary.total}</strong>
-                    <small>当前已配置的同步计划数量</small>
+                    <small>{copy.summaryCaption}</small>
                 </div>
                 <div className="sync-summary-card">
                     <span>启用中</span>
                     <strong>{summary.enabled}</strong>
-                    <small>会被调度线程自动扫描执行</small>
+                    <small>{copy.enabledCaption}</small>
                 </div>
                 <div className="sync-summary-card">
                     <span>执行中</span>
                     <strong>{summary.running}</strong>
-                    <small>正在后台分发独立进程处理目标同步项</small>
+                    <small>{copy.runningCaption}</small>
                 </div>
                 <div className="sync-summary-card warning">
                     <span>需关注</span>
                     <strong>{summary.failed}</strong>
-                    <small>最近一次执行失败或部分成功</small>
+                    <small>{copy.failedCaption}</small>
                 </div>
             </section>
 
@@ -599,23 +757,23 @@ const SyncSchedulesPage = () => {
                     <div className="panel-header">
                         <div>
                             <h2>计划列表</h2>
-                            <p>每个计划可组合多个同步目标，并独立配置运行频率</p>
+                            <p>{copy.scheduleListDescription}</p>
                         </div>
                         <div className="panel-header-badge">
                             <Settings2 size={14} />
-                            独立管理模块
+                            模块独立管理
                         </div>
                     </div>
 
                     {loading ? (
                         <div className="schedule-empty">
                             <Loader2 size={22} className="spin" />
-                            <span>同步计划加载中...</span>
+                            <span>{copy.loadingText}</span>
                         </div>
                     ) : schedules.length === 0 ? (
                         <div className="schedule-empty">
                             <CalendarClock size={22} />
-                            <span>还没有同步计划，先创建一个吧。</span>
+                            <span>{copy.emptyText}</span>
                         </div>
                     ) : (
                         <div className="schedule-card-list">
@@ -689,7 +847,7 @@ const SyncSchedulesPage = () => {
                                         </div>
                                     </div>
 
-                                    {renderTargetPills(schedule)}
+                                    {renderSchedulePills(schedule)}
 
                                     <div className="schedule-meta-grid">
                                         <div>
@@ -697,12 +855,16 @@ const SyncSchedulesPage = () => {
                                             <strong>{describeSchedule(schedule)}</strong>
                                         </div>
                                         <div>
-                                            <span>账簿上下文</span>
+                                            <span>{copy.accountBookMetaLabel}</span>
                                             <strong>{schedule.account_book_name || schedule.account_book_number || '未限定'}</strong>
                                         </div>
                                         <div>
-                                            <span>园区范围</span>
-                                            <strong>{schedule.community_ids.length > 0 ? `${schedule.community_ids.length} 个园区` : '不适用'}</strong>
+                                            <span>{copy.communityMetaLabel}</span>
+                                            <strong>
+                                                {schedule.community_ids.length > 0
+                                                    ? `${schedule.community_ids.length} 个园区`
+                                                    : copy.communityMetaEmptyText}
+                                            </strong>
                                         </div>
                                         <div>
                                             <span>下次执行</span>
@@ -727,76 +889,93 @@ const SyncSchedulesPage = () => {
                     <div className="panel-header">
                         <div>
                             <h2>{selectedSchedule ? `执行记录 · ${selectedSchedule.name}` : '执行记录'}</h2>
-                            <p>查看计划级明细与最新全局执行情况</p>
+                            <p>{copy.executionSubtitle}</p>
                         </div>
                     </div>
 
                     <div className="execution-section">
                         <div className="execution-section-title">当前计划</div>
-                        {selectedSchedule ? (
-                            selectedExecutions.length > 0 ? (
-                                <div className="execution-list">
-                                    {selectedExecutions.map((execution) => (
-                                        <div key={execution.id} className={`execution-card ${execution.status}`}>
-                                            <div className="execution-card-head">
-                                                <div>
-                                                    <strong>{execution.trigger_type === 'manual' ? '手动执行' : '自动执行'}</strong>
-                                                    <span>{formatDateTime(execution.started_at)}</span>
-                                                </div>
-                                                <span className="execution-state">{formatExecutionStatus(execution.status)}</span>
-                                            </div>
-                                            <p>{execution.summary || execution.error_message || '暂无摘要'}</p>
-                                            <div className="execution-counts">
-                                                <span><CheckCircle2 size={14} /> 成功 {execution.success_targets}</span>
-                                                <span><XCircle size={14} /> 失败 {execution.failed_targets}</span>
-                                            </div>
-                                            {execution.result_payload.length > 0 && (
-                                                <>
-                                                    <div className="execution-target-list">
-                                                        {execution.result_payload.map((target) => (
-                                                            <span key={`${execution.id}-${target.code}`} className={`execution-target-pill ${target.status}`}>
-                                                                {(targetMap.get(target.code)?.label || target.code)} · {formatExecutionStatus(target.status)}
-                                                            </span>
-                                                        ))}
-                                                    </div>
-                                                    <div className="execution-target-detail-list">
-                                                        {execution.result_payload.map((target) => (
-                                                            <div key={`${execution.id}-${target.code}-detail`} className={`execution-target-detail ${target.status}`}>
-                                                                <div className="execution-target-detail-head">
-                                                                    <strong>{targetMap.get(target.code)?.label || target.code}</strong>
-                                                                    <span>{formatExecutionStatus(target.status)}</span>
-                                                                </div>
-                                                                <p>{target.message || '暂无执行摘要'}</p>
-                                                                {(target.account_book_number || target.run_date) && (
-                                                                    <div className="execution-target-meta">
-                                                                        {target.account_book_number && <span>账簿：{target.account_book_number}</span>}
-                                                                        {target.run_date && <span>业务日期：{target.run_date}</span>}
-                                                                    </div>
-                                                                )}
-                                                                {hasExecutionTargetMetrics(target) && renderExecutionTargetMetrics(target)}
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                </>
-                                            )}
-                                        </div>
-                                    ))}
-                                </div>
-                            ) : (
-                                <div className="execution-empty">该计划还没有执行记录。</div>
-                            )
-                        ) : (
+                        {!selectedSchedule ? (
                             <div className="execution-empty">先从左侧选择一个计划。</div>
+                        ) : selectedExecutions.length === 0 ? (
+                            <div className="execution-empty">该计划还没有执行记录。</div>
+                        ) : (
+                            <div className="execution-list">
+                                {selectedExecutions.map((execution) => (
+                                    <div key={execution.id} className={`execution-card ${execution.status}`}>
+                                        <div className="execution-card-head">
+                                            <div>
+                                                <strong>{execution.trigger_type === 'manual' ? '手动执行' : '自动执行'}</strong>
+                                                <span>{formatDateTime(execution.started_at)}</span>
+                                            </div>
+                                            <span className="execution-state">{formatExecutionStatus(execution.status)}</span>
+                                        </div>
+                                        <p>{execution.summary || execution.error_message || '暂无摘要'}</p>
+                                        <div className="execution-counts">
+                                            <span>
+                                                <CheckCircle2 size={14} />
+                                                成功 {execution.success_targets}
+                                            </span>
+                                            <span>
+                                                <XCircle size={14} />
+                                                失败 {execution.failed_targets}
+                                            </span>
+                                        </div>
+
+                                        {execution.result_payload.length > 0 && (
+                                            <>
+                                                <div className="execution-target-list">
+                                                    {execution.result_payload.map((target) => (
+                                                        <span
+                                                            key={`${execution.id}-${target.code}`}
+                                                            className={`execution-target-pill ${target.status}`}
+                                                        >
+                                                            {(targetMap.get(target.code)?.label || target.code) +
+                                                                ' · ' +
+                                                                formatExecutionStatus(target.status)}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                                <div className="execution-target-detail-list">
+                                                    {execution.result_payload.map((target) => (
+                                                        <div
+                                                            key={`${execution.id}-${target.code}-detail`}
+                                                            className={`execution-target-detail ${target.status}`}
+                                                        >
+                                                            <div className="execution-target-detail-head">
+                                                                <strong>{targetMap.get(target.code)?.label || target.code}</strong>
+                                                                <span>{formatExecutionStatus(target.status)}</span>
+                                                            </div>
+                                                            <p>{target.message || '暂无执行摘要'}</p>
+                                                            {(target.account_book_number || target.run_date) && (
+                                                                <div className="execution-target-meta">
+                                                                    {target.account_book_number && (
+                                                                        <span>账簿：{target.account_book_number}</span>
+                                                                    )}
+                                                                    {target.run_date && <span>业务日期：{target.run_date}</span>}
+                                                                </div>
+                                                            )}
+                                                            {hasExecutionTargetMetrics(target) && renderExecutionTargetMetrics(target)}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
                         )}
                     </div>
 
                     <div className="execution-section">
                         <div className="execution-section-title">全局最近执行</div>
-                        {latestExecutions.length > 0 ? (
+                        {latestExecutions.length === 0 ? (
+                            <div className="execution-empty">暂无全局执行记录。</div>
+                        ) : (
                             <div className="timeline-list">
                                 {latestExecutions.slice(0, 8).map((execution) => (
                                     <div key={execution.id} className="timeline-item">
-                                        <div className={`timeline-dot ${execution.status}`}></div>
+                                        <div className={`timeline-dot ${execution.status}`} />
                                         <div className="timeline-content">
                                             <strong>{execution.schedule_name || `计划 #${execution.schedule_id}`}</strong>
                                             <span>{formatDateTime(execution.started_at)}</span>
@@ -805,8 +984,6 @@ const SyncSchedulesPage = () => {
                                     </div>
                                 ))}
                             </div>
-                        ) : (
-                            <div className="execution-empty">暂无全局执行记录。</div>
                         )}
                     </div>
                 </aside>
@@ -817,10 +994,12 @@ const SyncSchedulesPage = () => {
                     <div className="schedule-form-modal" onClick={(event) => event.stopPropagation()}>
                         <div className="schedule-form-header">
                             <div>
-                                <h2>{editingSchedule ? '编辑同步计划' : '新建同步计划'}</h2>
-                                <p>复用现有同步能力，配置独立的定时规则和数据范围。</p>
+                                <h2>{editingSchedule ? copy.editTitle : copy.createTitle}</h2>
+                                <p>{copy.modalDescription}</p>
                             </div>
-                            <button type="button" className="modal-close-button" onClick={closeFormModal}>×</button>
+                            <button type="button" className="modal-close-button" onClick={closeFormModal}>
+                                ×
+                            </button>
                         </div>
 
                         <form className="schedule-form-body" onSubmit={handleSubmit}>
@@ -830,7 +1009,7 @@ const SyncSchedulesPage = () => {
                                     <input
                                         value={formState.name}
                                         onChange={(event) => setFormState((prev) => ({ ...prev, name: event.target.value }))}
-                                        placeholder="例如：凌晨业务主数据同步"
+                                        placeholder={copy.namePlaceholder}
                                         required
                                     />
                                 </label>
@@ -838,7 +1017,9 @@ const SyncSchedulesPage = () => {
                                     <span>时区</span>
                                     <input
                                         value={formState.timezone}
-                                        onChange={(event) => setFormState((prev) => ({ ...prev, timezone: event.target.value }))}
+                                        onChange={(event) =>
+                                            setFormState((prev) => ({ ...prev, timezone: event.target.value }))
+                                        }
                                         placeholder="Asia/Shanghai"
                                     />
                                 </label>
@@ -848,44 +1029,63 @@ const SyncSchedulesPage = () => {
                                 <span>计划说明</span>
                                 <textarea
                                     value={formState.description}
-                                    onChange={(event) => setFormState((prev) => ({ ...prev, description: event.target.value }))}
+                                    onChange={(event) =>
+                                        setFormState((prev) => ({ ...prev, description: event.target.value }))
+                                    }
                                     rows={3}
-                                    placeholder="说明这个计划负责同步哪些数据、用于什么场景"
+                                    placeholder={copy.descriptionPlaceholder}
                                 />
                             </label>
 
                             <div className="target-group-panel">
                                 <div className="target-group-header">
-                                    <h3>同步目标</h3>
-                                    <p>可跨马克与金蝶组合配置，同一计划会并行分发到多个独立进程执行。</p>
-                                </div>
-                                <div className="target-tab-nav">
-                                    <button
-                                        type="button"
-                                        className={`target-tab ${activeTargetTab === 'mark' ? 'active' : ''}`}
-                                        onClick={() => setActiveTargetTab('mark')}
-                                    >
-                                        马克业务
-                                        <span>{markSelectedCount}</span>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className={`target-tab ${activeTargetTab === 'kingdee' ? 'active' : ''}`}
-                                        onClick={() => setActiveTargetTab('kingdee')}
-                                    >
-                                        金蝶财务
-                                        <span>{kingdeeSelectedCount}</span>
-                                    </button>
+                                    <h3>{copy.targetPanelTitle}</h3>
+                                    <p>{copy.targetPanelDescription}</p>
                                 </div>
 
-                                {activeTargetTab === 'mark' ? (
+                                {groupedTargets.mark.length > 0 && groupedTargets.kingdee.length > 0 && moduleType !== 'voucher-push' && (
+                                    <div className="target-tab-nav">
+                                        <button
+                                            type="button"
+                                            className={`target-tab ${visibleTargetTab === 'mark' ? 'active' : ''}`}
+                                            onClick={() => setActiveTargetTab('mark')}
+                                        >
+                                            马克业务
+                                            <span>
+                                                {
+                                                    formState.target_codes.filter(
+                                                        (code) => targetMap.get(code)?.system === 'mark'
+                                                    ).length
+                                                }
+                                            </span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className={`target-tab ${visibleTargetTab === 'kingdee' ? 'active' : ''}`}
+                                            onClick={() => setActiveTargetTab('kingdee')}
+                                        >
+                                            金蝶财务
+                                            <span>
+                                                {
+                                                    formState.target_codes.filter(
+                                                        (code) => targetMap.get(code)?.system === 'kingdee'
+                                                    ).length
+                                                }
+                                            </span>
+                                        </button>
+                                    </div>
+                                )}
+
+                                {visibleTargetTab === 'mark' ? (
                                     <div className="target-tab-content">
                                         <div className="target-column">
                                             <div className="target-column-title">
                                                 <Landmark size={16} />
                                                 马克业务
                                             </div>
-                                            {groupedTargets.mark.length > 0 ? (
+                                            {groupedTargets.mark.length === 0 ? (
+                                                <p className="target-empty">{copy.markEmptyText}</p>
+                                            ) : (
                                                 groupedTargets.mark.map((target) => (
                                                     <label key={target.code} className="target-checkbox">
                                                         <input
@@ -893,18 +1093,19 @@ const SyncSchedulesPage = () => {
                                                             checked={formState.target_codes.includes(target.code)}
                                                             onChange={() => toggleTarget(target.code)}
                                                         />
-                                                        <span>{target.label}{target.forced_with?.length ? '（自动联动关联模块）' : ''}</span>
+                                                        <span>
+                                                            {target.label}
+                                                            {target.forced_with?.length ? '（自动联动关联目标）' : ''}
+                                                        </span>
                                                     </label>
                                                 ))
-                                            ) : (
-                                                <p className="target-empty">暂无可用的马克业务同步目标</p>
                                             )}
                                         </div>
 
                                         <div className={`community-panel ${requiresCommunitySelection ? '' : 'disabled'}`}>
                                             <div className="target-group-header">
                                                 <h3>园区范围</h3>
-                                                <p>仅对马克同步目标生效，可多选；未选择则无法保存涉及马克数据的计划。</p>
+                                                <p>仅对需要园区范围的马克目标生效，未选择将无法保存相关计划。</p>
                                             </div>
                                             <div className="community-toolbar">
                                                 <button
@@ -925,7 +1126,9 @@ const SyncSchedulesPage = () => {
                                                 </button>
                                             </div>
                                             <div className="community-list">
-                                                {projects.length > 0 ? (
+                                                {projects.length === 0 ? (
+                                                    <div className="community-empty">暂无园区数据</div>
+                                                ) : (
                                                     projects.map((project) => {
                                                         const projectId = Number(project.proj_id);
                                                         if (Number.isNaN(projectId)) return null;
@@ -933,7 +1136,9 @@ const SyncSchedulesPage = () => {
                                                         return (
                                                             <label
                                                                 key={project.proj_id}
-                                                                className={`community-checkbox ${checked ? 'checked' : ''} ${!requiresCommunitySelection ? 'disabled' : ''}`}
+                                                                className={`community-checkbox ${checked ? 'checked' : ''} ${
+                                                                    !requiresCommunitySelection ? 'disabled' : ''
+                                                                }`}
                                                             >
                                                                 <input
                                                                     type="checkbox"
@@ -946,8 +1151,6 @@ const SyncSchedulesPage = () => {
                                                             </label>
                                                         );
                                                     })
-                                                ) : (
-                                                    <div className="community-empty">暂无园区数据</div>
                                                 )}
                                             </div>
                                             <small>已选择 {formState.community_ids.length} 个园区</small>
@@ -960,7 +1163,9 @@ const SyncSchedulesPage = () => {
                                                 <Landmark size={16} />
                                                 金蝶财务
                                             </div>
-                                            {groupedTargets.kingdee.length > 0 ? (
+                                            {groupedTargets.kingdee.length === 0 ? (
+                                                <p className="target-empty">{copy.kingdeeEmptyText}</p>
+                                            ) : (
                                                 groupedTargets.kingdee.map((target) => (
                                                     <label key={target.code} className="target-checkbox">
                                                         <input
@@ -968,11 +1173,12 @@ const SyncSchedulesPage = () => {
                                                             checked={formState.target_codes.includes(target.code)}
                                                             onChange={() => toggleTarget(target.code)}
                                                         />
-                                                        <span>{target.label}</span>
+                                                        <span>
+                                                            {target.label}
+                                                            {''}
+                                                        </span>
                                                     </label>
                                                 ))
-                                            ) : (
-                                                <p className="target-empty">暂无可用的金蝶财务同步目标</p>
                                             )}
                                         </div>
                                     </div>
@@ -1004,7 +1210,9 @@ const SyncSchedulesPage = () => {
                                             type="number"
                                             min={5}
                                             value={formState.interval_minutes}
-                                            onChange={(event) => setFormState((prev) => ({ ...prev, interval_minutes: event.target.value }))}
+                                            onChange={(event) =>
+                                                setFormState((prev) => ({ ...prev, interval_minutes: event.target.value }))
+                                            }
                                         />
                                     </label>
                                 ) : (
@@ -1013,7 +1221,9 @@ const SyncSchedulesPage = () => {
                                         <input
                                             type="time"
                                             value={formState.daily_time}
-                                            onChange={(event) => setFormState((prev) => ({ ...prev, daily_time: event.target.value }))}
+                                            onChange={(event) =>
+                                                setFormState((prev) => ({ ...prev, daily_time: event.target.value }))
+                                            }
                                         />
                                     </label>
                                 )}
@@ -1039,19 +1249,21 @@ const SyncSchedulesPage = () => {
 
                             <div className="form-grid two-columns">
                                 <label className="field">
-                                    <span>账簿上下文</span>
+                                    <span>{copy.accountBookLabel}</span>
                                     <select value={formState.account_book_number} onChange={handleAccountBookChange}>
-                                        <option value="">{requiresAccountBookSelection ? '请选择账簿' : '不限定账簿'}</option>
+                                        <option value="">
+                                            {requiresAccountBookSelection ? '请选择账簿' : '不限定账簿'}
+                                        </option>
                                         {accountBooks.map((book) => (
                                             <option key={book.id} value={book.number || ''}>
-                                                {(book.number || '未编码')} · {book.name}
+                                                {(book.number || '未编码') + ' · ' + book.name}
                                             </option>
                                         ))}
                                     </select>
                                     <small>
                                         {requiresAccountBookSelection
-                                            ? '当前目标必须选择账簿，系统会自动遍历该账簿映射的园区，并处理执行当天的收款单。'
-                                            : '如选择账簿，上下文会传递给相关同步或推送目标。'}
+                                            ? copy.accountBookRequiredMessage
+                                            : copy.accountBookHelperText}
                                     </small>
                                 </label>
 
@@ -1069,11 +1281,8 @@ const SyncSchedulesPage = () => {
 
                             {autoResolvedCommunityTargets.length > 0 && (
                                 <div className="field">
-                                    <span>自动推送说明</span>
-                                    <div className="schedule-inline-note">
-                                        已选择 {autoResolvedCommunityTargets.length} 个按账簿自动解析园区的目标。
-                                        执行时会直接使用所选账簿绑定的园区，并筛选收款日期为执行当天的收款单。
-                                    </div>
+                                    <span>{copy.autoResolvedTitle}</span>
+                                    <div className="schedule-inline-note">{autoResolvedDescription}</div>
                                 </div>
                             )}
 
@@ -1109,4 +1318,6 @@ const SyncSchedulesPage = () => {
     );
 };
 
-export default SyncSchedulesPage;
+const DataSyncSchedulesPage = () => <SyncSchedulesPage moduleType="data-sync" />;
+
+export default DataSyncSchedulesPage;

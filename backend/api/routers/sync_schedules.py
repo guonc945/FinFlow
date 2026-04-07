@@ -93,7 +93,7 @@ SYNC_TARGET_DEFINITIONS = [
     {"code": "bank_accounts", "label": "金蝶银行账户", "system": "kingdee", "requires_community_ids": False},
     {
         "code": "receipt_voucher_auto_push",
-        "label": "收款单凭证自动推送",
+        "label": "运管收款单",
         "system": "kingdee",
         "requires_community_ids": False,
         "requires_account_book": True,
