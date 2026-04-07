@@ -170,15 +170,20 @@
 }
 
 .schedule-card-list {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 12px;
+    align-items: stretch;
 }
 
 .schedule-card {
-    border-radius: 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    height: 100%;
+    border-radius: 16px;
     border: 1px solid rgba(226, 232, 240, 0.92);
-    padding: 18px;
+    padding: 12px 13px;
     background:
         radial-gradient(circle at top right, rgba(14, 165, 233, 0.08), transparent 24%),
         linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
@@ -190,40 +195,49 @@
 .schedule-card.selected {
     transform: translateY(-2px);
     border-color: rgba(29, 78, 216, 0.34);
-    box-shadow: 0 18px 34px rgba(29, 78, 216, 0.1);
+    box-shadow: 0 12px 20px rgba(29, 78, 216, 0.08);
 }
 
 .schedule-card-top {
     display: flex;
     justify-content: space-between;
-    gap: 12px;
+    gap: 8px;
+    align-items: flex-start;
 }
 
 .schedule-card-title-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 5px;
     flex-wrap: wrap;
 }
 
 .schedule-card-title-row h3 {
     margin: 0;
-    font-size: 18px;
+    font-size: 15px;
+    line-height: 1.2;
 }
 
 .schedule-card-top p {
-    margin: 8px 0 0;
+    margin: 3px 0 0;
     color: #64748b;
+    line-height: 1.4;
+    font-size: 12px;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 1;
+    overflow: hidden;
 }
 
 .schedule-card-actions {
     display: flex;
-    gap: 8px;
+    gap: 4px;
+    flex-shrink: 0;
 }
 
 .icon-button {
-    width: 34px;
-    height: 34px;
+    width: 28px;
+    height: 28px;
     border-radius: 999px;
     border: 1px solid rgba(203, 213, 225, 0.8);
     background: #fff;
@@ -241,10 +255,10 @@
 .status-badge {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 4px 10px;
+    gap: 4px;
+    padding: 2px 7px;
     border-radius: 999px;
-    font-size: 12px;
+    font-size: 10px;
     font-weight: 700;
 }
 
@@ -266,50 +280,56 @@
 .schedule-pill-group {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
-    margin-top: 14px;
+    gap: 5px;
+    margin-top: 0;
 }
 
 .schedule-pill {
-    padding: 6px 10px;
+    padding: 3px 7px;
     border-radius: 999px;
     background: #f1f5f9;
     color: #334155;
-    font-size: 12px;
+    font-size: 10px;
     font-weight: 600;
 }
 
 .schedule-meta-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
-    margin-top: 16px;
+    gap: 8px 10px;
+    margin-top: 0;
 }
 
 .schedule-meta-grid span,
 .schedule-footer span {
     display: block;
     color: #94a3b8;
-    font-size: 12px;
+    font-size: 10px;
 }
 
 .schedule-meta-grid strong,
 .schedule-footer strong {
     display: block;
-    margin-top: 5px;
-    font-size: 14px;
+    margin-top: 2px;
+    font-size: 12px;
+    line-height: 1.3;
 }
 
 .schedule-footer {
-    margin-top: 16px;
-    padding-top: 14px;
+    margin-top: auto;
+    padding-top: 8px;
     border-top: 1px dashed rgba(203, 213, 225, 0.8);
 }
 
 .schedule-footer p {
-    margin: 8px 0 0;
+    margin: 4px 0 0;
     color: #475569;
-    line-height: 1.6;
+    line-height: 1.35;
+    font-size: 12px;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 1;
+    overflow: hidden;
 }
 
 .execution-sidebar {
@@ -882,6 +902,274 @@
     padding-top: 8px;
 }
 
+.voucher-workbench {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.voucher-page-stepper,
+.voucher-form-stepper {
+    display: grid;
+    gap: 12px;
+}
+
+.voucher-page-stepper {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.voucher-page-step,
+.voucher-form-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    text-align: left;
+    border-radius: 20px;
+    border: 1px solid rgba(203, 213, 225, 0.86);
+    background: rgba(255, 255, 255, 0.94);
+    padding: 14px 16px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.voucher-page-step:hover,
+.voucher-form-step:hover {
+    border-color: rgba(59, 130, 246, 0.28);
+    transform: translateY(-1px);
+}
+
+.voucher-page-step.active,
+.voucher-form-step.active {
+    border-color: rgba(29, 78, 216, 0.38);
+    background: linear-gradient(180deg, #eff6ff 0%, #ffffff 100%);
+    box-shadow: 0 16px 30px rgba(29, 78, 216, 0.08);
+}
+
+.voucher-page-step.done,
+.voucher-form-step.done {
+    border-color: rgba(16, 185, 129, 0.26);
+}
+
+.voucher-page-step-index,
+.voucher-form-step-index {
+    width: 30px;
+    height: 30px;
+    border-radius: 999px;
+    background: #e2e8f0;
+    color: #334155;
+    font-size: 13px;
+    font-weight: 800;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.voucher-page-step.active .voucher-page-step-index,
+.voucher-form-step.active .voucher-form-step-index {
+    background: linear-gradient(135deg, #0f766e 0%, #1d4ed8 100%);
+    color: #fff;
+}
+
+.voucher-page-step-copy,
+.voucher-form-step-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.voucher-page-step-copy strong,
+.voucher-form-step-copy strong {
+    font-size: 15px;
+}
+
+.voucher-page-step-copy small,
+.voucher-form-step-copy small {
+    color: #64748b;
+    line-height: 1.5;
+}
+
+.voucher-stage-layout,
+.voucher-history-layout {
+    display: grid;
+    gap: 18px;
+}
+
+.voucher-stage-layout {
+    grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.85fr);
+    align-items: start;
+}
+
+.voucher-stage-layout.single {
+    grid-template-columns: 1fr;
+}
+
+.voucher-stage-sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.voucher-stage-card,
+.voucher-config-hero-card,
+.voucher-config-card {
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid rgba(226, 232, 240, 0.92);
+    border-radius: 22px;
+    box-shadow: 0 20px 40px rgba(15, 23, 42, 0.05);
+    padding: 18px;
+}
+
+.voucher-stage-focus h3,
+.voucher-config-hero-card h2 {
+    margin: 8px 0 0;
+}
+
+.voucher-stage-focus p,
+.voucher-config-hero-card p,
+.voucher-flow-item p,
+.voucher-config-note {
+    margin: 10px 0 0;
+    color: #475569;
+    line-height: 1.6;
+}
+
+.voucher-stage-kicker {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #0f766e;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.voucher-focus-grid,
+.voucher-config-meta,
+.voucher-config-rule-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 14px;
+}
+
+.voucher-focus-grid span,
+.voucher-config-meta span,
+.voucher-config-rule-row span {
+    display: block;
+    color: #94a3b8;
+    font-size: 12px;
+}
+
+.voucher-focus-grid strong,
+.voucher-config-meta strong,
+.voucher-config-rule-row strong {
+    display: block;
+    margin-top: 4px;
+    color: #0f172a;
+    font-size: 14px;
+    line-height: 1.4;
+}
+
+.voucher-stage-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 16px;
+}
+
+.voucher-flow-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 14px;
+}
+
+.voucher-flow-item {
+    padding: 12px 14px;
+    border-radius: 16px;
+    background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
+    border: 1px solid rgba(226, 232, 240, 0.92);
+}
+
+.voucher-flow-item strong {
+    display: block;
+    font-size: 14px;
+}
+
+.voucher-config-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.voucher-config-hero-card {
+    display: flex;
+    justify-content: space-between;
+    gap: 18px;
+    align-items: flex-start;
+}
+
+.voucher-config-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px;
+}
+
+.voucher-config-card.wide {
+    grid-column: 1 / -1;
+}
+
+.voucher-config-note {
+    padding: 14px 16px;
+    border-radius: 16px;
+    background: #eff6ff;
+    border: 1px solid rgba(191, 219, 254, 0.95);
+}
+
+.voucher-form-mode {
+    gap: 20px;
+}
+
+.voucher-form-stepper {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.voucher-form-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding: 18px;
+    border-radius: 22px;
+    border: 1px solid rgba(226, 232, 240, 0.92);
+    background: rgba(255, 255, 255, 0.9);
+}
+
+.voucher-form-panel-header h3 {
+    margin: 0;
+    font-size: 20px;
+}
+
+.voucher-form-panel-header p {
+    margin: 8px 0 0;
+    color: #64748b;
+    line-height: 1.6;
+}
+
+.voucher-form-footer {
+    justify-content: space-between;
+    align-items: center;
+}
+
+.voucher-form-footer-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
 .spin {
     animation: sync-spin 0.8s linear infinite;
 }
@@ -898,6 +1186,22 @@
 @media (max-width: 1200px) {
     .sync-layout {
         grid-template-columns: 1fr;
+    }
+
+    .schedule-card-list {
+        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    }
+
+    .voucher-stage-layout,
+    .voucher-history-layout,
+    .voucher-config-grid,
+    .voucher-page-stepper,
+    .voucher-form-stepper {
+        grid-template-columns: 1fr;
+    }
+
+    .voucher-config-hero-card {
+        flex-direction: column;
     }
 }
 
@@ -918,6 +1222,10 @@
         padding: 16px;
     }
 
+    .schedule-card-list {
+        grid-template-columns: 1fr;
+    }
+
     .schedule-card-top,
     .panel-header,
     .schedule-form-header,
@@ -927,5 +1235,15 @@
 
     .schedule-meta-grid {
         grid-template-columns: 1fr;
+    }
+
+    .voucher-focus-grid,
+    .voucher-config-meta,
+    .voucher-config-rule-row {
+        grid-template-columns: 1fr;
+    }
+
+    .voucher-form-footer-actions {
+        width: 100%;
     }
 }
