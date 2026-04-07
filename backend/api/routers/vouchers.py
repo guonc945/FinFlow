@@ -3,7 +3,7 @@ import json as json_mod
 import re
 import uuid
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
@@ -384,6 +384,84 @@ def _json_number(value: Any) -> float:
         return float(value)
     parsed = _try_parse_decimal(value)
     return float(parsed) if parsed is not None else 0.0
+
+
+def _decimal_text(value: Any) -> str:
+    parsed = _try_parse_decimal(value)
+    if parsed is None:
+        return "0"
+    text = format(parsed, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
+MONEY_QUANTIZER = Decimal("0.01")
+
+
+def _money_text(value: Any) -> str:
+    parsed = _try_parse_decimal(value) or Decimal("0")
+    rounded = parsed.quantize(MONEY_QUANTIZER, rounding=ROUND_HALF_UP)
+    return format(rounded, ".2f")
+
+
+def _entry_decimal(entry: Dict[str, Any], exact_field: str, fallback_field: str) -> Decimal:
+    return (
+        _try_parse_decimal(entry.get(exact_field))
+        or _try_parse_decimal(entry.get(fallback_field))
+        or Decimal("0")
+    )
+
+
+def _allocate_money_amounts(values: List[Decimal]) -> List[Decimal]:
+    if not values:
+        return []
+    scale_factor = Decimal("100")
+    target_total = sum(values, Decimal("0")).quantize(MONEY_QUANTIZER, rounding=ROUND_HALF_UP)
+    target_cents = int((target_total * scale_factor).to_integral_value(rounding=ROUND_HALF_UP))
+
+    base_cents: List[int] = []
+    remainders: List[Tuple[int, Decimal]] = []
+    for idx, value in enumerate(values):
+        scaled = value * scale_factor
+        base = int(scaled.to_integral_value(rounding=ROUND_DOWN))
+        remainder = scaled - Decimal(base)
+        base_cents.append(base)
+        remainders.append((idx, remainder))
+
+    delta = target_cents - sum(base_cents)
+    if delta > 0:
+        for idx, _ in sorted(remainders, key=lambda item: (-item[1], item[0]))[:delta]:
+            base_cents[idx] += 1
+
+    return [Decimal(cents) / scale_factor for cents in base_cents]
+
+
+def _normalize_voucher_money_fields(accounting_entries: List[Dict[str, Any]], kingdee_entries: List[Dict[str, Any]]) -> None:
+    debit_values = [_entry_decimal(entry, "debit_exact", "debit") for entry in accounting_entries]
+    credit_values = [_entry_decimal(entry, "credit_exact", "credit") for entry in accounting_entries]
+    rounded_debits = _allocate_money_amounts(debit_values)
+    rounded_credits = _allocate_money_amounts(credit_values)
+
+    for idx, accounting_entry in enumerate(accounting_entries):
+        debit_value = rounded_debits[idx]
+        credit_value = rounded_credits[idx]
+        debit_text = format(debit_value, ".2f")
+        credit_text = format(credit_value, ".2f")
+
+        accounting_entry["debit_exact"] = debit_text
+        accounting_entry["credit_exact"] = credit_text
+        accounting_entry["debit"] = float(debit_value)
+        accounting_entry["credit"] = float(credit_value)
+
+        if idx >= len(kingdee_entries):
+            continue
+
+        kingdee_entry = kingdee_entries[idx]
+        kingdee_entry["debitori"] = debit_text
+        kingdee_entry["creditori"] = credit_text
+        kingdee_entry["debitlocal"] = debit_text
+        kingdee_entry["creditlocal"] = credit_text
 
 
 def _validate_voucher_json_amounts(kingdee_json: Dict[str, Any]) -> None:
@@ -1834,8 +1912,11 @@ def _preview_voucher_for_bill_via_receipt_templates(
             "dr_cr": rule.dr_cr,
             "debit": _json_number(amount_val) if rule.dr_cr == "D" else 0.0,
             "credit": _json_number(amount_val) if rule.dr_cr == "C" else 0.0,
+            "debit_exact": _decimal_text(amount_val) if rule.dr_cr == "D" else "0",
+            "credit_exact": _decimal_text(amount_val) if rule.dr_cr == "C" else "0",
             "currency": currency,
             "localrate": _json_number(localrate_val),
+            "localrate_exact": _decimal_text(localrate_val),
             "assgrp": assgrp if assgrp else None,
             "maincfassgrp": maincfassgrp if maincfassgrp else None,
         })
@@ -1845,11 +1926,11 @@ def _preview_voucher_for_bill_via_receipt_templates(
             "edescription": summary,
             "account_number": account_code,
             "currency_number": currency,
-            "localrate": _json_number(localrate_val),
-            "debitori": _json_number(amount_val) if rule.dr_cr == "D" else 0.0,
-            "creditori": 0.0 if rule.dr_cr == "D" else _json_number(amount_val),
-            "debitlocal": _json_number(amount_val) if rule.dr_cr == "D" else 0.0,
-            "creditlocal": 0.0 if rule.dr_cr == "D" else _json_number(amount_val),
+            "localrate": _decimal_text(localrate_val),
+            "debitori": _money_text(amount_val) if rule.dr_cr == "D" else "0.00",
+            "creditori": "0.00" if rule.dr_cr == "D" else _money_text(amount_val),
+            "debitlocal": _money_text(amount_val) if rule.dr_cr == "D" else "0.00",
+            "creditlocal": "0.00" if rule.dr_cr == "D" else _money_text(amount_val),
         }
         if assgrp:
             kd_entry["assgrp"] = assgrp
@@ -1857,8 +1938,9 @@ def _preview_voucher_for_bill_via_receipt_templates(
             kd_entry["maincfassgrp"] = maincfassgrp
         kingdee_entries.append(kd_entry)
 
-    total_debit = sum((_try_parse_decimal(e.get("debit")) or Decimal("0")) for e in accounting_entries)
-    total_credit = sum((_try_parse_decimal(e.get("credit")) or Decimal("0")) for e in accounting_entries)
+    _normalize_voucher_money_fields(accounting_entries, kingdee_entries)
+    total_debit = sum((_entry_decimal(e, "debit_exact", "debit")) for e in accounting_entries)
+    total_credit = sum((_entry_decimal(e, "credit_exact", "credit")) for e in accounting_entries)
 
     kingdee_json = {
         "data": [{
@@ -1886,6 +1968,8 @@ def _preview_voucher_for_bill_via_receipt_templates(
             "entries": accounting_entries,
             "total_debit": _json_number(total_debit),
             "total_credit": _json_number(total_credit),
+            "total_debit_exact": _decimal_text(total_debit),
+            "total_credit_exact": _decimal_text(total_credit),
             "is_balanced": (total_debit - total_credit) == Decimal("0") and (total_credit - total_debit) == Decimal("0"),
         },
         "kingdee_json": kingdee_json,
@@ -2050,8 +2134,8 @@ def preview_voucher_for_receipt(
                     item["line_no"] = len(merged_accounting_entries) + 1
                     merged_accounting_entries.append(item)
 
-            total_debit = sum((_try_parse_decimal(e.get("debit")) or Decimal("0")) for e in merged_accounting_entries)
-            total_credit = sum((_try_parse_decimal(e.get("credit")) or Decimal("0")) for e in merged_accounting_entries)
+            total_debit = sum((_entry_decimal(e, "debit_exact", "debit")) for e in merged_accounting_entries)
+            total_credit = sum((_entry_decimal(e, "credit_exact", "credit")) for e in merged_accounting_entries)
 
             merged_template_ids = sorted({str(p.get("template_id") or "") for p in previews if p.get("template_id")})
             template_name = first_preview.get("template_name") or first_preview.get("template_id") or "ReceiptMerged"
@@ -2102,6 +2186,8 @@ def preview_voucher_for_receipt(
                     "entries": merged_accounting_entries,
                     "total_debit": _json_number(total_debit),
                     "total_credit": _json_number(total_credit),
+                    "total_debit_exact": _decimal_text(total_debit),
+                    "total_credit_exact": _decimal_text(total_credit),
                     "is_balanced": (total_debit - total_credit) == Decimal("0") and (total_credit - total_debit) == Decimal("0"),
                 },
                 "kingdee_json": merged_kingdee_json,
@@ -2265,8 +2351,11 @@ def preview_voucher_for_receipt(
             "dr_cr": rule.dr_cr,
             "debit": _json_number(amount_val) if rule.dr_cr == "D" else 0.0,
             "credit": _json_number(amount_val) if rule.dr_cr == "C" else 0.0,
+            "debit_exact": _decimal_text(amount_val) if rule.dr_cr == "D" else "0",
+            "credit_exact": _decimal_text(amount_val) if rule.dr_cr == "C" else "0",
             "currency": currency,
             "localrate": _json_number(localrate_val),
+            "localrate_exact": _decimal_text(localrate_val),
             "assgrp": assgrp if assgrp else None,
             "maincfassgrp": maincfassgrp if maincfassgrp else None,
         })
@@ -2276,11 +2365,11 @@ def preview_voucher_for_receipt(
             "edescription": summary,
             "account_number": account_code,
             "currency_number": currency,
-            "localrate": _json_number(localrate_val),
-            "debitori": _json_number(amount_val) if rule.dr_cr == "D" else 0.0,
-            "creditori": 0.0 if rule.dr_cr == "D" else _json_number(amount_val),
-            "debitlocal": _json_number(amount_val) if rule.dr_cr == "D" else 0.0,
-            "creditlocal": 0.0 if rule.dr_cr == "D" else _json_number(amount_val),
+            "localrate": _decimal_text(localrate_val),
+            "debitori": _money_text(amount_val) if rule.dr_cr == "D" else "0.00",
+            "creditori": "0.00" if rule.dr_cr == "D" else _money_text(amount_val),
+            "debitlocal": _money_text(amount_val) if rule.dr_cr == "D" else "0.00",
+            "creditlocal": "0.00" if rule.dr_cr == "D" else _money_text(amount_val),
         }
         if assgrp:
             kd_entry["assgrp"] = assgrp
@@ -2288,8 +2377,9 @@ def preview_voucher_for_receipt(
             kd_entry["maincfassgrp"] = maincfassgrp
         kingdee_entries.append(kd_entry)
 
-    total_debit = sum((_try_parse_decimal(e.get("debit")) or Decimal("0")) for e in accounting_entries)
-    total_credit = sum((_try_parse_decimal(e.get("credit")) or Decimal("0")) for e in accounting_entries)
+    _normalize_voucher_money_fields(accounting_entries, kingdee_entries)
+    total_debit = sum((_entry_decimal(e, "debit_exact", "debit")) for e in accounting_entries)
+    total_credit = sum((_entry_decimal(e, "credit_exact", "credit")) for e in accounting_entries)
 
     kingdee_json = {
         "data": [
@@ -2332,6 +2422,8 @@ def preview_voucher_for_receipt(
             "entries": accounting_entries,
             "total_debit": _json_number(total_debit),
             "total_credit": _json_number(total_credit),
+            "total_debit_exact": _decimal_text(total_debit),
+            "total_credit_exact": _decimal_text(total_credit),
             "is_balanced": (total_debit - total_credit) == Decimal("0") and (total_credit - total_debit) == Decimal("0"),
         },
         "kingdee_json": kingdee_json,
@@ -2463,8 +2555,8 @@ def preview_voucher_for_receipts(
             item["line_no"] = len(merged_accounting_entries) + 1
             merged_accounting_entries.append(item)
 
-    total_debit = sum((_try_parse_decimal(e.get("debit")) or Decimal("0")) for e in merged_accounting_entries)
-    total_credit = sum((_try_parse_decimal(e.get("credit")) or Decimal("0")) for e in merged_accounting_entries)
+    total_debit = sum((_entry_decimal(e, "debit_exact", "debit")) for e in merged_accounting_entries)
+    total_credit = sum((_entry_decimal(e, "credit_exact", "credit")) for e in merged_accounting_entries)
     merged_template_ids = sorted({str(p.get("template_id") or "") for p in previews if p.get("template_id")})
     template_name = first_preview.get("template_name") or first_preview.get("template_id") or "BatchMerged"
     merged_kingdee_json = {
@@ -2496,6 +2588,8 @@ def preview_voucher_for_receipts(
             "entries": merged_accounting_entries,
             "total_debit": _json_number(total_debit),
             "total_credit": _json_number(total_credit),
+            "total_debit_exact": _decimal_text(total_debit),
+            "total_credit_exact": _decimal_text(total_credit),
             "is_balanced": (total_debit - total_credit) == Decimal("0") and (total_credit - total_debit) == Decimal("0"),
         },
         "kingdee_json": merged_kingdee_json,
@@ -2781,8 +2875,11 @@ def preview_voucher_for_bill(
             "dr_cr": rule.dr_cr,
             "debit": _json_number(amount_val) if rule.dr_cr == 'D' else 0.0,
             "credit": _json_number(amount_val) if rule.dr_cr == 'C' else 0.0,
+            "debit_exact": _decimal_text(amount_val) if rule.dr_cr == "D" else "0",
+            "credit_exact": _decimal_text(amount_val) if rule.dr_cr == "C" else "0",
             "currency": currency,
             "localrate": _json_number(localrate_val),
+            "localrate_exact": _decimal_text(localrate_val),
             "assgrp": assgrp if assgrp else None,
             "maincfassgrp": maincfassgrp if maincfassgrp else None,
         })
@@ -2793,11 +2890,11 @@ def preview_voucher_for_bill(
             "edescription": summary,
             "account_number": account_code,
             "currency_number": currency,
-            "localrate": _json_number(localrate_val),
-            "debitori": _json_number(amount_val) if rule.dr_cr == 'D' else 0.0,
-            "creditori": 0.0 if rule.dr_cr == 'D' else _json_number(amount_val),
-            "debitlocal": _json_number(amount_val) if rule.dr_cr == 'D' else 0.0,
-            "creditlocal": 0.0 if rule.dr_cr == 'D' else _json_number(amount_val),
+            "localrate": _decimal_text(localrate_val),
+            "debitori": _money_text(amount_val) if rule.dr_cr == "D" else "0.00",
+            "creditori": "0.00" if rule.dr_cr == "D" else _money_text(amount_val),
+            "debitlocal": _money_text(amount_val) if rule.dr_cr == "D" else "0.00",
+            "creditlocal": "0.00" if rule.dr_cr == "D" else _money_text(amount_val),
         }
         if assgrp:
             kd_entry["assgrp"] = assgrp
@@ -2805,8 +2902,9 @@ def preview_voucher_for_bill(
             kd_entry["maincfassgrp"] = maincfassgrp
         kingdee_entries.append(kd_entry)
 
-    total_debit = sum((_try_parse_decimal(e.get("debit")) or Decimal("0")) for e in accounting_entries)
-    total_credit = sum((_try_parse_decimal(e.get("credit")) or Decimal("0")) for e in accounting_entries)
+    _normalize_voucher_money_fields(accounting_entries, kingdee_entries)
+    total_debit = sum((_entry_decimal(e, "debit_exact", "debit")) for e in accounting_entries)
+    total_credit = sum((_entry_decimal(e, "credit_exact", "credit")) for e in accounting_entries)
 
     # 6. 缂傚倸鍊搁崐鎼佸磹閹间礁纾归柟闂寸绾惧綊鏌熼梻瀵割槮缁炬儳缍婇弻鐔兼⒒鐎靛壊妲紒鐐劤缂嶅﹪寮婚悢鍏尖拻閻庨潧澹婂Σ顔剧磼閻愵剙鍔ょ紓宥咃躬瀵鎮㈤崗灏栨嫽闁诲酣娼ф竟濠偽ｉ鍓х＜闁诡垎鍐ｆ寖闂佺娅曢幑鍥灳閺冨牆绀冩い蹇庣娴滈箖鏌ㄥ┑鍡欏嚬缂併劌銈搁弻鐔兼儌閸濄儳袦闂佸搫鐭夌紞渚€銆佸鈧幃娆撳箹椤撶噥妫ч梻鍌氬€稿ú銈壦囬悽绋胯摕闁靛鍎弨浠嬫煕閳╁啰鎳冩い锝呯埣濮婃椽鏌呴悙鑼跺闁告ɑ鎸抽弻娑氣偓锝庡亝瀹曞本鎱ㄦ繝鍛仩缂侇喗鐟ラ埢搴ㄥ箚瑜嶆竟澶愭⒒娴ｇ儤鍤€闁硅绻濋獮鍐磼閻愬瓨娅滈梺缁樺姈缁佹挳寮ㄦ禒瀣€甸柨婵嗛娴滄粌霉濠婂嫷娈滈柡宀€鍠栭幊婵嬫偋閸繃閿紓鍌欐祰鐏忔瑩宕㈣閵嗗懏绺界粙璺啋缂傚倷鐒﹁彜闁归绮换娑欐綇閸撗勫仹闂佺儵鍓濆Λ鍐ㄧ暦閻㈢绀冩い鏃傛櫕閸橀亶姊虹紒妯曟垿宕滃顑芥灁婵犲﹤鐗婇悡蹇涙煕閳╁喚娈旈柡鍡欏仧缁辨帞绱掑Ο鑲╃杽閻庤娲橀崕濂杆囬幘顔界厽闁挎繂妫欓妵婵囨叏婵犲懏顏犵紒杈ㄥ笒铻ｉ柧蹇涒偓娑氱婵犵數濮甸鏍窗閹捐纾规繝闈涙閺嗭箓鏌熺€电袥闁稿鎹囬弫鎰償閳╁啰浜堕梻浣虹帛閹歌煤濮椻偓婵＄敻宕熼姘辩杸闂佸疇妗ㄧ拋鏌ュ磻閹捐鍗抽柕蹇曞Т閸ゆ垿姊虹涵鍛涧闂傚嫬瀚板畷鎰板垂椤愶絽寮垮┑顔筋殔濡鐛弽顓熺厓缂備焦蓱缁€鍐煙娓氬灝濡界紒缁樼箞瀹曠喖顢橀悙娈垮仹闂傚倷鑳堕幊鎾诲床閺屻儱绠犳俊顖濇閺嗭箓鏌曟繝蹇擃洭缂佲檧鍋撻梻浣告啞閸旀垿宕濈仦鍓х彾鐎广儱鎳夐弨浠嬫煟濡椿鍟忛柡鍡╁灡娣囧﹪骞撻幒鎾虫畻閻庤娲橀崹鍨暦閻旂⒈鏁嶉柨婵嗘濞呮梹淇婇悙顏勨偓鏍箰閻愵剚鍙忛柣銏ゆ交缂嶆牠鏌￠崶銉ョ仾闁绘挾鍠栭弻鐔兼焽閿曗偓婢у鏌涢妶鍥ф灈闁哄矉缍侀幃銏☆槹鎼达及銊╂⒑閸濆嫯瀚扮紒澶屽厴绡撳〒姘ｅ亾闁哄本鐩獮妯兼崉閻戞浜梻浣筋嚃閸犳洟宕￠幎濮愨偓浣割潩鐠鸿櫣鍔﹀銈嗗坊閸嬫捇鏌ｉ敐鍥у幋鐎规洩绻濋幃娆撳煛閸屻倖缍屽┑鐘殿暯濡插懘宕归幎钘夌厱闁割偅鎯婇敐澶嬪亱闁割偅绮庣粻姘舵⒑缂佹ê濮﹀ù婊勭矒閸┾偓妞ゆ帊鑳舵晶顏堟懚閻愬眰鈧帒顫濋敐鍛闁诲氦顫夊ú姗€宕归崸妤冨祦闁搞儺鍓欑粈鍌涖亜閹扳晛鐏柛鐘愁焽閳ь剚顔栭崰娑樷枖濞戙垹鐓濋幖娣妽閸婇攱銇勯幒鍡椾壕闂佷紮闄勭划鎾愁潖缂佹鐟归柍褜鍓欓…鍥樄闁诡啫鍥у耿婵＄偑鍨虹粙鎴﹀煡婢跺ň鏋庨柟閭﹀幘瑜版寧淇婇悙顏勨偓鏍暜閹烘纾归悹鍥у棘濞戙埄鏁嶉柣鎰嚟閸樺憡绻濋姀锝嗙【閻庢稈鏅濆☉鐢稿醇閺囩偞鐎梺鍓插亝缁诲秴銆掓繝姘厪闁割偅绻傞弳娆撴煟韫囷絼绨煎ǎ鍥э躬椤㈡洟濮€閻樿櫕顔夊┑鐑囩到濞层倝鏁冮鍫濈畺婵犲﹤鐗婄€电姴顭跨捄楦垮妤犵偞鍔欏缁樻媴娓氼垳鍔搁梺鍝勭墱閸撶喖濡撮崘顔煎耿婵炲棗鑻禍鐐叏濮楀棗鍘甸柛瀣ㄥ灪閹便劍绻濋崟顓炵闂佺懓鍢查幊鎰垝閻㈢鍋撻敐搴′簽缂佸鍏樺缁樻媴娓氼垳鍔搁柣搴㈢▓閺呮粎鎹㈠☉娆戠瘈闁搞儮鏅涚粊锔界節閻㈤潧孝婵炲眰鍊楃划璇测槈閵忥紕鍘藉┑掳鍊愰崑鎾绘煟濡も偓濡瑧绮嬮幒鎾堕檮闁告稑艌閹锋椽鏌ｉ悢鍝ユ噧閻庢凹鍓熷畷婵堟崉鐞涒剝鏂€濡炪倖鏌ㄩ幖顐﹀焵椤掍胶绠炴鐐插暣閺佹捇鎮╅幓鎺戠ギ闂備線娼ф蹇曟閺囥垹鍌ㄩ柟鍓х帛閳锋垿鏌涘☉姗堝姛缂佺姵鎹囬幃妤€顫濋悡搴♀拫闂佺硶鏂侀崑鎾愁渻閵堝棗绗掗柛濠呭吹閺侇喖鈽夐姀锛勫幐闂佸憡渚楅崢楣冨春閿濆鐓涢悘鐐跺Г椤ユ粍銇勯幘鐐藉仮鐎规洖宕埢搴ょ疀閹鹃鍞舵繝鐢靛Х閺佹悂宕戦悙鍝勭濠电姵纰嶉崵宀勬煙椤栵絿浜规繛宸簻鍥存繝銏ｆ硾閿曘倝宕甸幋锔解拺闁圭瀛╃粈鈧梺绋匡工缂嶅﹪骞冮檱缁犳稑鈽夊▎鎴濆箞闂備線娼ч¨鈧紒鑼跺Г娣囧﹪鎮℃惔妯绘杸濡炪倖妫侀崑鎰墡婵＄偑鍊戦崝濠囧磿閻㈢绠栨繛鍡樻尭缁狙囨煙鐎电浠╅柣褌鐒︽穱濠囧Χ閸ヮ灝銉╂煕鐎ｎ剙浠遍柍銉畵瀹曞爼顢楅埀顒傜不閺屻儲鐓曢柡鍥ュ妼閻忕姴霉閼测晛鈻堥柡?JSON 缂傚倸鍊搁崐鎼佸磹閹间礁纾归柟闂寸绾惧綊鏌熼梻瀵割槮缁炬儳缍婇弻鐔兼⒒鐎靛壊妲紒鐐劤缂嶅﹪寮婚悢鍏尖拻閻庨潧澹婂Σ顔剧磼閻愵剙鍔ょ紓宥咃躬瀵鎮㈤崗灏栨嫽闁诲酣娼ф竟濠偽ｉ鍓х＜闁绘劦鍓欓崝銈囩磽瀹ュ拑韬€殿喖顭烽弫鎰緞婵犲嫷鍚呴梻浣瑰缁诲倿骞夊☉銏犵缂備焦顭囬崢杈ㄧ節閻㈤潧孝闁稿﹤缍婂畷鎴﹀Ψ閳哄倻鍘搁柣蹇曞仩椤曆勬叏閸屾壕鍋撳▓鍨灍闁瑰憡濞婇獮鍐ㄢ枎瀵版繂婀遍埀顒婄秵娴滄瑦绔熼弴銏♀拺闁告稑锕︾紓姘舵煕鎼淬倖鐝紒瀣槸椤撳吋寰勭€ｎ剙骞愬┑鐘灱濞夋盯鏁冮敃鈧～婵嬪Ω閳哄倻鍘搁梺閫炲苯澧紒鍌涘笧閳ь剨缍嗛崑鍡涘储閽樺鏀介柍钘夋閻忋儲绻涢崪鍐М闁轰礁绉撮濂稿幢閹邦亞鐩庨梻浣瑰缁诲倸螞濞戙垹鐭楅柍褜鍓熷?
     kingdee_json = {
@@ -2839,6 +2937,8 @@ def preview_voucher_for_bill(
             "entries": accounting_entries,
             "total_debit": _json_number(total_debit),
             "total_credit": _json_number(total_credit),
+            "total_debit_exact": _decimal_text(total_debit),
+            "total_credit_exact": _decimal_text(total_credit),
             "is_balanced": (total_debit - total_credit) == Decimal("0") and (total_credit - total_debit) == Decimal("0"),
         },
         "kingdee_json": kingdee_json,
@@ -2997,8 +3097,8 @@ def preview_voucher_for_bills(
             entry["line_no"] = len(merged_accounting_entries) + 1
             merged_accounting_entries.append(entry)
 
-    total_debit = sum((_try_parse_decimal(e.get("debit")) or Decimal("0")) for e in merged_accounting_entries)
-    total_credit = sum((_try_parse_decimal(e.get("credit")) or Decimal("0")) for e in merged_accounting_entries)
+    total_debit = sum((_entry_decimal(e, "debit_exact", "debit")) for e in merged_accounting_entries)
+    total_credit = sum((_entry_decimal(e, "credit_exact", "credit")) for e in merged_accounting_entries)
 
     merged_template_ids = sorted({str(p.get("template_id") or "") for p in previews if p.get("template_id")})
     template_name = first_preview.get("template_name") or first_preview.get("template_id") or "BatchMerged"
@@ -3033,6 +3133,8 @@ def preview_voucher_for_bills(
             "entries": merged_accounting_entries,
             "total_debit": _json_number(total_debit),
             "total_credit": _json_number(total_credit),
+            "total_debit_exact": _decimal_text(total_debit),
+            "total_credit_exact": _decimal_text(total_credit),
             "is_balanced": (total_debit - total_credit) == Decimal("0") and (total_credit - total_debit) == Decimal("0"),
         },
         "kingdee_json": merged_kingdee_json,

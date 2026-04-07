@@ -92,17 +92,13 @@ class ChargeItem(Base):
     period_type_str = Column(String(200), nullable=True)
     remark = Column(Text, nullable=True)
 
-    # 鏄犲皠浼氳绉戠洰
-    current_account_subject_id = Column(String(50), ForeignKey("accounting_subjects.id"), nullable=True)
-    profit_loss_subject_id = Column(String(50), ForeignKey("accounting_subjects.id"), nullable=True)
+    # 映射会计科目
     kingdee_tax_rate_id = Column(String(50), ForeignKey("tax_rates.id"), nullable=True)
 
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
-    # 鍏崇郴鏄犲皠
-    current_account_subject = relationship("AccountingSubject", foreign_keys=[current_account_subject_id])
-    profit_loss_subject = relationship("AccountingSubject", foreign_keys=[profit_loss_subject_id])
+    # 关系映射
     kingdee_tax_rate = relationship("TaxRate", foreign_keys=[kingdee_tax_rate_id])
 
 class ProjectList(Base):

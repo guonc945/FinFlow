@@ -1112,22 +1112,16 @@ class ChargeItemBase(BaseModel):
     category_name: Optional[str] = None
     period_type_str: Optional[str] = None
     remark: Optional[str] = None
-    current_account_subject_id: Optional[str] = None
-    profit_loss_subject_id: Optional[str] = None
     kingdee_tax_rate_id: Optional[str] = None
 
 class ChargeItemResponse(ChargeItemBase):
     created_at: datetime
-    current_account_subject: Optional[AccountingSubjectResponse] = None
-    profit_loss_subject: Optional[AccountingSubjectResponse] = None
     kingdee_tax_rate: Optional[TaxRateResponse] = None
 
     class Config:
         from_attributes = True
 
 class ChargeItemUpdate(BaseModel):
-    current_account_subject_id: Optional[str] = None
-    profit_loss_subject_id: Optional[str] = None
     kingdee_tax_rate_id: Optional[str] = None
 
 # KingdeeBankAccount Schemas

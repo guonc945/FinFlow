@@ -80,3 +80,300 @@
 .project-row:hover {
     background: #eff6ff;
 }
+
+/* 税率弹窗优化样式 */
+.search-bar-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    background: #f8fafc;
+    border: 2px solid #e2e8f0;
+    border-radius: 0.75rem;
+    padding: 0.5rem 1rem;
+    transition: all 0.2s ease;
+}
+
+.search-bar-wrapper:focus-within {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    background: #fff;
+}
+
+.search-bar-wrapper .search-icon {
+    color: #94a3b8;
+    transition: color 0.2s ease;
+}
+
+.search-bar-wrapper:focus-within .search-icon {
+    color: #3b82f6;
+}
+
+.search-bar-wrapper input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    font-size: 0.875rem;
+    color: #1e293b;
+    outline: none;
+}
+
+.search-bar-wrapper input::placeholder {
+    color: #94a3b8;
+}
+
+/* 税率表格优化 */
+.project-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.project-table th {
+    position: sticky;
+    top: 0;
+    background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+    padding: 1rem;
+    text-align: left;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: #475569;
+    border-bottom: 2px solid #e2e8f0;
+    z-index: 10;
+    letter-spacing: 0.025em;
+}
+
+.project-table td {
+    padding: 1rem;
+    border-bottom: 1px solid #f1f5f9;
+    font-size: 0.875rem;
+    vertical-align: middle;
+    color: #334155;
+}
+
+.project-row {
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border-left: 3px solid transparent;
+}
+
+.project-row:hover {
+    background: linear-gradient(90deg, #eff6ff 0%, #fff 100%);
+    border-left-color: #3b82f6;
+    transform: translateX(2px);
+}
+
+.project-row td:first-child {
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+    font-weight: 600;
+    color: #3b82f6;
+}
+
+.project-row td:nth-child(2) {
+    font-weight: 500;
+    color: #1e293b;
+}
+
+.project-row td:nth-child(3) {
+    font-size: 0.8125rem;
+    color: #64748b;
+}
+
+.project-row.selected {
+    background: linear-gradient(90deg, #dbeafe 0%, #eff6ff 100%);
+    border-left-color: #3b82f6;
+}
+
+.project-row.selected td {
+    color: #1e293b;
+}
+
+.project-row.selected td:first-child {
+    color: #2563eb;
+    font-weight: 700;
+}
+
+/* 分页控件优化 */
+.modal-footer {
+    background: linear-gradient(180deg, #f8fafc 0%, #fff 100%);
+}
+
+.pagination {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.pagination .btn-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 0.5rem;
+    background: #fff;
+    color: #64748b;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.pagination .btn-icon:hover:not(:disabled) {
+    background: #3b82f6;
+    color: #fff;
+    border-color: #3b82f6;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.2);
+}
+
+.pagination .btn-icon:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    background: #f1f5f9;
+}
+
+.pagination span {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #475569;
+    padding: 0 0.5rem;
+    min-width: 3rem;
+    text-align: center;
+}
+
+/* 加载状态优化 */
+.animate-spin {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.text-slate-300 {
+    color: #cbd5e1;
+}
+
+/* 空状态优化 */
+.text-slate-400 {
+    color: #94a3b8;
+}
+
+.text-center {
+    text-align: center;
+}
+
+.py-8 {
+    padding-top: 2rem;
+    padding-bottom: 2rem;
+}
+
+/* 模态框头部优化 */
+.modal-header {
+    background: linear-gradient(180deg, #f8fafc 0%, #fff 100%);
+    padding: 1.25rem 1.5rem;
+    border-bottom: 2px solid #e2e8f0;
+}
+
+.modal-header h3 {
+    font-size: 1.125rem;
+    font-weight: 700;
+    color: #1e293b;
+    letter-spacing: -0.025em;
+}
+
+.modal-header .text-primary {
+    color: #3b82f6;
+}
+
+.modal-close-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 0.5rem;
+    background: #fff;
+    color: #64748b;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.modal-close-btn:hover {
+    background: #fee2e2;
+    color: #dc2626;
+    border-color: #fee2e2;
+    transform: rotate(90deg);
+}
+
+/* 模态框内容区域 */
+.project-modal-body {
+    padding: 1.5rem;
+}
+
+.project-modal-body .p-4 {
+    padding: 1rem;
+}
+
+.project-modal-body .flex {
+    display: flex;
+}
+
+.project-modal-body .flex-col {
+    flex-direction: column;
+}
+
+.project-modal-body .gap-4 {
+    gap: 1rem;
+}
+
+/* 搜索建议下拉列表样式 */
+.suggestions-dropdown {
+    animation: slideDown 0.2s ease-out;
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.suggestion-item {
+    transition: all 0.15s ease;
+}
+
+.suggestion-item:hover {
+    background: #e0e7ff !important;
+}
+
+.suggestion-item.highlighted {
+    background: #e0e7ff !important;
+}
+
+/* 自定义滚动条样式 */
+.suggestions-dropdown::-webkit-scrollbar {
+    width: 6px;
+}
+
+.suggestions-dropdown::-webkit-scrollbar-track {
+    background: #f1f5f9;
+    border-radius: 0 8px 8px 0;
+}
+
+.suggestions-dropdown::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+}
+
+.suggestions-dropdown::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}

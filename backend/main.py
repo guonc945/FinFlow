@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy import and_, desc, func, extract, or_, cast, String
 from sqlalchemy.exc import IntegrityError
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Dict, List, Optional, Set, Tuple
 import models, schemas, database
 from utils.variable_parser import (
@@ -1663,6 +1663,14 @@ def _json_number(value: Any) -> float:
     return float(parsed) if parsed is not None else 0.0
 
 
+_MONEY_QUANTIZER = Decimal("0.01")
+
+
+def _money_text(value: Any) -> str:
+    parsed = _try_parse_decimal(value) or Decimal("0")
+    return format(parsed.quantize(_MONEY_QUANTIZER, rounding=ROUND_HALF_UP), ".2f")
+
+
 def _validate_voucher_json_amounts(kingdee_json: Dict[str, Any]) -> None:
     data_rows = kingdee_json.get("data")
     if not isinstance(data_rows, list) or not data_rows:
@@ -2311,7 +2319,7 @@ def _build_bill_summary_payload(bill: models.Bill) -> Dict[str, Any]:
         "community_id": bill.community_id,
         "charge_item_name": bill.charge_item_name,
         "full_house_name": bill.full_house_name,
-        "amount": _json_number(bill.amount),
+        "amount": _money_text(bill.amount),
         "asset_name": bill.asset_name,
     }
 
@@ -2323,8 +2331,8 @@ def _build_receipt_summary_payload(receipt_bill: models.ReceiptBill) -> Dict[str
         "receipt_id": receipt_bill.receipt_id,
         "deal_type": receipt_bill.deal_type,
         "deal_type_label": RECEIPT_BILL_DEAL_TYPE_LABELS.get(receipt_bill.deal_type, "其他"),
-        "income_amount": _json_number(receipt_bill.income_amount),
-        "amount": _json_number(receipt_bill.amount),
+        "income_amount": _money_text(receipt_bill.income_amount),
+        "amount": _money_text(receipt_bill.amount),
         "asset_name": receipt_bill.asset_name,
     }
 

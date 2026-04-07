@@ -47,8 +47,6 @@ def get_charge_items(
 ):
     _require_api_permission(db, current_user, "charge_item.manage")
     query = db.query(models.ChargeItem).options(
-        joinedload(models.ChargeItem.current_account_subject),
-        joinedload(models.ChargeItem.profit_loss_subject),
         joinedload(models.ChargeItem.kingdee_tax_rate),
     )
     if allowed_community_ids:

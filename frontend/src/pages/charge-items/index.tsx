@@ -4,7 +4,6 @@ import { ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight } from 'lucide-r
 import DataTable from '../../components/data/DataTable';
 import { getChargeItems, updateChargeItem, getProjects, syncChargeItems } from '../../services/api';
 import type { ChargeItem } from '../../types';
-import AccountingSubjectSelector from '../../components/finance/AccountingSubjectSelector';
 import TaxRateSelector from '../../components/finance/TaxRateSelector';
 import { useToast, ToastContainer } from '../../components/Toast';
 import '../bills/Bills.css';
@@ -112,8 +111,6 @@ const ChargeItems = () => {
         setIsSaving(true);
         try {
             await updateChargeItem(editingItem.item_id, {
-                current_account_subject_id: editingItem.current_account_subject_id,
-                profit_loss_subject_id: editingItem.profit_loss_subject_id,
                 kingdee_tax_rate_id: editingItem.kingdee_tax_rate_id,
             });
             setEditingItem(null);
@@ -140,28 +137,6 @@ const ChargeItems = () => {
         { key: 'item_name' as keyof ChargeItem, title: '收费项名称', width: 220 },
         { key: 'charge_type_str' as keyof ChargeItem, title: '收费类型', width: 120 },
         { key: 'period_type_str' as keyof ChargeItem, title: '周期规则', width: 180 },
-        {
-            key: 'current_account_subject' as keyof ChargeItem,
-            title: '往来科目映射',
-            width: 250,
-            render: (val: any) => val ? (
-                <div className="flex flex-col">
-                    <span className="text-sm font-medium">{val.name}</span>
-                    <span className="text-xs text-slate-400 font-mono">{val.number}</span>
-                </div>
-            ) : <span className="text-slate-300">未设置</span>
-        },
-        {
-            key: 'profit_loss_subject' as keyof ChargeItem,
-            title: '损益科目映射',
-            width: 250,
-            render: (val: any) => val ? (
-                <div className="flex flex-col">
-                    <span className="text-sm font-medium">{val.name}</span>
-                    <span className="text-xs text-slate-400 font-mono">{val.number}</span>
-                </div>
-            ) : <span className="text-slate-300">未设置</span>
-        },
         {
             key: 'kingdee_tax_rate' as keyof ChargeItem,
             title: '金蝶税率档案',
@@ -374,32 +349,6 @@ const ChargeItems = () => {
                             </div>
 
                             <div className="flex flex-col gap-4">
-                                <AccountingSubjectSelector
-                                    label="往来科目映射"
-                                    placeholder="搜索或手动输入往来科目..."
-                                    value={editingItem.current_account_subject ? `${editingItem.current_account_subject.number} ${editingItem.current_account_subject.name}` : editingItem.current_account_subject_id}
-                                    onSelect={(subject) => {
-                                        setEditingItem({
-                                            ...editingItem,
-                                            current_account_subject_id: subject?.id || undefined,
-                                            current_account_subject: subject || undefined
-                                        });
-                                    }}
-                                />
-
-                                <AccountingSubjectSelector
-                                    label="损益科目映射"
-                                    placeholder="搜索或手动输入损益科目..."
-                                    value={editingItem.profit_loss_subject ? `${editingItem.profit_loss_subject.number} ${editingItem.profit_loss_subject.name}` : editingItem.profit_loss_subject_id}
-                                    onSelect={(subject) => {
-                                        setEditingItem({
-                                            ...editingItem,
-                                            profit_loss_subject_id: subject?.id || undefined,
-                                            profit_loss_subject: subject || undefined
-                                        });
-                                    }}
-                                />
-
                                 <TaxRateSelector
                                     label="金蝶税率档案映射"
                                     placeholder="搜索或选择金蝶税率档案..."

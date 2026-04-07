@@ -85,10 +85,6 @@ const VoucherPreviewModal = ({
     const [l, r, scale] = alignDecimal(left, right);
     return { int: l + r, scale };
   };
-  const subDecimal = (left: DecimalValue, right: DecimalValue): DecimalValue => {
-    const [l, r, scale] = alignDecimal(left, right);
-    return { int: l - r, scale };
-  };
   const compareDecimal = (left: DecimalValue, right: DecimalValue): number => {
     const [l, r] = alignDecimal(left, right);
     if (l === r) return 0;
@@ -107,21 +103,40 @@ const VoucherPreviewModal = ({
     if (!fracPart) return `${negative ? "-" : ""}${intPart}`;
     return `${negative ? "-" : ""}${intPart}.${fracPart}`;
   };
+  const decimalToFixedString = (value: DecimalValue, scale: number): string => {
+    const normalizedScale = Math.max(scale, 0);
+    const text = decimalToString(value);
+    const negative = text.startsWith("-");
+    const unsigned = negative ? text.slice(1) : text;
+    const [intPartRaw = "0", fracPartRaw = ""] = unsigned.split(".");
+    const intPart = intPartRaw || "0";
+    if (normalizedScale === 0) {
+      return `${negative ? "-" : ""}${intPart}`;
+    }
+    const fracPart = fracPartRaw.padEnd(normalizedScale, "0").slice(0, normalizedScale);
+    return `${negative ? "-" : ""}${intPart}.${fracPart}`;
+  };
   const decimalToNumber = (value: DecimalValue): number =>
     Number(decimalToString(value));
   const decimalIsPositive = (value: DecimalValue): boolean => value.int > 0n;
+  const getEntryDebitValue = (entry: any) => entry?.debit_exact ?? entry?.debit;
+  const getEntryCreditValue = (entry: any) => entry?.credit_exact ?? entry?.credit;
+  const getEntryLocalRateValue = (entry: any) => entry?.localrate_exact ?? entry?.localrate ?? "1";
+  const getMoneyString = (value: any): string => decimalToFixedString(parseDecimal(value), 2);
+  const getAmountDisplay = (value: any): string => getMoneyString(value);
+  const hasPositiveAmount = (value: any): boolean => parseDecimal(value).int > 0n;
   const buildKingdeeJsonFromEntries = (entries: any[]) => {
     if (!kdJson?.data?.[0]) return kdJson;
     const header = kdJson.data[0];
     const mappedEntries = entries.map((entry: any, idx: number) => {
-      const debit = decimalToString(parseDecimal(entry.debit_exact ?? entry.debit));
-      const credit = decimalToString(parseDecimal(entry.credit_exact ?? entry.credit));
+      const debit = getMoneyString(getEntryDebitValue(entry));
+      const credit = getMoneyString(getEntryCreditValue(entry));
       const kdEntry: any = {
         seq: idx + 1,
         edescription: entry.summary || "",
         account_number: entry.account_code || "",
         currency_number: entry.currency || "CNY",
-        localrate: Number(entry.localrate || 1),
+        localrate: decimalToString(parseDecimal(getEntryLocalRateValue(entry))),
         debitori: debit,
         creditori: credit,
         debitlocal: debit,
@@ -268,8 +283,8 @@ const VoucherPreviewModal = ({
     const merged: any[] = [];
     const indexMap = new Map<string, number>();
     entries.forEach((entry, sourceIndex) => {
-      const debitDecimal = parseDecimal(entry.debit);
-      const creditDecimal = parseDecimal(entry.credit);
+      const debitDecimal = parseDecimal(getEntryDebitValue(entry));
+      const creditDecimal = parseDecimal(getEntryCreditValue(entry));
       const direction = decimalIsPositive(debitDecimal) ? "debit" : "credit";
       const accountKey = `${entry.account_display || ""}|${entry.account_code || ""}`;
       const assgrpKey = JSON.stringify(normalizeAssgrp(entry.assgrp));
@@ -306,7 +321,8 @@ const VoucherPreviewModal = ({
         ...entry,
         debit_decimal: debitDecimal,
         credit_decimal: creditDecimal,
-        localrate: Number(entry.localrate || 1),
+        localrate_exact: decimalToString(parseDecimal(getEntryLocalRateValue(entry))),
+        localrate: decimalToNumber(parseDecimal(getEntryLocalRateValue(entry))),
         source_line_no_min: sourceLineNo,
         source_index_min: sourceIndex,
         business_sort_bucket: businessSortBucket,
@@ -354,8 +370,8 @@ const VoucherPreviewModal = ({
 
     return sortedMerged.map((entry, idx) => ({
       ...entry,
-      debit_exact: decimalToString(entry.debit_decimal || ZERO_DECIMAL),
-      credit_exact: decimalToString(entry.credit_decimal || ZERO_DECIMAL),
+      debit_exact: decimalToFixedString(entry.debit_decimal || ZERO_DECIMAL, 2),
+      credit_exact: decimalToFixedString(entry.credit_decimal || ZERO_DECIMAL, 2),
       debit: decimalToNumber(entry.debit_decimal || ZERO_DECIMAL),
       credit: decimalToNumber(entry.credit_decimal || ZERO_DECIMAL),
       line_no: idx + 1,
@@ -365,6 +381,37 @@ const VoucherPreviewModal = ({
     if (!acctView?.entries) return [];
     return mergeEnabled ? mergeEntries(acctView.entries) : acctView.entries;
   }, [acctView?.entries, mergeEnabled]);
+  const displayedDebitTotal = useMemo(
+    () =>
+      displayedEntries.reduce(
+        (sum: DecimalValue, entry: any) =>
+          addDecimal(sum, parseDecimal(getEntryDebitValue(entry))),
+        ZERO_DECIMAL,
+      ),
+    [displayedEntries],
+  );
+  const displayedCreditTotal = useMemo(
+    () =>
+      displayedEntries.reduce(
+        (sum: DecimalValue, entry: any) =>
+          addDecimal(sum, parseDecimal(getEntryCreditValue(entry))),
+        ZERO_DECIMAL,
+      ),
+    [displayedEntries],
+  );
+  const accountingViewBalanced = useMemo(
+    () => compareDecimal(displayedDebitTotal, displayedCreditTotal) === 0,
+    [displayedDebitTotal, displayedCreditTotal],
+  );
+  const accountingViewDiffDisplay = useMemo(
+    () =>
+      decimalToFixedString({
+        int: alignDecimal(displayedDebitTotal, displayedCreditTotal)[0] -
+          alignDecimal(displayedDebitTotal, displayedCreditTotal)[1],
+        scale: Math.max(displayedDebitTotal.scale, displayedCreditTotal.scale),
+      }, 2),
+    [displayedDebitTotal, displayedCreditTotal],
+  );
   const effectiveKingdeeJson = useMemo(() => {
     if (!acctView?.entries || !kdJson) return kdJson;
     return buildKingdeeJsonFromEntries(displayedEntries);
@@ -375,16 +422,8 @@ const VoucherPreviewModal = ({
     }
 
     const jsonEntries = effectiveKingdeeJson.data[0].entries as any[];
-    const displayedDebit = displayedEntries.reduce(
-      (sum: DecimalValue, entry: any) =>
-        addDecimal(sum, parseDecimal(entry.debit_exact ?? entry.debit)),
-      ZERO_DECIMAL,
-    );
-    const displayedCredit = displayedEntries.reduce(
-      (sum: DecimalValue, entry: any) =>
-        addDecimal(sum, parseDecimal(entry.credit_exact ?? entry.credit)),
-      ZERO_DECIMAL,
-    );
+    const displayedDebit = displayedDebitTotal;
+    const displayedCredit = displayedCreditTotal;
     const jsonDebit = jsonEntries.reduce(
       (sum: DecimalValue, entry: any) =>
         addDecimal(sum, parseDecimal(entry.debitori)),
@@ -406,15 +445,11 @@ const VoucherPreviewModal = ({
       ZERO_DECIMAL,
     );
 
-    const rightFloatDiff = subDecimal(jsonDebit, jsonCredit);
-    const leftFloatDiff = subDecimal(jsonCredit, jsonDebit);
-    if (rightFloatDiff.int !== 0n || leftFloatDiff.int !== 0n) {
+    if (compareDecimal(jsonDebit, jsonCredit) !== 0) {
       return { ok: false, message: "JSON 借贷金额不平衡，已阻止推送。" };
     }
 
-    const rightLocalDiff = subDecimal(jsonLocalDebit, jsonLocalCredit);
-    const leftLocalDiff = subDecimal(jsonLocalCredit, jsonLocalDebit);
-    if (rightLocalDiff.int !== 0n || leftLocalDiff.int !== 0n) {
+    if (compareDecimal(jsonLocalDebit, jsonLocalCredit) !== 0) {
       return { ok: false, message: "JSON 本位币借贷金额不平衡，已阻止推送。" };
     }
 
@@ -426,7 +461,7 @@ const VoucherPreviewModal = ({
     }
 
     return { ok: true, message: "" };
-  }, [displayedEntries, effectiveKingdeeJson]);
+  }, [displayedCreditTotal, displayedDebitTotal, effectiveKingdeeJson]);
   const canPush =
     !!onPushVoucher &&
     !!effectiveKingdeeJson &&
@@ -818,22 +853,20 @@ const VoucherPreviewModal = ({
                       borderRadius: "0.5rem",
                       fontSize: "0.8rem",
                       fontWeight: 600,
-                      background: acctView.is_balanced ? "#f0fdf4" : "#fef2f2",
-                      color: acctView.is_balanced ? "#166534" : "#991b1b",
-                      border: `1px solid ${acctView.is_balanced ? "#bbf7d0" : "#fecaca"}`,
+                      background: accountingViewBalanced ? "#f0fdf4" : "#fef2f2",
+                      color: accountingViewBalanced ? "#166534" : "#991b1b",
+                      border: `1px solid ${accountingViewBalanced ? "#bbf7d0" : "#fecaca"}`,
                       flexShrink: 0,
                     }}
                   >
-                    {acctView.is_balanced ? (
+                    {accountingViewBalanced ? (
                       <>
                         <CheckCircle2 size={14} /> 借贷平衡
                       </>
                     ) : (
                       <>
                         <AlertTriangle size={14} /> 借贷不平衡，差额：¥
-                        {Math.abs(
-                          acctView.total_debit - acctView.total_credit,
-                        ).toFixed(2)}
+                        {accountingViewDiffDisplay}
                       </>
                     )}
                   </div>
@@ -983,11 +1016,11 @@ const VoucherPreviewModal = ({
                                 fontWeight: 600,
                                 fontFamily: monoFont,
                                 fontSize: "0.82rem",
-                                color: entry.debit > 0 ? "#0f172a" : "#cbd5e1",
+                                color: hasPositiveAmount(getEntryDebitValue(entry)) ? "#0f172a" : "#cbd5e1",
                               }}
                             >
-                              {entry.debit > 0
-                                ? `¥${entry.debit.toFixed(2)}`
+                              {hasPositiveAmount(getEntryDebitValue(entry))
+                                ? `¥${getAmountDisplay(getEntryDebitValue(entry))}`
                                 : "-"}
                             </td>
                             <td
@@ -997,11 +1030,11 @@ const VoucherPreviewModal = ({
                                 fontWeight: 600,
                                 fontFamily: monoFont,
                                 fontSize: "0.82rem",
-                                color: entry.credit > 0 ? "#0f172a" : "#cbd5e1",
+                                color: hasPositiveAmount(getEntryCreditValue(entry)) ? "#0f172a" : "#cbd5e1",
                               }}
                             >
-                              {entry.credit > 0
-                                ? `¥${entry.credit.toFixed(2)}`
+                              {hasPositiveAmount(getEntryCreditValue(entry))
+                                ? `¥${getAmountDisplay(getEntryCreditValue(entry))}`
                                 : "-"}
                             </td>
                             <td style={tdStyle}>
@@ -1071,7 +1104,7 @@ const VoucherPreviewModal = ({
                               boxShadow: "0 -1px 0 #e2e8f0",
                             }}
                           >
-                            ¥{acctView.total_debit.toFixed(2)}
+                            ¥{decimalToFixedString(displayedDebitTotal, 2)}
                           </td>
                           <td
                             style={{
@@ -1085,7 +1118,7 @@ const VoucherPreviewModal = ({
                               boxShadow: "0 -1px 0 #e2e8f0",
                             }}
                           >
-                            ¥{acctView.total_credit.toFixed(2)}
+                            ¥{decimalToFixedString(displayedCreditTotal, 2)}
                           </td>
                           <td
                             style={{

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from importlib import import_module
 from typing import Any, Dict, List, Optional
 
@@ -279,9 +279,32 @@ def _normalize_receipt_refs(receipts: Optional[List[Any]]) -> List[Dict[str, int
     return normalized_receipts
 
 
-def _jsonify_scalar(value: Any) -> Any:
+_MONEY_QUANTIZER = Decimal("0.01")
+
+
+def _decimal_text(value: Any) -> str:
+    if value is None:
+        return "0"
+    parsed = value if isinstance(value, Decimal) else Decimal(str(value))
+    text = format(parsed, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _money_text(value: Any) -> str:
+    parsed = value if isinstance(value, Decimal) else Decimal(str(value))
+    return format(parsed.quantize(_MONEY_QUANTIZER, rounding=ROUND_HALF_UP), ".2f")
+
+
+def _is_money_field(field_name: Optional[str]) -> bool:
+    normalized = str(field_name or "").strip().lower()
+    return normalized == "amount" or normalized.endswith("_amount") or normalized == "income_amount" or normalized == "balance_after_change"
+
+
+def _jsonify_scalar(value: Any, field_name: Optional[str] = None) -> Any:
     if isinstance(value, Decimal):
-        return float(value)
+        return _money_text(value) if _is_money_field(field_name) else _decimal_text(value)
     if hasattr(value, "isoformat"):
         return value.isoformat()
     return value
@@ -337,7 +360,7 @@ def _serialize_receipt_bill_model(
         "created_at": receipt_bill.created_at,
         "updated_at": receipt_bill.updated_at,
     }
-    return {key: _jsonify_scalar(value) for key, value in data.items()}
+    return {key: _jsonify_scalar(value, key) for key, value in data.items()}
 
 
 def _enrich_receipt_bill_data(
@@ -375,7 +398,7 @@ def _serialize_deposit_record_model(record: models.DepositRecord) -> Dict[str, A
         "created_at": record.created_at,
         "updated_at": record.updated_at,
     }
-    return {key: _jsonify_scalar(value) for key, value in data.items()}
+    return {key: _jsonify_scalar(value, key) for key, value in data.items()}
 
 
 def _enrich_deposit_record_data(record_data: Dict[str, Any], db: Optional[Session] = None) -> Dict[str, Any]:
@@ -418,7 +441,7 @@ def _serialize_prepayment_record_model(record: models.PrepaymentRecord) -> Dict[
         "created_at": record.created_at,
         "updated_at": record.updated_at,
     }
-    return {key: _jsonify_scalar(value) for key, value in data.items()}
+    return {key: _jsonify_scalar(value, key) for key, value in data.items()}
 
 
 def _enrich_prepayment_record_data(record_data: Dict[str, Any], db: Optional[Session] = None) -> Dict[str, Any]:
@@ -527,7 +550,7 @@ def _load_receipt_to_bills_relation(
     return [
         mapping_enrich_source_data(
             "bills",
-            {col.name: _jsonify_scalar(getattr(bill, col.name, None)) for col in models.Bill.__table__.columns},
+            {col.name: _jsonify_scalar(getattr(bill, col.name, None), col.name) for col in models.Bill.__table__.columns},
             db,
         )
         for bill in bills
