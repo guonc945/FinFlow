@@ -35,6 +35,18 @@ const VoucherPreviewModal = ({
     text: string;
   } | null>(null);
   const [mergeEnabled, setMergeEnabled] = useState(true);
+  const [bookedDate, setBookedDate] = useState("");
+  const getCurrentDateString = (): string => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+  const isValidDateString = (value: string): boolean =>
+    /^\d{4}-\d{2}-\d{2}$/.test(String(value || "").trim());
+  const toPeriodNumber = (value: string): string =>
+    isValidDateString(value) ? value.replace(/-/g, "").slice(0, 6) : "";
   const getAssgrpDisplayValue = (conf: any): string => {
     if (conf === null || conf === undefined) return "?";
     if (typeof conf !== "object") return String(conf);
@@ -85,10 +97,62 @@ const VoucherPreviewModal = ({
     const [l, r, scale] = alignDecimal(left, right);
     return { int: l + r, scale };
   };
+  const subtractDecimal = (
+    left: DecimalValue,
+    right: DecimalValue,
+  ): DecimalValue => {
+    const [l, r, scale] = alignDecimal(left, right);
+    return { int: l - r, scale };
+  };
   const compareDecimal = (left: DecimalValue, right: DecimalValue): number => {
     const [l, r] = alignDecimal(left, right);
     if (l === r) return 0;
     return l > r ? 1 : -1;
+  };
+  const absDecimal = (value: DecimalValue): DecimalValue => ({
+    int: value.int < 0n ? -value.int : value.int,
+    scale: value.scale,
+  });
+  const truncateDecimalToScale = (
+    value: DecimalValue,
+    scale: number,
+  ): DecimalValue => {
+    const normalizedScale = Math.max(scale, 0);
+    if (value.scale <= normalizedScale) {
+      return {
+        int: value.int * 10n ** BigInt(normalizedScale - value.scale),
+        scale: normalizedScale,
+      };
+    }
+    const divisor = 10n ** BigInt(value.scale - normalizedScale);
+    return {
+      int: value.int / divisor,
+      scale: normalizedScale,
+    };
+  };
+  const roundDecimalToScale = (
+    value: DecimalValue,
+    scale: number,
+  ): DecimalValue => {
+    const normalizedScale = Math.max(scale, 0);
+    if (value.scale <= normalizedScale) {
+      return {
+        int: value.int * 10n ** BigInt(normalizedScale - value.scale),
+        scale: normalizedScale,
+      };
+    }
+    const negative = value.int < 0n;
+    const absInt = negative ? -value.int : value.int;
+    const divisor = 10n ** BigInt(value.scale - normalizedScale);
+    let quotient = absInt / divisor;
+    const remainder = absInt % divisor;
+    if (remainder * 2n >= divisor) {
+      quotient += 1n;
+    }
+    return {
+      int: negative ? -quotient : quotient,
+      scale: normalizedScale,
+    };
   };
   const decimalToString = (value: DecimalValue): string => {
     if (value.int === 0n) return "0";
@@ -121,11 +185,15 @@ const VoucherPreviewModal = ({
   const decimalIsPositive = (value: DecimalValue): boolean => value.int > 0n;
   const getEntryDebitValue = (entry: any) => entry?.debit_exact ?? entry?.debit;
   const getEntryCreditValue = (entry: any) => entry?.credit_exact ?? entry?.credit;
+  const getEntryDebitMergeValue = (entry: any) =>
+    entry?.debit_formula_exact ?? entry?.debit_exact ?? entry?.debit;
+  const getEntryCreditMergeValue = (entry: any) =>
+    entry?.credit_formula_exact ?? entry?.credit_exact ?? entry?.credit;
   const getEntryLocalRateValue = (entry: any) => entry?.localrate_exact ?? entry?.localrate ?? "1";
   const getMoneyString = (value: any): string => decimalToFixedString(parseDecimal(value), 2);
   const getAmountDisplay = (value: any): string => getMoneyString(value);
   const hasPositiveAmount = (value: any): boolean => parseDecimal(value).int > 0n;
-  const buildKingdeeJsonFromEntries = (entries: any[]) => {
+  const buildKingdeeJsonFromEntries = (entries: any[], nextBookedDate: string) => {
     if (!kdJson?.data?.[0]) return kdJson;
     const header = kdJson.data[0];
     const mappedEntries = entries.map((entry: any, idx: number) => {
@@ -156,6 +224,8 @@ const VoucherPreviewModal = ({
       data: [
         {
           ...header,
+          bookeddate: nextBookedDate,
+          period_number: toPeriodNumber(nextBookedDate),
           entries: mappedEntries,
         },
       ],
@@ -277,14 +347,114 @@ const VoucherPreviewModal = ({
 
     return false;
   };
+  const isTaxEntry = (entry: any): boolean => {
+    const accountCode = String(entry?.account_code || "").trim();
+    const summary = normalizeEntryText(entry?.summary, entry?.edescription);
+    return (
+      accountCode.startsWith("2221") ||
+      summary.includes("增值税") ||
+      summary.includes("税费") ||
+      summary.includes("销项税")
+    );
+  };
   const getEntryBusinessSortBucket = (entry: any): number =>
     isCarryForwardEntry(entry) ? 1 : 0;
+  const normalizeMergedDirectionAmounts = (
+    entries: any[],
+    exactKey: "debit_decimal" | "credit_decimal",
+    roundedExactKey: "debit_exact" | "credit_exact",
+    numberKey: "debit" | "credit",
+  ) => {
+    const indexed = entries
+      .map((entry, idx) => ({
+        entry,
+        idx,
+        exact: entry?.[exactKey] || ZERO_DECIMAL,
+      }))
+      .filter((item) => item.exact.int > 0n);
+
+    if (indexed.length === 0) {
+      entries.forEach((entry) => {
+        entry[roundedExactKey] = "0.00";
+        entry[numberKey] = 0;
+      });
+      return;
+    }
+
+    const targetTotal = roundDecimalToScale(
+      indexed.reduce(
+        (sum: DecimalValue, item) => addDecimal(sum, item.exact),
+        ZERO_DECIMAL,
+      ),
+      2,
+    );
+
+    const baseValues = indexed.map((item) =>
+      truncateDecimalToScale(item.exact, 2),
+    );
+    let allocatedTotal = baseValues.reduce(
+      (sum: DecimalValue, item) => addDecimal(sum, item),
+      ZERO_DECIMAL,
+    );
+    const oneCent: DecimalValue = { int: 1n, scale: 2 };
+    let deltaCents = Number(
+      subtractDecimal(targetTotal, allocatedTotal).int,
+    );
+
+    if (deltaCents > 0) {
+      const buildCandidateOrder = (positiveOnly: boolean) =>
+        indexed
+          .map((item, idx) => ({
+            idx,
+            isTax: isTaxEntry(item.entry),
+            magnitude: absDecimal(item.exact),
+            remainder: subtractDecimal(item.exact, baseValues[idx]),
+          }))
+          .filter((item) =>
+            positiveOnly ? compareDecimal(item.remainder, ZERO_DECIMAL) > 0 : true,
+          )
+          .sort((left, right) => {
+            if (left.isTax !== right.isTax) {
+              return Number(left.isTax) - Number(right.isTax);
+            }
+            const magnitudeDiff = compareDecimal(right.magnitude, left.magnitude);
+            if (magnitudeDiff !== 0) return magnitudeDiff;
+            const remainderDiff = compareDecimal(right.remainder, left.remainder);
+            if (remainderDiff !== 0) return remainderDiff;
+            return left.idx - right.idx;
+          });
+
+      const candidateOrder =
+        buildCandidateOrder(true).length > 0
+          ? buildCandidateOrder(true)
+          : buildCandidateOrder(false);
+
+      for (let i = 0; i < deltaCents; i += 1) {
+        const target = candidateOrder[i % candidateOrder.length];
+        baseValues[target.idx] = addDecimal(baseValues[target.idx], oneCent);
+      }
+      allocatedTotal = baseValues.reduce(
+        (sum: DecimalValue, item) => addDecimal(sum, item),
+        ZERO_DECIMAL,
+      );
+    }
+
+    entries.forEach((entry) => {
+      entry[roundedExactKey] = "0.00";
+      entry[numberKey] = 0;
+    });
+
+    indexed.forEach((item, idx) => {
+      item.entry[roundedExactKey] = decimalToFixedString(baseValues[idx], 2);
+      item.entry[numberKey] = decimalToNumber(baseValues[idx]);
+    });
+  };
   const mergeEntries = (entries: any[]) => {
     const merged: any[] = [];
     const indexMap = new Map<string, number>();
     entries.forEach((entry, sourceIndex) => {
-      const debitDecimal = parseDecimal(getEntryDebitValue(entry));
-      const creditDecimal = parseDecimal(getEntryCreditValue(entry));
+      const debitDecimal = parseDecimal(getEntryDebitMergeValue(entry));
+      const creditDecimal = parseDecimal(getEntryCreditMergeValue(entry));
       const direction = decimalIsPositive(debitDecimal) ? "debit" : "credit";
       const accountKey = `${entry.account_display || ""}|${entry.account_code || ""}`;
       const assgrpKey = JSON.stringify(normalizeAssgrp(entry.assgrp));
@@ -368,14 +538,31 @@ const VoucherPreviewModal = ({
       );
     });
 
-    return sortedMerged.map((entry, idx) => ({
+    const normalizedMerged = sortedMerged.map((entry, idx) => ({
       ...entry,
+      debit_formula_exact: decimalToString(entry.debit_decimal || ZERO_DECIMAL),
+      credit_formula_exact: decimalToString(entry.credit_decimal || ZERO_DECIMAL),
       debit_exact: decimalToFixedString(entry.debit_decimal || ZERO_DECIMAL, 2),
       credit_exact: decimalToFixedString(entry.credit_decimal || ZERO_DECIMAL, 2),
       debit: decimalToNumber(entry.debit_decimal || ZERO_DECIMAL),
       credit: decimalToNumber(entry.credit_decimal || ZERO_DECIMAL),
       line_no: idx + 1,
     }));
+
+    normalizeMergedDirectionAmounts(
+      normalizedMerged,
+      "debit_decimal",
+      "debit_exact",
+      "debit",
+    );
+    normalizeMergedDirectionAmounts(
+      normalizedMerged,
+      "credit_decimal",
+      "credit_exact",
+      "credit",
+    );
+
+    return normalizedMerged;
   };
   const displayedEntries = useMemo(() => {
     if (!acctView?.entries) return [];
@@ -412,10 +599,20 @@ const VoucherPreviewModal = ({
       }, 2),
     [displayedDebitTotal, displayedCreditTotal],
   );
+  const bookedDateValidation = useMemo(() => {
+    const normalized = String(bookedDate || "").trim();
+    if (!normalized) {
+      return { ok: false, message: "记账日期不能为空" };
+    }
+    if (!isValidDateString(normalized)) {
+      return { ok: false, message: "记账日期格式不正确" };
+    }
+    return { ok: true, message: "" };
+  }, [bookedDate]);
   const effectiveKingdeeJson = useMemo(() => {
     if (!acctView?.entries || !kdJson) return kdJson;
-    return buildKingdeeJsonFromEntries(displayedEntries);
-  }, [acctView?.entries, kdJson, displayedEntries]);
+    return buildKingdeeJsonFromEntries(displayedEntries, bookedDate);
+  }, [acctView?.entries, bookedDate, kdJson, displayedEntries]);
   const voucherAmountValidation = useMemo(() => {
     if (!effectiveKingdeeJson?.data?.[0]?.entries) {
       return { ok: true, message: "" };
@@ -469,6 +666,7 @@ const VoucherPreviewModal = ({
     !error &&
     data?.matched &&
     !pushBlocked &&
+    bookedDateValidation.ok &&
     voucherAmountValidation.ok;
   const handleCopyJson = () => {
     if (effectiveKingdeeJson) {
@@ -484,6 +682,7 @@ const VoucherPreviewModal = ({
       setMergeEnabled(true);
       setIsJsonOpen(false);
       setCopied(false);
+      setBookedDate(getCurrentDateString());
     }
   }, [isOpen, data]);
   const handlePushVoucher = async () => {
@@ -775,6 +974,113 @@ const VoucherPreviewModal = ({
                   {voucherAmountValidation.message}
                 </div>
               )}
+              {!bookedDateValidation.ok && (
+                <div
+                  style={{
+                    marginBottom: "0.75rem",
+                    padding: "0.5rem 0.75rem",
+                    borderRadius: "0.5rem",
+                    fontSize: "0.75rem",
+                    fontWeight: 600,
+                    background: "#fff7ed",
+                    color: "#9a3412",
+                    border: "1px solid #fdba74",
+                  }}
+                >
+                  {bookedDateValidation.message}
+                </div>
+              )}
+              <div
+                style={{
+                  marginBottom: "0.75rem",
+                  padding: "0.75rem",
+                  borderRadius: "0.75rem",
+                  background: "#f8fafc",
+                  border: "1px solid #e2e8f0",
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: "0.75rem 1rem",
+                  alignItems: "end",
+                }}
+              >
+                <label
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "0.35rem",
+                    minWidth: "220px",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: "0.78rem",
+                      fontWeight: 700,
+                      color: "#0f172a",
+                    }}
+                  >
+                    记账日期
+                  </span>
+                  <input
+                    type="date"
+                    required
+                    value={bookedDate}
+                    onChange={(e) => setBookedDate(e.target.value)}
+                    style={{
+                      height: "2.3rem",
+                      padding: "0 0.75rem",
+                      borderRadius: "0.6rem",
+                      border: `1px solid ${bookedDateValidation.ok ? "#cbd5e1" : "#fb923c"}`,
+                      outline: "none",
+                      fontSize: "0.84rem",
+                      color: "#0f172a",
+                      background: "#fff",
+                    }}
+                  />
+                </label>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "0.35rem",
+                    minWidth: "180px",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: "0.78rem",
+                      fontWeight: 700,
+                      color: "#475569",
+                    }}
+                  >
+                    所属会计期间
+                  </span>
+                  <div
+                    style={{
+                      height: "2.3rem",
+                      padding: "0 0.75rem",
+                      borderRadius: "0.6rem",
+                      border: "1px solid #e2e8f0",
+                      background: "#fff",
+                      display: "flex",
+                      alignItems: "center",
+                      fontFamily: monoFont,
+                      fontSize: "0.84rem",
+                      color: "#0f172a",
+                    }}
+                  >
+                    {toPeriodNumber(bookedDate) || "-"}
+                  </div>
+                </div>
+                <div
+                  style={{
+                    fontSize: "0.75rem",
+                    color: "#64748b",
+                    lineHeight: 1.6,
+                  }}
+                >
+                  该日期将写入 JSON 的 `bookeddate`，并同步生成 `period_number`
+                </div>
+              </div>
               {sourceBills.length > 0 && (
                 <div
                   style={{

@@ -53,17 +53,24 @@ def _serialize_source_scalar(field_name: Optional[str], value: Any) -> Any:
     return value
 
 
-def _entry_decimal(entry: Dict[str, Any], exact_field: str, fallback_field: str) -> Decimal:
-    return (
-        _main_attr("_try_parse_decimal")(entry.get(exact_field))
-        or _main_attr("_try_parse_decimal")(entry.get(fallback_field))
-        or Decimal("0")
-    )
+def _entry_decimal(entry: Dict[str, Any], *field_names: str) -> Decimal:
+    for field_name in field_names:
+        parsed = _main_attr("_try_parse_decimal")(entry.get(field_name))
+        if parsed is not None:
+            return parsed
+    return Decimal("0")
 
 
-def _allocate_money_amounts(values: List[Decimal]) -> List[Decimal]:
+def _is_tax_accounting_entry(entry: Dict[str, Any]) -> bool:
+    account_code = str(entry.get("account_code") or "").strip()
+    summary = str(entry.get("summary") or "").strip()
+    return account_code.startswith("2221") or "税" in summary
+
+
+def _allocate_money_amounts(values: List[Decimal], entries: Optional[List[Dict[str, Any]]] = None) -> List[Decimal]:
     if not values:
         return []
+
     scale_factor = Decimal("100")
     target_total = sum(values, Decimal("0")).quantize(MONEY_QUANTIZER, rounding=ROUND_HALF_UP)
     target_cents = int((target_total * scale_factor).to_integral_value(rounding=ROUND_HALF_UP))
@@ -79,17 +86,47 @@ def _allocate_money_amounts(values: List[Decimal]) -> List[Decimal]:
 
     delta = target_cents - sum(base_cents)
     if delta > 0:
-        for idx, _ in sorted(remainders, key=lambda item: (-item[1], item[0]))[:delta]:
-            base_cents[idx] += 1
+        def _build_candidate_order(positive_only: bool) -> List[int]:
+            candidates: List[Tuple[int, Decimal]] = []
+            for idx, remainder in remainders:
+                if positive_only and remainder <= Decimal("0"):
+                    continue
+                candidates.append((idx, remainder))
+
+            if not candidates:
+                return []
+
+            def _sort_key(item: Tuple[int, Decimal]) -> Tuple[int, Decimal, Decimal, int]:
+                idx, remainder = item
+                entry = entries[idx] if entries and idx < len(entries) else {}
+                exact_value = values[idx].copy_abs()
+                is_tax = _is_tax_accounting_entry(entry)
+                return (1 if is_tax else 0, -exact_value, -remainder, idx)
+
+            ordered = sorted(candidates, key=_sort_key)
+            return [idx for idx, _ in ordered]
+
+        candidate_order = _build_candidate_order(positive_only=True)
+        if not candidate_order:
+            candidate_order = _build_candidate_order(positive_only=False)
+
+        for i in range(delta):
+            base_cents[candidate_order[i % len(candidate_order)]] += 1
 
     return [Decimal(cents) / scale_factor for cents in base_cents]
 
 
 def _normalize_voucher_money_fields(accounting_entries: List[Dict[str, Any]], kingdee_entries: List[Dict[str, Any]]) -> None:
-    debit_values = [_entry_decimal(entry, "debit_exact", "debit") for entry in accounting_entries]
-    credit_values = [_entry_decimal(entry, "credit_exact", "credit") for entry in accounting_entries]
-    rounded_debits = _allocate_money_amounts(debit_values)
-    rounded_credits = _allocate_money_amounts(credit_values)
+    debit_values = [
+        _entry_decimal(entry, "debit_formula_exact", "debit_exact", "debit")
+        for entry in accounting_entries
+    ]
+    credit_values = [
+        _entry_decimal(entry, "credit_formula_exact", "credit_exact", "credit")
+        for entry in accounting_entries
+    ]
+    rounded_debits = _allocate_money_amounts(debit_values, accounting_entries)
+    rounded_credits = _allocate_money_amounts(credit_values, accounting_entries)
 
     for idx, accounting_entry in enumerate(accounting_entries):
         debit_value = rounded_debits[idx]
@@ -497,6 +534,8 @@ def _preview_voucher_for_bill_via_receipt_templates(
             "account_type_number": subject_type_cache.get(account_code, ""),
             "account_display": account_display_name,
             "dr_cr": rule.dr_cr,
+            "debit_formula_exact": _decimal_text(amount_val) if rule.dr_cr == "D" else "0",
+            "credit_formula_exact": _decimal_text(amount_val) if rule.dr_cr == "C" else "0",
             "debit": _money_text(amount_val) if rule.dr_cr == "D" else "0.00",
             "credit": _money_text(amount_val) if rule.dr_cr == "C" else "0.00",
             "debit_exact": _money_text(amount_val) if rule.dr_cr == "D" else "0.00",
@@ -842,6 +881,8 @@ def preview_voucher_for_bill(
             "account_type_number": subject_type_cache.get(account_code, ""),
             "account_display": account_display_name,
             "dr_cr": rule.dr_cr,
+            "debit_formula_exact": _decimal_text(amount_val) if rule.dr_cr == 'D' else "0",
+            "credit_formula_exact": _decimal_text(amount_val) if rule.dr_cr == 'C' else "0",
             "debit": _money_text(amount_val) if rule.dr_cr == 'D' else "0.00",
             "credit": _money_text(amount_val) if rule.dr_cr == 'C' else "0.00",
             "debit_exact": _money_text(amount_val) if rule.dr_cr == "D" else "0.00",
@@ -1335,6 +1376,8 @@ def preview_voucher_for_receipt(
             "account_type_number": subject_type_cache.get(account_code, ""),
             "account_display": account_display_name,
             "dr_cr": rule.dr_cr,
+            "debit_formula_exact": _decimal_text(amount_val) if rule.dr_cr == "D" else "0",
+            "credit_formula_exact": _decimal_text(amount_val) if rule.dr_cr == "C" else "0",
             "debit": _money_text(amount_val) if rule.dr_cr == "D" else "0.00",
             "credit": _money_text(amount_val) if rule.dr_cr == "C" else "0.00",
             "debit_exact": _money_text(amount_val) if rule.dr_cr == "D" else "0.00",
