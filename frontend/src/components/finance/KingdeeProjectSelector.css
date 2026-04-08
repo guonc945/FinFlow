@@ -3,6 +3,22 @@
     flex-direction: column;
     gap: 0.5rem;
     width: 100%;
+    position: relative;
+    overflow: visible;
+}
+
+.project-selector-container:focus-within {
+    z-index: 200;
+}
+
+.project-selector-container .selector-input-wrapper {
+    position: relative;
+    overflow: visible;
+    z-index: 1;
+}
+
+.project-selector-container .selector-input-wrapper:focus-within {
+    z-index: 210;
 }
 
 .project-modal-overlay {
@@ -357,6 +373,127 @@
 
 .suggestion-item.highlighted {
     background: #e0e7ff !important;
+}
+
+.quick-selector-dropdown {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    right: 0;
+    z-index: 220;
+    max-height: min(320px, 50vh);
+}
+
+.quick-selector-item {
+    width: 100%;
+    text-align: left;
+    background: #fff;
+    border: none;
+}
+
+.quick-selector-main {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    min-width: 0;
+}
+
+.quick-selector-code {
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #2563eb;
+    flex-shrink: 0;
+}
+
+.quick-selector-name {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #1e293b;
+    white-space: normal;
+    word-break: break-word;
+}
+
+.quick-selector-meta {
+    margin-top: 0.25rem;
+    font-size: 0.75rem;
+    color: #64748b;
+    white-space: normal;
+    word-break: break-word;
+}
+
+.quick-selector-empty {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.875rem 1rem;
+    color: #64748b;
+    font-size: 0.8125rem;
+}
+
+.project-tree-table .project-row:hover {
+    transform: none;
+}
+
+.project-tree-cell {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+}
+
+.tree-toggle-btn {
+    width: 1.5rem;
+    height: 1.5rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 0.375rem;
+    background: transparent;
+    color: #64748b;
+    cursor: pointer;
+    flex-shrink: 0;
+    margin-top: 0.05rem;
+}
+
+.tree-toggle-btn:hover:not(.empty) {
+    background: #e2e8f0;
+    color: #1e293b;
+}
+
+.tree-toggle-btn.empty {
+    cursor: default;
+}
+
+.tree-toggle-icon {
+    transition: transform 0.2s ease;
+}
+
+.tree-toggle-icon.expanded {
+    transform: rotate(90deg);
+}
+
+.tree-leaf-icon {
+    color: #94a3b8;
+}
+
+.project-tree-content {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.project-tree-name {
+    font-weight: 600;
+    color: #1e293b;
+}
+
+.project-tree-meta {
+    margin-top: 0.15rem;
+    font-size: 0.75rem;
+    color: #64748b;
+    white-space: normal;
+    word-break: break-word;
 }
 
 /* 自定义滚动条样式 */

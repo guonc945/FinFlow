@@ -34,6 +34,56 @@ def _decode_header_value(*args, **kwargs):
     return _main_attr("_decode_header_value")(*args, **kwargs)
 
 
+def _load_auxiliary_project_map(db: Session, projects: List[models.ProjectList]):
+    pending_numbers = {
+        (project.kingdee_project.number or "").strip()
+        for project in projects
+        if project.kingdee_project and (project.kingdee_project.number or "").strip()
+    }
+    auxiliary_by_number = {}
+
+    while pending_numbers:
+        batch_numbers = [number for number in pending_numbers if number and number not in auxiliary_by_number]
+        if not batch_numbers:
+            break
+
+        rows = (
+            db.query(models.AuxiliaryData)
+            .filter(models.AuxiliaryData.number.in_(batch_numbers))
+            .all()
+        )
+        pending_numbers = set()
+        for row in rows:
+            auxiliary_by_number[row.number] = row
+            parent_number = (row.parent_number or "").strip()
+            if parent_number and parent_number not in auxiliary_by_number:
+                pending_numbers.add(parent_number)
+
+    return auxiliary_by_number
+
+
+def _build_auxiliary_project_full_path(
+    project: Optional[models.AuxiliaryData],
+    auxiliary_by_number,
+):
+    if not project:
+        return None
+
+    segments = []
+    visited = set()
+    current = auxiliary_by_number.get(project.number) or project
+
+    while current and current.number and current.number not in visited:
+        visited.add(current.number)
+        if current.name:
+            segments.insert(0, current.name)
+        parent_number = (current.parent_number or "").strip()
+        current = auxiliary_by_number.get(parent_number) if parent_number else None
+
+    path_text = " / ".join(segments)
+    return " ".join(part for part in [project.number, path_text] if part).strip()
+
+
 @router.get("/api/charge-items", response_model=List[schemas.ChargeItemResponse])
 def get_charge_items(
     request: Request,
@@ -168,6 +218,7 @@ def get_projects(
         joinedload(models.ProjectList.default_pay_bank),
         joinedload(models.ProjectList.kingdee_account_book),
     ).order_by(models.ProjectList.proj_id.asc()).offset(skip).limit(limit).all()
+    auxiliary_by_number = _load_auxiliary_project_map(db, projects)
 
     items = [
         {
@@ -179,6 +230,10 @@ def get_projects(
                 "number": project.kingdee_project.number,
                 "name": project.kingdee_project.name,
                 "group_name": project.kingdee_project.group_name,
+                "group_number": project.kingdee_project.group_number,
+                "parent_number": project.kingdee_project.parent_number,
+                "parent_name": project.kingdee_project.parent_name,
+                "full_path": _build_auxiliary_project_full_path(project.kingdee_project, auxiliary_by_number),
             }
             if project.kingdee_project
             else None,

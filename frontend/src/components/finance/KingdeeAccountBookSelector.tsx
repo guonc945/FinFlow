@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Search, Book, X, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { getAccountBooks } from '../../services/api';
 import type { KingdeeAccountBookBrief } from '../../types';
-import './KingdeeProjectSelector.css'; // 复用相同样式
+import './KingdeeProjectSelector.css';
 
 interface AccountBookItem {
     id: string;
@@ -11,11 +11,15 @@ interface AccountBookItem {
 }
 
 interface KingdeeAccountBookSelectorProps {
-    value?: string; // 显示文本
+    value?: string;
     onSelect: (book: KingdeeAccountBookBrief | null) => void;
     label?: string;
     placeholder?: string;
 }
+
+const QUICK_PICK_LIMIT = 8;
+
+const formatBookLabel = (book: AccountBookItem) => [book.number, book.name].filter(Boolean).join(' ').trim();
 
 const KingdeeAccountBookSelector = ({
     value,
@@ -25,14 +29,18 @@ const KingdeeAccountBookSelector = ({
 }: KingdeeAccountBookSelectorProps) => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [inputValue, setInputValue] = useState(value || '');
+    const [isInputFocused, setIsInputFocused] = useState(false);
 
-    // 搜索 & 数据
+    const [quickSearchTerm, setQuickSearchTerm] = useState('');
+    const [quickMatches, setQuickMatches] = useState<AccountBookItem[]>([]);
+    const [isQuickLoading, setIsQuickLoading] = useState(false);
+    const [highlightedIndex, setHighlightedIndex] = useState(0);
+
     const [searchTerm, setSearchTerm] = useState('');
     const [debouncedSearch, setDebouncedSearch] = useState('');
     const [books, setBooks] = useState<AccountBookItem[]>([]);
     const [isLoading, setIsLoading] = useState(false);
 
-    // 分页
     const [page, setPage] = useState(1);
     const [total, setTotal] = useState(0);
     const pageSize = 50;
@@ -42,18 +50,67 @@ const KingdeeAccountBookSelector = ({
     }, [value]);
 
     useEffect(() => {
-        const timer = setTimeout(() => {
+        const timer = window.setTimeout(() => {
             setDebouncedSearch(searchTerm);
             setPage(1);
-        }, 500);
-        return () => clearTimeout(timer);
+        }, 300);
+        return () => window.clearTimeout(timer);
     }, [searchTerm]);
 
     useEffect(() => {
+        const timer = window.setTimeout(() => {
+            setQuickSearchTerm(inputValue.trim());
+        }, 250);
+        return () => window.clearTimeout(timer);
+    }, [inputValue]);
+
+    useEffect(() => {
         if (isModalOpen) {
-            fetchBooks();
+            void fetchBooks();
         }
     }, [isModalOpen, debouncedSearch, page]);
+
+    useEffect(() => {
+        if (!isInputFocused) {
+            setQuickMatches([]);
+            setIsQuickLoading(false);
+            setHighlightedIndex(0);
+            return;
+        }
+
+        if (!quickSearchTerm) {
+            setQuickMatches([]);
+            setIsQuickLoading(false);
+            setHighlightedIndex(0);
+            return;
+        }
+
+        let cancelled = false;
+        const fetchQuickMatches = async () => {
+            setIsQuickLoading(true);
+            try {
+                const res = await getAccountBooks({
+                    search: quickSearchTerm,
+                    limit: QUICK_PICK_LIMIT
+                });
+                if (cancelled) return;
+                setQuickMatches(Array.isArray(res?.items) ? res.items : []);
+                setHighlightedIndex(0);
+            } catch (error) {
+                if (!cancelled) {
+                    console.error('Failed to fetch quick account book matches:', error);
+                    setQuickMatches([]);
+                }
+            } finally {
+                if (!cancelled) setIsQuickLoading(false);
+            }
+        };
+
+        void fetchQuickMatches();
+        return () => {
+            cancelled = true;
+        };
+    }, [isInputFocused, quickSearchTerm]);
 
     const fetchBooks = async () => {
         setIsLoading(true);
@@ -63,8 +120,8 @@ const KingdeeAccountBookSelector = ({
                 skip: (page - 1) * pageSize,
                 limit: pageSize
             });
-            setBooks(res.items || []);
-            setTotal(res.total || 0);
+            setBooks(Array.isArray(res?.items) ? res.items : []);
+            setTotal(res?.total || 0);
         } catch (error) {
             console.error('获取核算账簿列表失败:', error);
         } finally {
@@ -78,14 +135,53 @@ const KingdeeAccountBookSelector = ({
             number: book.number,
             name: book.name
         };
-        setInputValue(`${book.number} ${book.name}`);
+        setInputValue(formatBookLabel(book));
+        setQuickMatches([]);
+        setHighlightedIndex(0);
         onSelect(brief);
         setIsModalOpen(false);
     };
 
     const handleClear = () => {
         setInputValue('');
+        setQuickMatches([]);
+        setHighlightedIndex(0);
         onSelect(null);
+    };
+
+    const commitManualInput = async () => {
+        const text = inputValue.trim().toLowerCase();
+        if (!text) {
+            onSelect(null);
+            return;
+        }
+
+        const localExact =
+            quickMatches.find((item) => {
+                const labelText = formatBookLabel(item).toLowerCase();
+                return item.number.toLowerCase() === text || item.name.toLowerCase() === text || labelText === text;
+            }) || null;
+        if (localExact) {
+            handleSelect(localExact);
+            return;
+        }
+
+        try {
+            const res = await getAccountBooks({ search: text, limit: 20 });
+            const items = Array.isArray(res?.items) ? res.items : [];
+            const exact = items.find((item: AccountBookItem) => {
+                const labelText = formatBookLabel(item).toLowerCase();
+                return item.number.toLowerCase() === text || item.name.toLowerCase() === text || labelText === text;
+            });
+            if (exact) {
+                handleSelect(exact);
+                return;
+            }
+        } catch (error) {
+            console.error('Manual account book search failed', error);
+        }
+
+        setInputValue(value || '');
     };
 
     const totalPages = Math.ceil(total / pageSize);
@@ -99,9 +195,36 @@ const KingdeeAccountBookSelector = ({
                     className="selector-input"
                     placeholder={placeholder}
                     value={inputValue}
-                    readOnly
-                    onClick={() => setIsModalOpen(true)}
-                    style={{ cursor: 'pointer' }}
+                    onChange={(e) => setInputValue(e.target.value)}
+                    onFocus={() => setIsInputFocused(true)}
+                    onBlur={() => {
+                        window.setTimeout(() => {
+                            setIsInputFocused(false);
+                            void commitManualInput();
+                        }, 120);
+                    }}
+                    onKeyDown={(e) => {
+                        if (e.key === 'ArrowDown' && quickMatches.length > 0) {
+                            e.preventDefault();
+                            setHighlightedIndex((prev) => Math.min(prev + 1, quickMatches.length - 1));
+                        }
+                        if (e.key === 'ArrowUp' && quickMatches.length > 0) {
+                            e.preventDefault();
+                            setHighlightedIndex((prev) => Math.max(prev - 1, 0));
+                        }
+                        if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (quickMatches[highlightedIndex]) {
+                                handleSelect(quickMatches[highlightedIndex]);
+                            } else {
+                                void commitManualInput();
+                            }
+                        }
+                        if (e.key === 'Escape') {
+                            setQuickMatches([]);
+                            setInputValue(value || '');
+                        }
+                    }}
                 />
                 <div className="selector-actions">
                     {inputValue && (
@@ -113,6 +236,34 @@ const KingdeeAccountBookSelector = ({
                         <Book size={14} />
                     </button>
                 </div>
+
+                {isInputFocused && (quickSearchTerm || quickMatches.length > 0) && (
+                    <div className="suggestions-dropdown quick-selector-dropdown">
+                        {isQuickLoading ? (
+                            <div className="quick-selector-empty">
+                                <Loader2 className="animate-spin" size={14} />
+                                <span>正在匹配核算账簿...</span>
+                            </div>
+                        ) : quickMatches.length > 0 ? (
+                            quickMatches.map((book, index) => (
+                                <button
+                                    key={book.id}
+                                    type="button"
+                                    className={`suggestion-item quick-selector-item ${highlightedIndex === index ? 'highlighted' : ''}`}
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    onClick={() => handleSelect(book)}
+                                >
+                                    <div className="quick-selector-main">
+                                        <span className="quick-selector-code">{book.number || '-'}</span>
+                                        <span className="quick-selector-name">{book.name || '-'}</span>
+                                    </div>
+                                </button>
+                            ))
+                        ) : (
+                            <div className="quick-selector-empty">没有找到匹配的核算账簿</div>
+                        )}
+                    </div>
+                )}
             </div>
 
             {isModalOpen && (

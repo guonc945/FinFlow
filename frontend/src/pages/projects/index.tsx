@@ -117,7 +117,7 @@ const Projects = () => {
             width: 250,
             render: (val: any) => val ? (
                 <div className="flex flex-col">
-                    <span className="text-sm font-medium">{val.name}</span>
+                    <span className="text-sm font-medium">{val.full_path || val.name}</span>
                     <span className="text-xs text-slate-400 font-mono">内码: {val.number}</span>
                 </div>
             ) : <span className="text-slate-300">未设置</span>
@@ -306,7 +306,7 @@ const Projects = () => {
                                 <KingdeeProjectSelector
                                     label="财务系统管理项目映射"
                                     placeholder="搜索或手动输入金蝶管理项目..."
-                                    value={editingProject.kingdee_project ? `${editingProject.kingdee_project.number} ${editingProject.kingdee_project.name}` : editingProject.kingdee_project_id}
+                                    value={editingProject.kingdee_project ? (editingProject.kingdee_project.full_path || `${editingProject.kingdee_project.number} ${editingProject.kingdee_project.name}`) : editingProject.kingdee_project_id}
                                     onSelect={(project) => {
                                         setEditingProject({
                                             ...editingProject,

@@ -48,10 +48,29 @@ def seed_projects(db):
     )
     book_a = models.KingdeeAccountBook(id="book-a", number="001", name="Book A")
     book_b = models.KingdeeAccountBook(id="book-b", number="002", name="Book B")
-    project_a = models.ProjectList(proj_id=101, proj_name="Mapped A", kingdee_account_book_id="book-a")
+    root_aux = models.AuxiliaryData(
+        id="aux-root",
+        number="ROOT",
+        name="Root Project",
+        group_name="管理项目",
+    )
+    child_aux = models.AuxiliaryData(
+        id="aux-child",
+        number="CHILD",
+        name="Child Project",
+        group_name="管理项目",
+        parent_number="ROOT",
+        parent_name="Root Project",
+    )
+    project_a = models.ProjectList(
+        proj_id=101,
+        proj_name="Mapped A",
+        kingdee_account_book_id="book-a",
+        kingdee_project_id="aux-child",
+    )
     project_b = models.ProjectList(proj_id=202, proj_name="Mapped B", kingdee_account_book_id="book-b")
     project_unmapped = models.ProjectList(proj_id=303, proj_name="Unmapped", kingdee_account_book_id=None)
-    db.add_all([org, admin, book_a, book_b, project_a, project_b, project_unmapped])
+    db.add_all([org, admin, book_a, book_b, root_aux, child_aux, project_a, project_b, project_unmapped])
     db.commit()
     return admin
 
@@ -73,6 +92,8 @@ def test_projects_page_is_not_filtered_by_current_account_book():
 
     assert [item["proj_id"] for item in result["items"]] == [101, 202, 303]
     assert result["total"] == 3
+    assert result["items"][0]["kingdee_project"]["full_path"] == "CHILD Root Project / Child Project"
+    assert result["items"][0]["kingdee_project"]["parent_number"] == "ROOT"
 
 
 def test_current_account_book_only_still_filters_projects():

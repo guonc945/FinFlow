@@ -287,6 +287,10 @@ export interface KingdeeProject {
     number: string;
     name: string;
     group_name?: string;
+    group_number?: string;
+    parent_number?: string;
+    parent_name?: string;
+    full_path?: string;
 }
 
 export interface BankAccountBrief {
