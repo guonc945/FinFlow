@@ -105,6 +105,306 @@ def _normalize_sync_community_ids(values: Optional[List[int]]) -> List[int]:
     return normalized
 
 
+def _empty_receipt_drilldown_meta() -> Dict[str, Any]:
+    return {
+        "drilldown_enabled": False,
+        "drilldown_source": None,
+        "drilldown_count": 0,
+        "drilldown_summary": "鏆傛棤鍏宠仈鏁版嵁",
+        "drilldown_sections": [],
+        "supports_bill_push_ops": False,
+    }
+
+
+def _build_receipt_drilldown_meta_from_sections(sections: List[Dict[str, Any]]) -> Dict[str, Any]:
+    normalized_sections = [
+        {
+            "relation_key": section["relation_key"],
+            "source_type": section["source_type"],
+            "label": section["label"],
+            "count": int(section.get("count") or 0),
+        }
+        for section in sections
+        if int(section.get("count") or 0) > 0
+    ]
+    if not normalized_sections:
+        return _empty_receipt_drilldown_meta()
+
+    total_count = sum(section["count"] for section in normalized_sections)
+    unique_sources = {section["source_type"] for section in normalized_sections}
+    if len(unique_sources) == 1:
+        primary_source = next(iter(unique_sources))
+    else:
+        primary_source = "mixed"
+
+    return {
+        "drilldown_enabled": True,
+        "drilldown_source": primary_source,
+        "drilldown_count": total_count,
+        "drilldown_summary": " / ".join(
+            f"{section['label']} {section['count']} 鏉?" for section in normalized_sections
+        ),
+        "drilldown_sections": normalized_sections,
+        "supports_bill_push_ops": any(section["source_type"] == "bills" for section in normalized_sections),
+    }
+
+
+def _build_receipt_drilldown_meta_map(
+    db: Session,
+    receipt_bills: List[models.ReceiptBill],
+) -> Dict[tuple, Dict[str, Any]]:
+    meta_map: Dict[tuple, Dict[str, Any]] = {}
+    if not receipt_bills:
+        return meta_map
+
+    receipts_by_type: Dict[int, List[models.ReceiptBill]] = {}
+    for receipt_bill in receipt_bills:
+        key = (int(receipt_bill.id), int(receipt_bill.community_id))
+        meta_map[key] = _empty_receipt_drilldown_meta()
+        receipts_by_type.setdefault(int(receipt_bill.deal_type or 0), []).append(receipt_bill)
+
+    def _query_group_count(model, group_fields, *filters):
+        rows = (
+            db.query(*group_fields, func.count().label("count"))
+            .filter(*filters)
+            .group_by(*group_fields)
+            .all()
+        )
+        return {
+            tuple(int(value) for value in row[:-1]): int(row[-1] or 0)
+            for row in rows
+        }
+
+    def _community_receipt_count_map(model, id_field, receipts, *extra_filters):
+        if not receipts:
+            return {}
+        community_ids = sorted({int(receipt.community_id) for receipt in receipts})
+        receipt_ids = sorted({int(receipt.id) for receipt in receipts})
+        return _query_group_count(
+            model,
+            [model.community_id, id_field],
+            model.community_id.in_(community_ids),
+            id_field.in_(receipt_ids),
+            *extra_filters,
+        )
+
+    def _community_house_time_count_map(model, receipts, *extra_filters):
+        candidates = [
+            receipt
+            for receipt in receipts
+            if receipt.asset_id is not None and receipt.deal_time is not None
+        ]
+        if not candidates:
+            return {}
+        community_ids = sorted({int(receipt.community_id) for receipt in candidates})
+        house_ids = sorted({int(receipt.asset_id) for receipt in candidates})
+        pay_times = sorted({int(receipt.deal_time) for receipt in candidates})
+        return _query_group_count(
+            model,
+            [model.community_id, model.house_id, model.pay_time],
+            model.community_id.in_(community_ids),
+            model.house_id.in_(house_ids),
+            model.pay_time.in_(pay_times),
+            *extra_filters,
+        )
+
+    bill_count_map = _community_receipt_count_map(models.Bill, models.Bill.deal_log_id, receipts_by_type.get(3, []) + receipts_by_type.get(4, []))
+    deposit_collect_count_map = _community_receipt_count_map(
+        models.DepositRecord,
+        models.DepositRecord.payment_id,
+        receipts_by_type.get(5, []),
+        models.DepositRecord.operate_type == 1,
+    )
+    prepayment_recharge_count_map = _community_receipt_count_map(
+        models.PrepaymentRecord,
+        models.PrepaymentRecord.payment_id,
+        receipts_by_type.get(1, []),
+        models.PrepaymentRecord.operate_type == 1,
+    )
+
+    refund_receipts = receipts_by_type.get(2, []) + receipts_by_type.get(6, [])
+    deposit_refund_link_count_map: Dict[tuple, int] = {}
+    if receipts_by_type.get(6):
+        community_ids = sorted({int(receipt.community_id) for receipt in receipts_by_type[6]})
+        receipt_ids = sorted({int(receipt.id) for receipt in receipts_by_type[6]})
+        deposit_refund_link_count_map = _query_group_count(
+            models.ReceiptBillDepositRefundLink,
+            [
+                models.ReceiptBillDepositRefundLink.community_id,
+                models.ReceiptBillDepositRefundLink.receipt_bill_id,
+            ],
+            models.ReceiptBillDepositRefundLink.community_id.in_(community_ids),
+            models.ReceiptBillDepositRefundLink.receipt_bill_id.in_(receipt_ids),
+            models.ReceiptBillDepositRefundLink.deposit_record_id.isnot(None),
+        )
+
+    deposit_refund_direct_count_map = _community_house_time_count_map(
+        models.DepositRecord,
+        receipts_by_type.get(6, []),
+        models.DepositRecord.operate_type == 2,
+    )
+    deposit_refund_fallback_count_map = _community_receipt_count_map(
+        models.DepositRecord,
+        models.DepositRecord.refund_receipt_id,
+        receipts_by_type.get(6, []),
+        models.DepositRecord.operate_type == 2,
+    )
+    prepayment_transfer_count_map = _community_house_time_count_map(
+        models.PrepaymentRecord,
+        receipts_by_type.get(6, []),
+        models.PrepaymentRecord.operate_type == 1,
+        or_(
+            models.PrepaymentRecord.pay_channel_str.ilike("%押金转预存%"),
+            models.PrepaymentRecord.remark.ilike("%押金转入预存款%"),
+            models.PrepaymentRecord.remark.ilike("%押金转预存%"),
+        ),
+    )
+    prepayment_refund_direct_count_map = _community_house_time_count_map(
+        models.PrepaymentRecord,
+        receipts_by_type.get(2, []),
+        models.PrepaymentRecord.operate_type == 2,
+    )
+    prepayment_refund_fallback_count_map = _community_receipt_count_map(
+        models.PrepaymentRecord,
+        models.PrepaymentRecord.refund_receipt_id,
+        receipts_by_type.get(2, []),
+        models.PrepaymentRecord.operate_type == 2,
+    )
+
+    for deal_type, typed_receipts in receipts_by_type.items():
+        for receipt_bill in typed_receipts:
+            key = (int(receipt_bill.id), int(receipt_bill.community_id))
+            sections: List[Dict[str, Any]] = []
+
+            if deal_type in {3, 4}:
+                bill_count = bill_count_map.get((int(receipt_bill.community_id), int(receipt_bill.id)), 0)
+                if bill_count > 0:
+                    sections.append({
+                        "relation_key": "receipt_to_bills",
+                        "source_type": "bills",
+                        "label": "杩愯惀璐﹀崟",
+                        "count": bill_count,
+                    })
+            elif deal_type == 5:
+                deposit_collect_count = deposit_collect_count_map.get((int(receipt_bill.community_id), int(receipt_bill.id)), 0)
+                if deposit_collect_count > 0:
+                    sections.append({
+                        "relation_key": "receipt_to_deposit_collect",
+                        "source_type": "deposit_records",
+                        "label": "鎶奸噾鏀跺彇",
+                        "count": deposit_collect_count,
+                    })
+            elif deal_type == 6:
+                deposit_refund_count = deposit_refund_link_count_map.get((int(receipt_bill.community_id), int(receipt_bill.id)), 0)
+                if deposit_refund_count <= 0 and receipt_bill.asset_id is not None and receipt_bill.deal_time is not None:
+                    deposit_refund_count = deposit_refund_direct_count_map.get(
+                        (int(receipt_bill.community_id), int(receipt_bill.asset_id), int(receipt_bill.deal_time)),
+                        0,
+                    )
+                if deposit_refund_count <= 0:
+                    deposit_refund_count = deposit_refund_fallback_count_map.get((int(receipt_bill.community_id), int(receipt_bill.id)), 0)
+                if deposit_refund_count > 0:
+                    sections.append({
+                        "relation_key": "receipt_to_deposit_refund",
+                        "source_type": "deposit_records",
+                        "label": "鎶奸噾閫€娆?",
+                        "count": deposit_refund_count,
+                    })
+
+                prepayment_transfer_count = 0
+                if receipt_bill.asset_id is not None and receipt_bill.deal_time is not None:
+                    prepayment_transfer_count = prepayment_transfer_count_map.get(
+                        (int(receipt_bill.community_id), int(receipt_bill.asset_id), int(receipt_bill.deal_time)),
+                        0,
+                    )
+                if prepayment_transfer_count > 0:
+                    sections.append({
+                        "relation_key": "receipt_to_prepayment_transfer",
+                        "source_type": "prepayment_records",
+                        "label": "杞叆棰勫瓨",
+                        "count": prepayment_transfer_count,
+                    })
+            elif deal_type == 1:
+                prepayment_recharge_count = prepayment_recharge_count_map.get((int(receipt_bill.community_id), int(receipt_bill.id)), 0)
+                if prepayment_recharge_count > 0:
+                    sections.append({
+                        "relation_key": "receipt_to_prepayment_recharge",
+                        "source_type": "prepayment_records",
+                        "label": "棰勫瓨娆惧厖鍊?",
+                        "count": prepayment_recharge_count,
+                    })
+            elif deal_type == 2:
+                prepayment_refund_count = 0
+                if receipt_bill.asset_id is not None and receipt_bill.deal_time is not None:
+                    prepayment_refund_count = prepayment_refund_direct_count_map.get(
+                        (int(receipt_bill.community_id), int(receipt_bill.asset_id), int(receipt_bill.deal_time)),
+                        0,
+                    )
+                if prepayment_refund_count <= 0:
+                    prepayment_refund_count = prepayment_refund_fallback_count_map.get((int(receipt_bill.community_id), int(receipt_bill.id)), 0)
+                if prepayment_refund_count > 0:
+                    sections.append({
+                        "relation_key": "receipt_to_prepayment_refund",
+                        "source_type": "prepayment_records",
+                        "label": "棰勫瓨娆鹃€€娆?",
+                        "count": prepayment_refund_count,
+                    })
+
+            meta_map[key] = _build_receipt_drilldown_meta_from_sections(sections)
+
+    return meta_map
+
+
+def _apply_receipt_bill_filters(
+    query,
+    *,
+    allowed_community_ids: List[int],
+    community_ids: Optional[str],
+    deal_date_start: Optional[str],
+    deal_date_end: Optional[str],
+    deal_type: Optional[int],
+    pay_channel_str: Optional[str],
+    payee: Optional[str],
+):
+    if allowed_community_ids:
+        query = query.filter(models.ReceiptBill.community_id.in_(allowed_community_ids))
+    else:
+        return query, False
+
+    if community_ids:
+        try:
+            ids = [int(cid.strip()) for cid in community_ids.split(",") if cid.strip()]
+            if ids:
+                query = query.filter(models.ReceiptBill.community_id.in_(ids))
+        except ValueError:
+            pass
+
+    if deal_date_start:
+        try:
+            start_dt = datetime.strptime(deal_date_start, "%Y-%m-%d").date()
+            query = query.filter(models.ReceiptBill.deal_date >= start_dt)
+        except ValueError:
+            pass
+
+    if deal_date_end:
+        try:
+            end_dt = datetime.strptime(deal_date_end, "%Y-%m-%d").date()
+            query = query.filter(models.ReceiptBill.deal_date <= end_dt)
+        except ValueError:
+            pass
+
+    if deal_type is not None:
+        query = query.filter(models.ReceiptBill.deal_type == int(deal_type))
+
+    if pay_channel_str:
+        query = query.filter(models.ReceiptBill.pay_channel_str.ilike(f"%{pay_channel_str}%"))
+
+    if payee:
+        query = query.filter(models.ReceiptBill.payee.ilike(f"%{payee}%"))
+
+    return query, True
+
+
 def sync_receipt_bills_with_related_modules(community_ids: List[int], task_id: str) -> None:
     normalized_ids = _normalize_sync_community_ids(community_ids)
     if not normalized_ids:
@@ -578,8 +878,20 @@ def get_receipt_bills(
 ):
     from sqlalchemy import func as sa_func, cast, String as SAString
 
+    receipt_query, has_scope = _apply_receipt_bill_filters(
+        db.query(models.ReceiptBill),
+        allowed_community_ids=allowed_community_ids,
+        community_ids=community_ids,
+        deal_date_start=deal_date_start,
+        deal_date_end=deal_date_end,
+        deal_type=deal_type,
+        pay_channel_str=pay_channel_str,
+        payee=payee,
+    )
+    if not has_scope:
+        return {"total": 0, "total_income_amount": 0.00, "items": []}
+
     if _is_mssql():
-        # SQL Server 2016 has no STRING_AGG; keep one representative payer name.
         payer_subq = (
             db.query(
                 models.ReceiptBillUser.receipt_bill_id,
@@ -613,42 +925,16 @@ def get_receipt_bills(
             & (models.ReceiptBill.community_id == payer_subq.c.community_id),
         )
     )
-
-    if allowed_community_ids:
-        query = query.filter(models.ReceiptBill.community_id.in_(allowed_community_ids))
-    else:
-        return {"total": 0, "total_income_amount": 0.00, "items": []}
-
-    if community_ids:
-        try:
-            ids = [int(cid.strip()) for cid in community_ids.split(",") if cid.strip()]
-            if ids:
-                query = query.filter(models.ReceiptBill.community_id.in_(ids))
-        except ValueError:
-            pass
-
-    if deal_date_start:
-        try:
-            start_dt = datetime.strptime(deal_date_start, "%Y-%m-%d").date()
-            query = query.filter(models.ReceiptBill.deal_date >= start_dt)
-        except ValueError:
-            pass
-
-    if deal_date_end:
-        try:
-            end_dt = datetime.strptime(deal_date_end, "%Y-%m-%d").date()
-            query = query.filter(models.ReceiptBill.deal_date <= end_dt)
-        except ValueError:
-            pass
-
-    if deal_type is not None:
-        query = query.filter(models.ReceiptBill.deal_type == int(deal_type))
-
-    if pay_channel_str:
-        query = query.filter(models.ReceiptBill.pay_channel_str.ilike(f"%{pay_channel_str}%"))
-
-    if payee:
-        query = query.filter(models.ReceiptBill.payee.ilike(f"%{payee}%"))
+    query, _ = _apply_receipt_bill_filters(
+        query,
+        allowed_community_ids=allowed_community_ids,
+        community_ids=community_ids,
+        deal_date_start=deal_date_start,
+        deal_date_end=deal_date_end,
+        deal_type=deal_type,
+        pay_channel_str=pay_channel_str,
+        payee=payee,
+    )
 
     if search:
         like = f"%{search}%"
@@ -662,9 +948,11 @@ def get_receipt_bills(
                 models.ProjectList.proj_name.ilike(like),
             )
         )
-
-    total = query.count()
-    total_income = query.with_entities(sa_func.sum(models.ReceiptBill.income_amount)).scalar()
+        total = query.count()
+        total_income = query.with_entities(sa_func.sum(models.ReceiptBill.income_amount)).scalar()
+    else:
+        total = receipt_query.count()
+        total_income = receipt_query.with_entities(sa_func.sum(models.ReceiptBill.income_amount)).scalar()
 
     results = (
         query.order_by(models.ReceiptBill.deal_time.desc(), models.ReceiptBill.id.desc())
@@ -694,6 +982,10 @@ def get_receipt_bills(
         flat_bill_refs,
         account_book_number=_decode_header_value(x_account_book_number) or None,
     )
+    drilldown_meta_map = _build_receipt_drilldown_meta_map(
+        db,
+        [rb for rb, _, _ in results],
+    )
 
     items = []
     for rb, proj_name, payer_name in results:
@@ -703,11 +995,11 @@ def get_receipt_bills(
             bill_status_map.get(
                 (ref["bill_id"], ref["community_id"]),
                 _build_bill_push_status_entry(ref["bill_id"], ref["community_id"]),
-            )
+                )
             for ref in related_refs
         ]
         receipt_push_status = _aggregate_receipt_bill_push_status(related_statuses)
-        drilldown_meta = _build_receipt_drilldown_meta(db, rb)
+        drilldown_meta = drilldown_meta_map.get(receipt_key) or _empty_receipt_drilldown_meta()
 
         items.append({
             "id": rb.id,

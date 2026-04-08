@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import json
 from datetime import datetime
-from importlib import import_module
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
@@ -20,6 +19,23 @@ from fetch_prepayment_records import sync_prepayment_records
 from fetch_receipt_bills import sync_receipt_bills
 from fetch_residents import sync_residents
 from scripts.fetch_projects import main as fetch_projects_main
+from api.routers.finance import (
+    sync_accounting_subjects as finance_sync_accounting_subjects,
+    sync_auxiliary_data as finance_sync_auxiliary_data,
+    sync_auxiliary_data_categories as finance_sync_auxiliary_data_categories,
+    sync_customers as finance_sync_customers,
+    sync_kd_account_books as finance_sync_kd_account_books,
+    sync_kd_bank_accounts as finance_sync_kd_bank_accounts,
+    sync_kd_houses as finance_sync_kd_houses,
+    sync_suppliers as finance_sync_suppliers,
+    sync_tax_rates as finance_sync_tax_rates,
+)
+from api.voucher_preview_handlers import (
+    preview_voucher_for_receipt as preview_voucher_for_receipt_handler,
+)
+from api.voucher_push_handlers import (
+    push_voucher_to_kingdee as push_voucher_to_kingdee_handler,
+)
 from services.sync_schedule_service import (
     DEFAULT_TIMEZONE,
     RECEIPT_BILL_REQUIRED_TARGET_CODES,
@@ -36,35 +52,6 @@ from api.dependencies import _require_api_permission, get_current_user, get_db
 
 router = APIRouter()
 sync_schedule_service = SyncScheduleService(database.SessionLocal, database.engine)
-
-def _get_main_sync_endpoint(name: str):
-    return getattr(import_module("main"), name)
-
-def sync_accounting_subjects(*args, **kwargs):
-    return _get_main_sync_endpoint("sync_accounting_subjects")(*args, **kwargs)
-
-def sync_customers(*args, **kwargs):
-    return _get_main_sync_endpoint("sync_customers")(*args, **kwargs)
-
-def sync_suppliers(*args, **kwargs):
-    return _get_main_sync_endpoint("sync_suppliers")(*args, **kwargs)
-
-def sync_tax_rates(*args, **kwargs):
-    return _get_main_sync_endpoint("sync_tax_rates")(*args, **kwargs)
-def sync_kd_houses(*args, **kwargs):
-    return _get_main_sync_endpoint("sync_kd_houses")(*args, **kwargs)
-
-def sync_kd_account_books(*args, **kwargs):
-    return _get_main_sync_endpoint("sync_kd_account_books")(*args, **kwargs)
-
-def sync_auxiliary_data_categories(*args, **kwargs):
-    return _get_main_sync_endpoint("sync_auxiliary_data_categories")(*args, **kwargs)
-
-def sync_auxiliary_data(*args, **kwargs):
-    return _get_main_sync_endpoint("sync_auxiliary_data")(*args, **kwargs)
-
-def sync_kd_bank_accounts(*args, **kwargs):
-    return _get_main_sync_endpoint("sync_kd_bank_accounts")(*args, **kwargs)
 
 SYNC_TARGET_DEFINITIONS = [
     {"code": "projects", "label": "马克园区档案", "system": "mark", "requires_community_ids": False},
@@ -443,7 +430,7 @@ def _handle_prepayment_records_sync(schedule_data: Dict[str, Any], user_context:
 
 def _handle_accounting_subjects_sync(schedule_data: Dict[str, Any], user_context: Dict[str, str]) -> Dict[str, Any]:
     return _run_finance_sync_task(
-        sync_accounting_subjects,
+        finance_sync_accounting_subjects,
         schemas.AccountingSubjectSyncRequest(),
         user_context,
     )
@@ -451,7 +438,7 @@ def _handle_accounting_subjects_sync(schedule_data: Dict[str, Any], user_context
 
 def _handle_customers_sync(schedule_data: Dict[str, Any], user_context: Dict[str, str]) -> Dict[str, Any]:
     return _run_finance_sync_task(
-        sync_customers,
+        finance_sync_customers,
         schemas.CustomerSyncRequest(),
         user_context,
     )
@@ -459,7 +446,7 @@ def _handle_customers_sync(schedule_data: Dict[str, Any], user_context: Dict[str
 
 def _handle_suppliers_sync(schedule_data: Dict[str, Any], user_context: Dict[str, str]) -> Dict[str, Any]:
     return _run_finance_sync_task(
-        sync_suppliers,
+        finance_sync_suppliers,
         schemas.SupplierSyncRequest(),
         user_context,
     )
@@ -467,7 +454,7 @@ def _handle_suppliers_sync(schedule_data: Dict[str, Any], user_context: Dict[str
 
 def _handle_tax_rates_sync(schedule_data: Dict[str, Any], user_context: Dict[str, str]) -> Dict[str, Any]:
     return _run_finance_sync_task(
-        sync_tax_rates,
+        finance_sync_tax_rates,
         schemas.TaxRateSyncRequest(),
         user_context,
     )
@@ -475,7 +462,7 @@ def _handle_tax_rates_sync(schedule_data: Dict[str, Any], user_context: Dict[str
 
 def _handle_kd_houses_sync(schedule_data: Dict[str, Any], user_context: Dict[str, str]) -> Dict[str, Any]:
     return _run_finance_sync_task(
-        sync_kd_houses,
+        finance_sync_kd_houses,
         schemas.KingdeeHouseSyncRequest(),
         user_context,
     )
@@ -483,7 +470,7 @@ def _handle_kd_houses_sync(schedule_data: Dict[str, Any], user_context: Dict[str
 
 def _handle_account_books_sync(schedule_data: Dict[str, Any], user_context: Dict[str, str]) -> Dict[str, Any]:
     return _run_finance_sync_task(
-        sync_kd_account_books,
+        finance_sync_kd_account_books,
         schemas.KingdeeAccountBookSyncRequest(),
         user_context,
     )
@@ -491,7 +478,7 @@ def _handle_account_books_sync(schedule_data: Dict[str, Any], user_context: Dict
 
 def _handle_auxiliary_data_categories_sync(schedule_data: Dict[str, Any], user_context: Dict[str, str]) -> Dict[str, Any]:
     return _run_finance_sync_task(
-        sync_auxiliary_data_categories,
+        finance_sync_auxiliary_data_categories,
         schemas.AuxiliaryDataCategorySyncRequest(),
         user_context,
     )
@@ -499,7 +486,7 @@ def _handle_auxiliary_data_categories_sync(schedule_data: Dict[str, Any], user_c
 
 def _handle_auxiliary_data_sync(schedule_data: Dict[str, Any], user_context: Dict[str, str]) -> Dict[str, Any]:
     return _run_finance_sync_task(
-        sync_auxiliary_data,
+        finance_sync_auxiliary_data,
         schemas.AuxiliaryDataSyncRequest(),
         user_context,
     )
@@ -507,7 +494,7 @@ def _handle_auxiliary_data_sync(schedule_data: Dict[str, Any], user_context: Dic
 
 def _handle_bank_accounts_sync(schedule_data: Dict[str, Any], user_context: Dict[str, str]) -> Dict[str, Any]:
     return _run_finance_sync_task(
-        sync_kd_bank_accounts,
+        finance_sync_kd_bank_accounts,
         schemas.KingdeeBankAccountSyncRequest(),
         user_context,
     )
@@ -552,8 +539,8 @@ def _handle_receipt_voucher_auto_push(schedule_data: Dict[str, Any], user_contex
                 "task_id": None,
             }
 
-        preview_voucher = _get_main_sync_endpoint("preview_voucher_for_receipt")
-        push_voucher = _get_main_sync_endpoint("push_voucher_to_kingdee")
+        preview_voucher = preview_voucher_for_receipt_handler
+        push_voucher = push_voucher_to_kingdee_handler
 
         logs: List[Dict[str, str]] = []
         pushed_count = 0

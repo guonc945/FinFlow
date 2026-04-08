@@ -235,6 +235,7 @@ const VoucherPreviewModal = ({
     ? data.source_bills
     : [];
   const sourceBillSummary = data?.source_bill_push_summary || {};
+  const sourceBillCount = Number(sourceBillSummary.total || sourceBills.length || 0);
   const pushBlocked = Boolean(data?.push_blocked);
   const skippedBills = Array.isArray(data?.skipped_bills)
     ? data.skipped_bills
@@ -740,9 +741,9 @@ const VoucherPreviewModal = ({
         style={{
           background: "#fff",
           borderRadius: "1rem",
-          width: "1220px",
-          maxWidth: "96vw",
-          maxHeight: "90vh",
+          width: "1380px",
+          maxWidth: "98vw",
+          maxHeight: "92vh",
           display: "flex",
           flexDirection: "column",
           boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)",
@@ -758,7 +759,7 @@ const VoucherPreviewModal = ({
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
-            padding: "1rem 1.5rem",
+            padding: "0.9rem 1.25rem",
             borderBottom: "1px solid #f1f5f9",
             background: "linear-gradient(135deg, #1e293b 0%, #334155 100%)",
             color: "#fff",
@@ -878,7 +879,7 @@ const VoucherPreviewModal = ({
           style={{
             flex: 1,
             minHeight: 0,
-            padding: "1.25rem 1.5rem",
+            padding: "1rem 1.25rem",
             display: "flex",
             flexDirection: "column",
             overflow: "hidden",
@@ -1018,7 +1019,7 @@ const VoucherPreviewModal = ({
               {pushFeedback && (
                 <div
                   style={{
-                    marginBottom: "0.75rem",
+                    marginBottom: "0.5rem",
                     padding: "0.5rem 0.75rem",
                     borderRadius: "0.5rem",
                     fontSize: "0.75rem",
@@ -1065,6 +1066,8 @@ const VoucherPreviewModal = ({
                   {bookedDateValidation.message}
                 </div>
               )}
+              {false && (
+                <>
               <div
                 style={{
                   marginBottom: "0.75rem",
@@ -1214,6 +1217,251 @@ const VoucherPreviewModal = ({
                   </div>
                 </div>
               )}
+                </>
+              )}
+              <div
+                style={{
+                  marginBottom: "0.65rem",
+                  padding: "0.75rem 0.85rem",
+                  borderRadius: "0.85rem",
+                  background: "#f8fafc",
+                  border: "1px solid #e2e8f0",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.6rem",
+                  flexShrink: 0,
+                }}
+              >
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                    gap: "0.6rem",
+                  }}
+                >
+                  <label
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "0.35rem",
+                      minWidth: 0,
+                      padding: "0.65rem 0.75rem",
+                      borderRadius: "0.75rem",
+                      background: "#fff",
+                      border: `1px solid ${bookedDateValidation.ok ? "#dbe4ee" : "#fdba74"}`,
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: "0.75rem",
+                        fontWeight: 700,
+                        color: "#475569",
+                      }}
+                    >
+                      记账日期
+                    </span>
+                    <input
+                      type="date"
+                      required
+                      value={bookedDate}
+                      onChange={(e) => setBookedDate(e.target.value)}
+                      style={{
+                        height: "2.15rem",
+                        padding: "0 0.75rem",
+                        borderRadius: "0.6rem",
+                        border: `1px solid ${bookedDateValidation.ok ? "#cbd5e1" : "#fb923c"}`,
+                        outline: "none",
+                        fontSize: "0.84rem",
+                        color: "#0f172a",
+                        background: "#fff",
+                      }}
+                    />
+                  </label>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "0.35rem",
+                      minWidth: 0,
+                      padding: "0.65rem 0.75rem",
+                      borderRadius: "0.75rem",
+                      border: "1px solid #dbe4ee",
+                      background: "#fff",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: "0.75rem",
+                        fontWeight: 700,
+                        color: "#475569",
+                      }}
+                    >
+                      会计期间
+                    </span>
+                    <div
+                      style={{
+                        fontFamily: monoFont,
+                        fontSize: "0.94rem",
+                        fontWeight: 600,
+                        color: "#0f172a",
+                        lineHeight: 1.3,
+                      }}
+                    >
+                      {toPeriodNumber(bookedDate) || "-"}
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "0.35rem",
+                      minWidth: 0,
+                      padding: "0.65rem 0.75rem",
+                      borderRadius: "0.75rem",
+                      background: pushBlocked ? "#fff7ed" : "#fff",
+                      border: `1px solid ${pushBlocked ? "#fdba74" : "#dbe4ee"}`,
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: "0.75rem",
+                        fontWeight: 700,
+                        color: pushBlocked ? "#9a3412" : "#475569",
+                      }}
+                    >
+                      本次凭证关联账单
+                    </span>
+                    <div
+                      style={{
+                        fontSize: "0.94rem",
+                        fontWeight: 600,
+                        color: "#0f172a",
+                        lineHeight: 1.3,
+                      }}
+                    >
+                      {sourceBillCount} 笔
+                    </div>
+                    <div
+                      style={{
+                        fontSize: "0.72rem",
+                        color: pushBlocked ? "#9a3412" : "#64748b",
+                        lineHeight: 1.45,
+                      }}
+                    >
+                      {sourceBillCount > 0
+                        ? `未推送 ${sourceBillSummary.not_pushed || 0} / 推送中 ${
+                            sourceBillSummary.pushing || 0
+                          } / 已推送 ${sourceBillSummary.success || 0} / 失败 ${
+                            sourceBillSummary.failed || 0
+                          }`
+                        : "当前未关联账单"}
+                    </div>
+                    {pushBlocked && (
+                      <div
+                        style={{
+                          fontSize: "0.72rem",
+                          color: "#9a3412",
+                          lineHeight: 1.45,
+                          display: "-webkit-box",
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: "vertical",
+                          overflow: "hidden",
+                        }}
+                      >
+                        {data?.push_block_reason || "当前账单存在推送记录，请先核对后再操作。"}
+                      </div>
+                    )}
+                  </div>
+                  {acctView && (
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "0.35rem",
+                        minWidth: 0,
+                        padding: "0.65rem 0.75rem",
+                        borderRadius: "0.75rem",
+                        background: accountingViewBalanced ? "#f0fdf4" : "#fef2f2",
+                        color: accountingViewBalanced ? "#166534" : "#991b1b",
+                        border: `1px solid ${accountingViewBalanced ? "#bbf7d0" : "#fecaca"}`,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: "0.75rem",
+                          fontWeight: 700,
+                          color: accountingViewBalanced ? "#166534" : "#991b1b",
+                        }}
+                      >
+                        借贷平衡检查
+                      </span>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.45rem",
+                          fontSize: "0.84rem",
+                          fontWeight: 700,
+                          lineHeight: 1.35,
+                        }}
+                      >
+                        {accountingViewBalanced ? (
+                          <>
+                            <CheckCircle2 size={14} /> 借贷平衡
+                          </>
+                        ) : (
+                          <>
+                            <AlertTriangle size={14} /> 借贷不平，差额 {accountingViewDiffDisplay}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {acctView && (
+                    <label
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        justifyContent: "center",
+                        gap: "0.5rem",
+                        padding: "0.65rem 0.75rem",
+                        borderRadius: "0.75rem",
+                        border: "1px solid #dbe4ee",
+                        background: "#fff",
+                        fontSize: "0.75rem",
+                        color: "#475569",
+                        cursor: "pointer",
+                        minWidth: 0,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: "0.75rem",
+                          fontWeight: 700,
+                          color: "#475569",
+                        }}
+                      >
+                        分录展示
+                      </span>
+                      <span
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "0.5rem",
+                        }}
+                      >
+                      <input
+                        type="checkbox"
+                        checked={mergeEnabled}
+                        onChange={(e) => setMergeEnabled(e.target.checked)}
+                      />
+                      合并同核算项（借贷方向一致）
+                      </span>
+                    </label>
+                  )}
+                </div>
+              </div>
               {acctView && (
                 <div
                   style={{
@@ -1223,6 +1471,8 @@ const VoucherPreviewModal = ({
                     flexDirection: "column",
                   }}
                 >
+                  {false && (
+                    <>
                   {/* Balance Status */}
                   <div
                     style={{
@@ -1282,6 +1532,8 @@ const VoucherPreviewModal = ({
                     </label>
                   </div>
                   {/* 凭证表格 */}
+                    </>
+                  )}
                   <div
                     style={{
                       flex: 1,

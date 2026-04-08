@@ -14,6 +14,7 @@ import {
     Link2Off,
     ShieldCheck,
     MoreHorizontal,
+    BarChart3,
 } from 'lucide-react';
 import DataTable from '../../components/data/DataTable';
 import type { Bill, BillVoucherPushStatus, Project, PushStatusSummary, ReceiptBill } from '../../types';
@@ -225,6 +226,91 @@ const formatUnixTimestamp = (value?: number | null) => {
     return new Date(ts * 1000).toLocaleString();
 };
 
+const normalizeYearMonth = (value?: string | number | null) => {
+    if (value == null) return null;
+    const raw = String(value).trim();
+    if (!raw) return null;
+
+    const match = raw.match(/^(\d{4})[-/.]?(\d{1,2})/);
+    if (!match) return null;
+
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return null;
+
+    return `${year}-${String(month).padStart(2, '0')}`;
+};
+
+const getReceiptReferenceMonth = (receiptBill?: Pick<ReceiptBill, 'deal_date' | 'deal_time'> | null) => {
+    const fromDate = normalizeYearMonth(receiptBill?.deal_date || null);
+    if (fromDate) return fromDate;
+
+    const timestamp = Number(receiptBill?.deal_time || 0);
+    if (!timestamp) return null;
+    const date = new Date(timestamp * 1000);
+    if (Number.isNaN(date.getTime())) return null;
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+};
+
+interface ReceiptPeriodStatsRow {
+    charge_item_name: string;
+    previous: number;
+    current: number;
+    future: number;
+    total: number;
+}
+
+const buildReceiptPeriodStats = (
+    receiptBill: Pick<ReceiptBill, 'deal_date' | 'deal_time'> | null | undefined,
+    relatedBills: Bill[] | undefined,
+) => {
+    const referenceMonth = getReceiptReferenceMonth(receiptBill);
+    const statsMap = new Map<string, ReceiptPeriodStatsRow>();
+
+    (relatedBills || []).forEach((bill) => {
+        const chargeItemName = String(bill.charge_item_name || '').trim() || '未命名费用';
+        const periodMonth = normalizeYearMonth(bill.in_month);
+        const amountRaw = Number(bill.amount || 0);
+        const amount = Number.isFinite(amountRaw) ? amountRaw : 0;
+        const row = statsMap.get(chargeItemName) || {
+            charge_item_name: chargeItemName,
+            previous: 0,
+            current: 0,
+            future: 0,
+            total: 0,
+        };
+
+        if (!referenceMonth || !periodMonth) {
+            row.current += amount;
+        } else if (periodMonth < referenceMonth) {
+            row.previous += amount;
+        } else if (periodMonth > referenceMonth) {
+            row.future += amount;
+        } else {
+            row.current += amount;
+        }
+        row.total += amount;
+        statsMap.set(chargeItemName, row);
+    });
+
+    const rows = Array.from(statsMap.values()).sort((a, b) => a.charge_item_name.localeCompare(b.charge_item_name, 'zh-CN'));
+    const summary = rows.reduce(
+        (acc, row) => {
+            acc.previous += row.previous;
+            acc.current += row.current;
+            acc.future += row.future;
+            acc.total += row.total;
+            return acc;
+        },
+        { previous: 0, current: 0, future: 0, total: 0 }
+    );
+
+    return { referenceMonth, rows, summary };
+};
+
+const formatAmountCell = (value: number) =>
+    Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 const getDrilldownColumns = (section: ReceiptBillDrilldownSection) => {
     if (section.source_type === 'bills') {
         return [
@@ -421,6 +507,100 @@ const ReceiptDrilldownModal = ({
     );
 };
 
+const ReceiptPeriodStatsModal = ({
+    isOpen,
+    onClose,
+    receiptBill,
+    loading,
+    relatedBills,
+}: {
+    isOpen: boolean;
+    onClose: () => void;
+    receiptBill: ReceiptBill | null;
+    loading: boolean;
+    relatedBills: Bill[];
+}) => {
+    if (!isOpen) return null;
+
+    const { referenceMonth, rows, summary } = buildReceiptPeriodStats(receiptBill, relatedBills);
+
+    return (
+        <div className="sync-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+            <div className="sync-modal" style={{ width: '860px', maxWidth: '96vw' }}>
+                <div className="sync-header">
+                    <div className="sync-title" style={{ justifyContent: 'space-between', width: '100%' }}>
+                        <div>
+                            <h3>期间统计</h3>
+                            <p className="text-secondary text-sm">
+                                收款明细ID: <span className="font-mono">{receiptBill?.id || '-'}</span> | 园区: {receiptBill?.community_name || '-'}
+                            </p>
+                            <p className="text-secondary text-sm">
+                                统计口径：按当前收款单月份 <strong>{referenceMonth || '未识别'}</strong> 划分往期 / 本期 / 后期
+                            </p>
+                        </div>
+                        <button className="collapse-toggle" onClick={onClose} aria-label="Close">
+                            <X size={16} />
+                        </button>
+                    </div>
+                </div>
+
+                <div className="sync-content" style={{ padding: '1rem' }}>
+                    {loading ? (
+                        <div style={{ minHeight: '240px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            加载中...
+                        </div>
+                    ) : rows.length === 0 ? (
+                        <div style={{ minHeight: '220px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}>
+                            当前收款单暂无关联运营账单，无法生成期间统计
+                        </div>
+                    ) : (
+                        <div className="receipt-period-stats-card">
+                            <table className="modern-table table-striped receipt-period-stats-table">
+                                <thead>
+                                    <tr>
+                                        <th className="is-not-sortable receipt-period-col-index">序号</th>
+                                        <th className="is-not-sortable">收费项目</th>
+                                        <th className="is-not-sortable receipt-period-col-amount">往期</th>
+                                        <th className="is-not-sortable receipt-period-col-amount">本期</th>
+                                        <th className="is-not-sortable receipt-period-col-amount">后期</th>
+                                        <th className="is-not-sortable receipt-period-col-amount">合计</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {rows.map((row, index) => (
+                                        <tr key={row.charge_item_name}>
+                                            <td className="receipt-period-col-index">{index + 1}</td>
+                                            <td>{row.charge_item_name}</td>
+                                            <td className="receipt-period-col-amount">{formatAmountCell(row.previous)}</td>
+                                            <td className="receipt-period-col-amount">{formatAmountCell(row.current)}</td>
+                                            <td className="receipt-period-col-amount">{formatAmountCell(row.future)}</td>
+                                            <td className="receipt-period-col-amount receipt-period-col-total">{formatAmountCell(row.total)}</td>
+                                        </tr>
+                                    ))}
+                                    <tr className="receipt-period-summary-row">
+                                        <td className="receipt-period-col-index">{rows.length + 1}</td>
+                                        <td>合计</td>
+                                        <td className="receipt-period-col-amount">{formatAmountCell(summary.previous)}</td>
+                                        <td className="receipt-period-col-amount">{formatAmountCell(summary.current)}</td>
+                                        <td className="receipt-period-col-amount">{formatAmountCell(summary.future)}</td>
+                                        <td className="receipt-period-col-amount receipt-period-col-total">{formatAmountCell(summary.total)}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </div>
+
+                <div className="sync-footer">
+                    <button className="btn btn-primary w-full" onClick={onClose}>
+                        关闭
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const ReceiptBills = () => {
     const { toasts, showToast, removeToast } = useToast();
 
@@ -465,6 +645,10 @@ const ReceiptBills = () => {
     const [drilldownSummary, setDrilldownSummary] = useState('');
     const [drilldownSections, setDrilldownSections] = useState<ReceiptBillDrilldownSection[]>([]);
     const [drilldownDepositRefundSummary, setDrilldownDepositRefundSummary] = useState<ReceiptBillDepositRefundLinkSummary | null>(null);
+    const [periodStatsOpen, setPeriodStatsOpen] = useState(false);
+    const [periodStatsLoading, setPeriodStatsLoading] = useState(false);
+    const [periodStatsReceiptBill, setPeriodStatsReceiptBill] = useState<ReceiptBill | null>(null);
+    const [periodStatsRelatedBills, setPeriodStatsRelatedBills] = useState<Bill[]>([]);
 
     // Voucher preview state (moved from bills page)
     const [voucherPreview, setVoucherPreview] = useState<{ isOpen: boolean; data: any; isLoading: boolean; error: string | null }>({
@@ -703,6 +887,32 @@ const ReceiptBills = () => {
             setDrilldownOpen(false);
         } finally {
             setDrilldownLoading(false);
+        }
+    }, [showToast]);
+
+    const openReceiptPeriodStats = useCallback(async (receiptBill: ReceiptBill) => {
+        if (!receiptBill.supports_bill_push_ops) {
+            showToast('info', '提示', '当前收款单暂无关联运营账单，无法生成期间统计');
+            return;
+        }
+
+        setPeriodStatsReceiptBill(receiptBill);
+        setPeriodStatsRelatedBills([]);
+        setPeriodStatsOpen(true);
+        setPeriodStatsLoading(true);
+        try {
+            const detail: ReceiptBillDetail = await getReceiptBill(Number(receiptBill.id), Number(receiptBill.community_id));
+            const relatedBills = detail.related_bills || [];
+            setPeriodStatsRelatedBills(relatedBills);
+            if (relatedBills.length === 0) {
+                showToast('info', '提示', '当前收款单暂无关联运营账单，无法生成期间统计');
+            }
+        } catch (err: any) {
+            const msg = err?.response?.data?.detail || err?.message || '加载失败';
+            showToast('error', '期间统计加载失败', typeof msg === 'string' ? msg : JSON.stringify(msg));
+            setPeriodStatsOpen(false);
+        } finally {
+            setPeriodStatsLoading(false);
         }
     }, [showToast]);
 
@@ -1326,6 +1536,19 @@ const ReceiptBills = () => {
                                 >
                                     <FileText size={14} /> 关联数据
                                 </button>
+                                <button
+                                    type="button"
+                                    className={`dropdown-item receipt-row-menu-item ${!record.supports_bill_push_ops ? 'is-disabled' : ''}`}
+                                    disabled={!record.supports_bill_push_ops}
+                                    onClick={() => {
+                                        if (!record.supports_bill_push_ops) return;
+                                        setOpenActionMenuKey(null);
+                                        void openReceiptPeriodStats(record);
+                                    }}
+                                    title={record.supports_bill_push_ops ? '按往期/本期/后期统计关联运营账单金额' : '当前收款单暂无关联运营账单'}
+                                >
+                                    <BarChart3 size={14} /> 期间统计
+                                </button>
                             </div>
                         )}
                     </div>
@@ -1692,6 +1915,14 @@ const ReceiptBills = () => {
                 summary={drilldownSummary}
                 sections={drilldownSections}
                 depositRefundLinkSummary={drilldownDepositRefundSummary}
+            />
+
+            <ReceiptPeriodStatsModal
+                isOpen={periodStatsOpen}
+                onClose={() => setPeriodStatsOpen(false)}
+                receiptBill={periodStatsReceiptBill}
+                loading={periodStatsLoading}
+                relatedBills={periodStatsRelatedBills}
             />
 
             <VoucherPreviewModal

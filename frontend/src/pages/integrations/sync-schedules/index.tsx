@@ -41,7 +41,6 @@ import type { AccountBook } from '../../../types/accountBook';
 import './SyncSchedules.css';
 
 type ScheduleModuleType = 'data-sync' | 'voucher-push';
-type VoucherPushPageStep = 'plans' | 'config' | 'history';
 type VoucherPushFormStep = 'basic' | 'target' | 'schedule';
 
 type ScheduleFormState = {
@@ -99,7 +98,6 @@ type ScheduleModuleCopy = {
 
 const VOUCHER_PUSH_TARGET_CODE = 'receipt_voucher_auto_push';
 const WEEKDAY_ORDER = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
-const VOUCHER_PAGE_STEP_ORDER: VoucherPushPageStep[] = ['plans', 'config', 'history'];
 const VOUCHER_FORM_STEP_ORDER: VoucherPushFormStep[] = ['basic', 'target', 'schedule'];
 
 const MODULE_COPY: Record<ScheduleModuleType, ScheduleModuleCopy> = {
@@ -301,7 +299,6 @@ export const SyncSchedulesPage = ({ moduleType = 'data-sync' }: { moduleType?: S
     const [formOpen, setFormOpen] = useState(false);
     const [editingSchedule, setEditingSchedule] = useState<SyncSchedule | null>(null);
     const [activeTargetTab, setActiveTargetTab] = useState<'mark' | 'kingdee'>('mark');
-    const [voucherPageStep, setVoucherPageStep] = useState<VoucherPushPageStep>('plans');
     const [voucherFormStep, setVoucherFormStep] = useState<VoucherPushFormStep>('basic');
     const [formState, setFormState] = useState<ScheduleFormState>(createEmptyForm('Asia/Shanghai'));
     const [confirmState, setConfirmState] = useState<{
@@ -324,27 +321,6 @@ export const SyncSchedulesPage = ({ moduleType = 'data-sync' }: { moduleType?: S
     const selectedSchedule = useMemo(
         () => schedules.find((item) => item.id === selectedScheduleId) || null,
         [schedules, selectedScheduleId]
-    );
-
-    const voucherPageSteps = useMemo(
-        () => [
-            {
-                id: 'plans' as const,
-                title: '选择计划',
-                description: '先定位要查看或操作的凭证推送计划',
-            },
-            {
-                id: 'config' as const,
-                title: '查看配置',
-                description: '聚焦账簿、目标和调度规则，不再把信息全堆在一起',
-            },
-            {
-                id: 'history' as const,
-                title: '执行追踪',
-                description: '单独查看当前计划执行明细与全局最近记录',
-            },
-        ],
-        []
     );
 
     const voucherFormSteps = useMemo(
@@ -522,7 +498,6 @@ export const SyncSchedulesPage = ({ moduleType = 'data-sync' }: { moduleType?: S
     }, [activeTargetTab, groupedTargets.mark.length]);
 
     useEffect(() => {
-        setVoucherPageStep('plans');
         setVoucherFormStep('basic');
     }, [moduleType]);
 
@@ -865,7 +840,6 @@ export const SyncSchedulesPage = ({ moduleType = 'data-sync' }: { moduleType?: S
         String(autoResolvedCommunityTargets.length)
     );
 
-    const currentVoucherPageStepIndex = VOUCHER_PAGE_STEP_ORDER.indexOf(voucherPageStep);
     const currentVoucherFormStepIndex = VOUCHER_FORM_STEP_ORDER.indexOf(voucherFormStep);
 
     const scheduleListContent = loading ? (

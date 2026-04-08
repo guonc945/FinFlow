@@ -1064,8 +1064,13 @@
 /* Editor Interface */
 .template-editor-container {
     background: #f8fafc;
-    min-height: 100vh;
+    height: 100%;
+    min-height: 0;
     padding: 1.5rem;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
 
 .editor-header {
@@ -1174,6 +1179,15 @@
     margin-bottom: 2rem;
     border-bottom: 1px solid #e2e8f0;
     padding-bottom: 0.5rem;
+    flex-shrink: 0;
+}
+
+.editor-content {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 0.35rem;
 }
 
 .tab-btn {
@@ -1601,6 +1615,14 @@
     overflow: hidden;
     border: 1px solid #e2e8f0;
     margin-bottom: 1.5rem;
+}
+
+.rules-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    min-height: 0;
+    padding-bottom: 2rem;
 }
 
 .rules-table {

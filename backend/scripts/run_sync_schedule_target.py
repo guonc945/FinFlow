@@ -22,7 +22,7 @@ def main():
         backend_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         if backend_root not in sys.path:
             sys.path.insert(0, backend_root)
-        from main import run_sync_target_handler
+        from api.routers.sync_schedules import run_sync_target_handler
 
         result = run_sync_target_handler(target_code, schedule_data, user_context) or {}
         if not isinstance(result, dict):

@@ -517,6 +517,7 @@
     border: none;
     background: transparent;
     text-align: left;
+    white-space: nowrap;
     font-size: 0.8rem;
     font-weight: 600;
     color: #334155;
@@ -811,6 +812,48 @@
 .sync-footer {
     padding: 1rem 1.25rem;
     background: #f8fafc;
+}
+
+.receipt-period-stats-card {
+    border: 1px solid #e2e8f0;
+    border-radius: 0.75rem;
+    overflow: hidden;
+    background: #ffffff;
+}
+
+.receipt-period-stats-table {
+    font-size: 0.84rem;
+}
+
+.receipt-period-stats-table th,
+.receipt-period-stats-table td {
+    padding: 0.58rem 0.75rem;
+}
+
+.receipt-period-stats-table th.receipt-period-col-index,
+.receipt-period-stats-table td.receipt-period-col-index {
+    width: 72px;
+    text-align: center;
+}
+
+.receipt-period-stats-table th.receipt-period-col-amount,
+.receipt-period-stats-table td.receipt-period-col-amount {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.receipt-period-stats-table td.receipt-period-col-total {
+    font-weight: 600;
+    color: #0f172a;
+}
+
+.receipt-period-summary-row {
+    background: #f8fafc;
+}
+
+.receipt-period-summary-row td {
+    font-weight: 700;
+    border-top: 1px solid #dbe3ec;
 }
 
 @keyframes spin {
