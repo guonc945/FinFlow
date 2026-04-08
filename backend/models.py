@@ -50,7 +50,7 @@ class VoucherTemplate(Base):
     trigger_condition = Column(Text)  # JSON string for logic rules
     
     # Kingdee specific mapping expressions
-    book_number_expr = Column(String(100), default="'BU-35256'")
+    book_number_expr = Column(String(100), default="{CURRENT_ACCOUNT_BOOK_NUMBER}")
     vouchertype_number_expr = Column(String(100), default="'0001'")
     attachment_expr = Column(String(100), default="0")
     bizdate_expr = Column(String(100), default="{CURRENT_DATE}")

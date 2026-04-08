@@ -528,7 +528,7 @@ const normalizeTemplateFromApi = (t: any, categoryPathMap: Record<number, string
             return fallback || 'bills';
         })(),
         trigger_condition: t.trigger_condition || '',
-        book_number_expr: t.book_number_expr || "'BU-35256'",
+        book_number_expr: t.book_number_expr || "{CURRENT_ACCOUNT_BOOK_NUMBER}",
         vouchertype_number_expr: t.vouchertype_number_expr || "'0001'",
         attachment_expr: t.attachment_expr || "0",
         bizdate_expr: t.bizdate_expr || "{CURRENT_DATE}",
@@ -1285,7 +1285,7 @@ const VoucherTemplates = () => {
             active: true,
             priority: 100,
             category_id: null,
-            book_number_expr: "'BU-35256'",
+            book_number_expr: "{CURRENT_ACCOUNT_BOOK_NUMBER}",
             vouchertype_number_expr: "'0001'",
             attachment_expr: "0",
             bizdate_expr: "{CURRENT_DATE}",

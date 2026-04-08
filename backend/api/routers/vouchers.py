@@ -1860,7 +1860,12 @@ def _preview_voucher_for_bill_via_receipt_templates(
         return evaluate_expression(resolved_with_globals, ctx or expression_context)
 
     now = datetime.now()
-    book_number = resolve_expr(matched_template.book_number_expr or "'BU-35256'")
+    book_number = resolve_expr(matched_template.book_number_expr or "{CURRENT_ACCOUNT_BOOK_NUMBER}").strip()
+    if not book_number:
+        raise HTTPException(
+            status_code=400,
+            detail="Voucher template book_number_expr resolved empty. Please configure the template to use {CURRENT_ACCOUNT_BOOK_NUMBER} or a valid account book expression.",
+        )
     vouchertype_number = resolve_expr(matched_template.vouchertype_number_expr or "'0001'")
     attachment = resolve_expr(matched_template.attachment_expr or "0")
     biz_date = resolve_expr(matched_template.bizdate_expr or "{CURRENT_DATE}") or now.strftime("%Y-%m-%d")
@@ -2333,7 +2338,12 @@ def preview_voucher_for_receipt(
         return evaluate_expression(resolved_with_globals, ctx or expression_context)
 
     now = datetime.now()
-    book_number = resolve_expr(matched_template.book_number_expr or "'BU-35256'")
+    book_number = resolve_expr(matched_template.book_number_expr or "{CURRENT_ACCOUNT_BOOK_NUMBER}").strip()
+    if not book_number:
+        raise HTTPException(
+            status_code=400,
+            detail="Voucher template book_number_expr resolved empty. Please configure the template to use {CURRENT_ACCOUNT_BOOK_NUMBER} or a valid account book expression.",
+        )
     vouchertype_number = resolve_expr(matched_template.vouchertype_number_expr or "'0001'")
     attachment = resolve_expr(matched_template.attachment_expr or "0")
     biz_date = resolve_expr(matched_template.bizdate_expr or "{CURRENT_DATE}") or now.strftime("%Y-%m-%d")
@@ -2872,7 +2882,12 @@ def preview_voucher_for_bill(
 
     # 4. Resolve template header expressions
     now = datetime.now()
-    book_number = resolve_expr(matched_template.book_number_expr or "'BU-35256'")
+    book_number = resolve_expr(matched_template.book_number_expr or "{CURRENT_ACCOUNT_BOOK_NUMBER}").strip()
+    if not book_number:
+        raise HTTPException(
+            status_code=400,
+            detail="Voucher template book_number_expr resolved empty. Please configure the template to use {CURRENT_ACCOUNT_BOOK_NUMBER} or a valid account book expression.",
+        )
     vouchertype_number = resolve_expr(matched_template.vouchertype_number_expr or "'0001'")
     attachment = resolve_expr(matched_template.attachment_expr or "0")
     period_number = now.strftime("%Y%m")

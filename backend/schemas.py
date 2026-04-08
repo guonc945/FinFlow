@@ -662,7 +662,7 @@ class VoucherTemplateBase(BaseModel):
     source_module: Optional[str] = None
     source_type: Optional[str] = None
     trigger_condition: Optional[str] = None
-    book_number_expr: Optional[str] = "'BU-35256'"
+    book_number_expr: Optional[str] = "{CURRENT_ACCOUNT_BOOK_NUMBER}"
     vouchertype_number_expr: Optional[str] = "'0001'"
     attachment_expr: Optional[str] = "0"
     bizdate_expr: Optional[str] = "{CURRENT_DATE}"
