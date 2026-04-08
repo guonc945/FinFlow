@@ -1346,27 +1346,7 @@ export const SyncSchedulesPage = ({ moduleType = 'data-sync' }: { moduleType?: S
 
             {isVoucherPushModule ? (
                 <section className="voucher-workbench">
-                    <div className="voucher-page-stepper">
-                        {voucherPageSteps.map((step, index) => {
-                            const isActive = voucherPageStep === step.id;
-                            const isDone = index < currentVoucherPageStepIndex;
-                            return (
-                                <button
-                                    key={step.id}
-                                    type="button"
-                                    className={`voucher-page-step ${isActive ? 'active' : ''} ${isDone ? 'done' : ''}`}
-                                    onClick={() => setVoucherPageStep(step.id)}
-                                >
-                                    <span className="voucher-page-step-index">{index + 1}</span>
-                                    <span className="voucher-page-step-copy">
-                                        <strong>{step.title}</strong>
-                                        <small>{step.description}</small>
-                                    </span>
-                                </button>
-                            );
-                        })}
-                    </div>
-
+                    {/*
                     {voucherPageStep === 'plans' && (
                         <div className="voucher-stage-layout">
                             <div className="schedule-board">
@@ -1582,6 +1562,153 @@ export const SyncSchedulesPage = ({ moduleType = 'data-sync' }: { moduleType?: S
                             </aside>
                         </div>
                     )}
+                    */}
+
+                    <div className="schedule-board">
+                        <div className="panel-header">
+                            <div>
+                                <h2>计划列表</h2>
+                                <p>{copy.scheduleListDescription}</p>
+                            </div>
+                            <div className="panel-header-badge">
+                                <Settings2 size={14} />
+                                选择计划后在下方查看配置与记录
+                            </div>
+                        </div>
+                        {scheduleListContent}
+                    </div>
+
+                    <div className="voucher-stage-layout single">
+                        <div className="voucher-config-shell">
+                            <div className="voucher-config-hero-card">
+                                <div>
+                                    <span className="voucher-stage-kicker">配置概览</span>
+                                    <h2>{selectedSchedule ? selectedSchedule.name : '请选择一个计划'}</h2>
+                                    <p>
+                                        {selectedSchedule?.description ||
+                                            '先从上面的计划列表中选中一个计划，再查看配置详情和执行记录。'}
+                                    </p>
+                                </div>
+                                <div className="voucher-stage-actions">
+                                    <button
+                                        type="button"
+                                        className="sync-action ghost"
+                                        onClick={() => selectedSchedule && handleRunNow(selectedSchedule)}
+                                        disabled={!selectedSchedule}
+                                    >
+                                        立即执行
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="sync-action primary"
+                                        onClick={() => (selectedSchedule ? openEditModal(selectedSchedule) : openCreateModal())}
+                                    >
+                                        {selectedSchedule ? '编辑当前计划' : '新建计划'}
+                                    </button>
+                                </div>
+                            </div>
+
+                            {!selectedSchedule ? (
+                                <div className="schedule-empty">先从上面的计划列表里选中一个计划。</div>
+                            ) : (
+                                <div className="voucher-config-grid">
+                                    <div className="voucher-config-card">
+                                        <span className="voucher-stage-kicker">计划定义</span>
+                                        <div className="voucher-config-meta">
+                                            <div>
+                                                <span>计划状态</span>
+                                                <strong>{selectedSchedule.enabled ? '启用' : '停用'}</strong>
+                                            </div>
+                                            <div>
+                                                <span>时区</span>
+                                                <strong>{selectedSchedule.timezone || 'Asia/Shanghai'}</strong>
+                                            </div>
+                                            <div>
+                                                <span>最近结果</span>
+                                                <strong>{formatExecutionStatus(selectedSchedule.last_status)}</strong>
+                                            </div>
+                                            <div>
+                                                <span>下次执行</span>
+                                                <strong>{formatDateTime(selectedSchedule.next_run_at)}</strong>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="voucher-config-card">
+                                        <span className="voucher-stage-kicker">推送范围</span>
+                                        <div className="voucher-config-meta">
+                                            <div>
+                                                <span>推送目标</span>
+                                                <strong>{selectedScheduleTargetLabels.join('、') || '未配置'}</strong>
+                                            </div>
+                                            <div>
+                                                <span>{copy.accountBookMetaLabel}</span>
+                                                <strong>
+                                                    {selectedSchedule.account_book_name ||
+                                                        selectedSchedule.account_book_number ||
+                                                        '未限定'}
+                                                </strong>
+                                            </div>
+                                            <div>
+                                                <span>{copy.communityMetaLabel}</span>
+                                                <strong>
+                                                    {selectedSchedule.community_ids.length > 0
+                                                        ? `${selectedSchedule.community_ids.length} 个园区`
+                                                        : copy.communityMetaEmptyText}
+                                                </strong>
+                                            </div>
+                                            <div>
+                                                <span>模板匹配</span>
+                                                <strong>必须全量匹配，不允许部分推送</strong>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="voucher-config-card wide">
+                                        <span className="voucher-stage-kicker">调度规则</span>
+                                        <div className="voucher-config-rule-row">
+                                            {selectedScheduleSummaryItems.map((item) => (
+                                                <div key={item.label}>
+                                                    <span>{item.label}</span>
+                                                    <strong>{item.value}</strong>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        <div className="voucher-config-note">
+                                            计划执行时会遵循“账簿 / 关联园区 / 当天收款单 / 凭证预览校验 / JSON 推送”的顺序，
+                                            且只允许完整成功，不允许部分成功后继续推送。
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="voucher-history-layout">
+                        <div className="execution-sidebar">
+                            <div className="panel-header">
+                                <div>
+                                    <h2>{selectedSchedule ? `执行追踪 · ${selectedSchedule.name}` : '执行追踪'}</h2>
+                                    <p>{copy.executionSubtitle}</p>
+                                </div>
+                                <div className="panel-header-badge">
+                                    <Settings2 size={14} />
+                                    执行记录独立查看
+                                </div>
+                            </div>
+                            {selectedExecutionSection}
+                        </div>
+
+                        <aside className="execution-sidebar">
+                            <div className="panel-header">
+                                <div>
+                                    <h2>全局最近执行</h2>
+                                    <p>这里保留最近一次批次执行的全局视角，方便排查趋势与失败集中点。</p>
+                                </div>
+                            </div>
+                            {latestExecutionSection}
+                        </aside>
+                    </div>
                 </section>
             ) : (
                 <section className="sync-layout">
