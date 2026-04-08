@@ -2,19 +2,22 @@
 import json
 import logging
 import os
+import time
 
 from dotenv import load_dotenv
+from sqlalchemy import and_
 
 from database import SessionLocal
 from models import ExternalApi, House, HouseUser, Park, ProjectList
 from sync_tracker import tracker
-from utils.db_compat import fetch_all_project_ids, upsert_model_row
+from utils.db_compat import fetch_all_project_ids, upsert_model_rows
 from utils.marki_client import get_api_url, marki_client
 from utils.variable_parser import build_variable_map, resolve_dict_variables
 
 load_dotenv()
 
 logger = logging.getLogger("house_sync")
+DEFAULT_HOUSE_PAGE_SIZE = max(1, int(os.getenv("MARKI_HOUSE_PAGE_SIZE", "500")))
 
 
 def _to_json_str(value):
@@ -28,12 +31,43 @@ def _to_json_str(value):
         return str(value)
 
 
+def _iter_chunks(items, size):
+    if size <= 0:
+        raise ValueError("size must be positive")
+    for index in range(0, len(items), size):
+        yield items[index : index + size]
+
+
+def _extract_house_list(result):
+    data_list = []
+    has_more = None
+
+    if isinstance(result, dict):
+        data = result.get("data")
+        if isinstance(data, list):
+            data_list = data
+        elif isinstance(data, dict):
+            if isinstance(data.get("list"), list):
+                data_list = data["list"]
+            elif isinstance(data.get("rows"), list):
+                data_list = data["rows"]
+            if "hasMore" in data:
+                has_more = bool(data.get("hasMore"))
+        elif isinstance(result.get("list"), list):
+            data_list = result["list"]
+    elif isinstance(result, list):
+        data_list = result
+
+    return data_list, has_more
+
+
 def insert_houses(data_list, community_name=None):
     db = SessionLocal()
     inserted_count = 0
     skipped_count = 0
 
     try:
+        staged_by_house_id = {}
         for item in data_list:
             house_id = str(item.get("id") or "").strip()
             item_community_id = item.get("communityID")
@@ -53,6 +87,7 @@ def insert_houses(data_list, community_name=None):
             area = item.get("buildArea") or item.get("area") or building_size or usable_size or 0
 
             values = {
+                "house_id": house_id,
                 "community_id": community_id,
                 "community_name": current_community_name,
                 "house_name": house_name,
@@ -80,45 +115,102 @@ def insert_houses(data_list, community_name=None):
                 "house_status_name": item.get("houseStatusName"),
             }
 
-            house_obj, _ = upsert_model_row(db, House, {"house_id": house_id}, values)
-            db.flush()
+            staged_by_house_id[house_id] = {
+                "house_row": values,
+                "users": item.get("userList") or [],
+            }
 
-            house_pk = house_obj.id
-            db.query(HouseUser).filter(HouseUser.house_fk == house_pk).delete(synchronize_session=False)
+        if not staged_by_house_id:
+            db.commit()
+            logger.info("House sync completed: processed=%s, skipped=%s", inserted_count, skipped_count)
+            return {"inserted": inserted_count, "skipped": skipped_count}
 
-            for user in (item.get("userList") or []):
+        house_rows = [entry["house_row"] for entry in staged_by_house_id.values()]
+        upsert_model_rows(
+            db,
+            House,
+            house_rows,
+            key_fields=("house_id",),
+        )
+
+        house_id_to_pk = {}
+        unique_house_ids = sorted(staged_by_house_id.keys())
+        for house_id_chunk in _iter_chunks(unique_house_ids, 900):
+            rows = (
+                db.query(House.id, House.house_id)
+                .filter(House.house_id.in_(house_id_chunk))
+                .all()
+            )
+            for row in rows:
+                house_id_to_pk[str(row.house_id)] = int(row.id)
+
+        touched_house_fks = sorted(set(house_id_to_pk.values()))
+        for house_fk_chunk in _iter_chunks(touched_house_fks, 900):
+            db.query(HouseUser).filter(
+                HouseUser.house_fk.in_(house_fk_chunk)
+            ).delete(synchronize_session=False)
+
+        house_user_rows = []
+        for house_id, entry in staged_by_house_id.items():
+            house_fk = house_id_to_pk.get(house_id)
+            if not house_fk:
+                continue
+            for user in entry["users"]:
                 if not isinstance(user, dict):
                     continue
                 item_id = user.get("id")
                 if item_id is None:
                     continue
-                db.add(
-                    HouseUser(
-                        house_fk=house_pk,
-                        origin_id=user.get("originId"),
-                        item_id=item_id,
-                        name=user.get("name"),
-                        item_type=user.get("itemType"),
-                        licence=user.get("licence"),
-                        park_name=user.get("parkName"),
-                        owner_name=user.get("ownerName"),
-                        owner_phone=user.get("ownerPhone"),
-                        charge_item_info=_to_json_str(user.get("chargeItemInfo")),
-                        start_time=user.get("startTime"),
-                        end_time=user.get("endTime"),
-                        community_name=user.get("communityName"),
-                        natural_period=user.get("naturalPeriod"),
-                        period_type=user.get("periodType"),
-                        period_num=user.get("periodNum"),
-                    )
+                house_user_rows.append(
+                    {
+                        "house_fk": house_fk,
+                        "origin_id": user.get("originId"),
+                        "item_id": item_id,
+                        "name": user.get("name"),
+                        "item_type": user.get("itemType"),
+                        "licence": user.get("licence"),
+                        "park_name": user.get("parkName"),
+                        "owner_name": user.get("ownerName"),
+                        "owner_phone": user.get("ownerPhone"),
+                        "charge_item_info": _to_json_str(user.get("chargeItemInfo")),
+                        "start_time": user.get("startTime"),
+                        "end_time": user.get("endTime"),
+                        "community_name": user.get("communityName"),
+                        "natural_period": user.get("naturalPeriod"),
+                        "period_type": user.get("periodType"),
+                        "period_num": user.get("periodNum"),
+                    }
                 )
 
-            db.query(Park).filter(Park.house_id == house_id).update(
-                {Park.house_fk: house_pk},
-                synchronize_session=False,
-            )
+        if house_user_rows:
+            db.bulk_insert_mappings(HouseUser, house_user_rows)
 
-            inserted_count += 1
+        park_update_rows = []
+        for house_id_chunk in _iter_chunks(unique_house_ids, 900):
+            park_rows = (
+                db.query(Park.id, Park.house_id, Park.house_fk)
+                .filter(
+                    and_(
+                        Park.house_id.isnot(None),
+                        Park.house_id.in_(house_id_chunk),
+                    )
+                )
+                .all()
+            )
+            for row in park_rows:
+                matched_house_fk = house_id_to_pk.get(str(row.house_id))
+                if matched_house_fk and row.house_fk != matched_house_fk:
+                    park_update_rows.append(
+                        {
+                            "id": int(row.id),
+                            "house_fk": matched_house_fk,
+                        }
+                    )
+
+        if park_update_rows:
+            db.bulk_update_mappings(Park, park_update_rows)
+
+        inserted_count = len(staged_by_house_id)
 
         db.commit()
         logger.info("House sync completed: processed=%s, skipped=%s", inserted_count, skipped_count)
@@ -133,7 +225,8 @@ def insert_houses(data_list, community_name=None):
 def sync_houses_for_community(community_id: str, task_id: str = None):
     page = 1
     total_inserted = 0
-    page_size = 100
+    page_size = DEFAULT_HOUSE_PAGE_SIZE
+    community_start = time.perf_counter()
 
     base_url = get_api_url("getHouseList")
     msg = f"Syncing houses for community {community_id}"
@@ -155,6 +248,7 @@ def sync_houses_for_community(community_id: str, task_id: str = None):
         })
 
         while True:
+            page_start = time.perf_counter()
             current_vars = dict(preloaded_vars)
             current_vars.update({"page": str(page)})
 
@@ -184,7 +278,9 @@ def sync_houses_for_community(community_id: str, task_id: str = None):
                 }
 
             try:
+                request_start = time.perf_counter()
                 result = marki_client.request(method, base_url, params=params, json_data=json_body)
+                request_elapsed = time.perf_counter() - request_start
             except Exception as exc:
                 err_msg = f"Community {community_id} page {page} request failed: {exc}"
                 logger.error(err_msg)
@@ -192,38 +288,47 @@ def sync_houses_for_community(community_id: str, task_id: str = None):
                     tracker.add_log(task_id, err_msg, "error")
                 break
 
-            data_list = []
-            if isinstance(result, dict):
-                if isinstance(result.get("data"), list):
-                    data_list = result["data"]
-                elif isinstance(result.get("data"), dict) and isinstance(result["data"].get("list"), list):
-                    data_list = result["data"]["list"]
-                elif isinstance(result.get("list"), list):
-                    data_list = result["list"]
-            elif isinstance(result, list):
-                data_list = result
+            data_list, has_more = _extract_house_list(result)
 
             if not data_list:
                 break
 
+            write_start = time.perf_counter()
             counts = insert_houses(data_list, community_name)
+            write_elapsed = time.perf_counter() - write_start
             total_inserted += counts["inserted"]
+            page_elapsed = time.perf_counter() - page_start
 
-            info_msg = f"Community {community_id} page {page}: processed {len(data_list)} rows"
+            info_msg = (
+                f"Community {community_id} page {page}: processed {len(data_list)} rows "
+                f"in {page_elapsed:.2f}s (request {request_elapsed:.2f}s, write {write_elapsed:.2f}s)"
+            )
             logger.info(info_msg)
             if task_id:
                 tracker.add_log(task_id, info_msg, "info")
 
-            if len(data_list) < page_size:
+            if has_more is False:
+                break
+            if has_more is None and len(data_list) < page_size:
                 break
             page += 1
     finally:
         db_session.close()
 
+    community_elapsed = time.perf_counter() - community_start
+    summary_msg = (
+        f"Community {community_id} house sync finished: processed {total_inserted} rows "
+        f"in {community_elapsed:.2f}s"
+    )
+    logger.info(summary_msg)
+    if task_id:
+        tracker.add_log(task_id, summary_msg, "info")
+
     return total_inserted
 
 
 def sync_houses(community_ids: list = None, task_id: str = None):
+    sync_start = time.perf_counter()
     if not community_ids:
         db = SessionLocal()
         try:
@@ -261,7 +366,8 @@ def sync_houses(community_ids: list = None, task_id: str = None):
     if task_id:
         tracker.update_progress(task_id, len(community_ids), "sync completed")
         tracker.update_status(task_id, "completed")
-        tracker.add_log(task_id, f"House sync completed. Processed {total_all} rows", "info")
+        total_elapsed = time.perf_counter() - sync_start
+        tracker.add_log(task_id, f"House sync completed. Processed {total_all} rows in {total_elapsed:.2f}s", "info")
 
     return total_all
 

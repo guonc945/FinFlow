@@ -145,12 +145,13 @@ def get_projects(
 ):
     _require_api_permission(db, current_user, "project.manage")
     query = db.query(models.ProjectList)
-    if allowed_community_ids:
-        query = query.filter(models.ProjectList.proj_id.in_(allowed_community_ids))
-    else:
-        return {"items": [], "total": 0}
 
     if current_account_book_only:
+        if allowed_community_ids:
+            query = query.filter(models.ProjectList.proj_id.in_(allowed_community_ids))
+        else:
+            return {"items": [], "total": 0}
+
         account_book_number = _decode_header_value(request.headers.get("X-Account-Book-Number")) if request else None
         if not account_book_number:
             return {"items": [], "total": 0}

@@ -32,6 +32,10 @@ axios.interceptors.request.use((config) => {
     }
 
     // 注入当前账套上下文
+    const accountBookId = localStorage.getItem('active_account_book');
+    if (accountBookId) {
+        config.headers['X-Account-Book-Id'] = encodeURIComponent(accountBookId);
+    }
     const accountBookNumber = localStorage.getItem('active_account_book_number');
     if (accountBookNumber) {
         config.headers['X-Account-Book-Number'] = encodeURIComponent(accountBookNumber);

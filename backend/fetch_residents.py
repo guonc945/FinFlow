@@ -2,19 +2,52 @@
 import json
 import logging
 import os
+import time
 
 from dotenv import load_dotenv
 
 from database import SessionLocal
 from models import ExternalApi, ProjectList, Resident
 from sync_tracker import tracker
-from utils.db_compat import fetch_all_project_ids, upsert_model_row
+from utils.db_compat import fetch_all_project_ids, upsert_model_rows
 from utils.marki_client import get_api_url, marki_client
 from utils.variable_parser import build_variable_map, resolve_dict_variables
 
 load_dotenv()
 
 logger = logging.getLogger("resident_sync")
+DEFAULT_RESIDENT_PAGE_SIZE = max(1, int(os.getenv("MARKI_RESIDENT_PAGE_SIZE", "500")))
+
+
+def _extract_resident_list(result):
+    data_list = []
+    has_more = None
+    next_index = ""
+
+    if isinstance(result, dict):
+        if "hasMore" in result:
+            has_more = bool(result.get("hasMore"))
+            next_index = str(result.get("index") or "")
+
+        data = result.get("data")
+        if isinstance(data, list):
+            data_list = data
+        elif isinstance(data, dict):
+            if isinstance(data.get("list"), list):
+                data_list = data["list"]
+            elif isinstance(data.get("rows"), list):
+                data_list = data["rows"]
+            if "hasMore" in data:
+                has_more = bool(data.get("hasMore"))
+            candidate_index = data.get("index") or data.get("blockIndex")
+            if candidate_index is not None:
+                next_index = str(candidate_index)
+        elif isinstance(result.get("list"), list):
+            data_list = result["list"]
+    elif isinstance(result, list):
+        data_list = result
+
+    return data_list, has_more, next_index
 
 
 def insert_residents(data_list, community_name=None):
@@ -23,6 +56,7 @@ def insert_residents(data_list, community_name=None):
     skipped_count = 0
 
     try:
+        resident_rows = []
         for item in data_list:
             resident_id = str(item.get("id") or "").strip()
 
@@ -44,19 +78,26 @@ def insert_residents(data_list, community_name=None):
                 skipped_count += 1
                 continue
 
-            upsert_model_row(
-                db,
-                Resident,
-                {"resident_id": resident_id, "community_id": community_id},
+            resident_rows.append(
                 {
+                    "resident_id": resident_id,
+                    "community_id": community_id,
                     "community_name": current_community_name,
                     "name": name,
                     "phone": phone,
                     "houses": houses_str,
                     "labels": labels_str,
-                },
+                }
             )
-            inserted_count += 1
+
+        if resident_rows:
+            upsert_model_rows(
+                db,
+                Resident,
+                resident_rows,
+                key_fields=("resident_id", "community_id"),
+            )
+            inserted_count = len(resident_rows)
 
         db.commit()
         return {"inserted": inserted_count, "skipped": skipped_count}
@@ -70,7 +111,8 @@ def insert_residents(data_list, community_name=None):
 def sync_residents_for_community(community_id: str, task_id: str = None):
     page = 1
     total_inserted = 0
-    page_size = 100
+    page_size = DEFAULT_RESIDENT_PAGE_SIZE
+    community_start = time.perf_counter()
 
     base_url = get_api_url("getUserList")
 
@@ -94,6 +136,7 @@ def sync_residents_for_community(community_id: str, task_id: str = None):
 
         index_val = ""
         while True:
+            page_start = time.perf_counter()
             current_vars = dict(preloaded_vars)
             current_vars.update({
                 "page": str(page),
@@ -128,7 +171,9 @@ def sync_residents_for_community(community_id: str, task_id: str = None):
                     params["index"] = index_val
 
             try:
+                request_start = time.perf_counter()
                 result = marki_client.request(method, base_url, params=params, json_data=json_body)
+                request_elapsed = time.perf_counter() - request_start
             except Exception as exc:
                 err_msg = f"Community {community_id} page {page} request failed: {exc}"
                 logger.error(err_msg)
@@ -136,54 +181,52 @@ def sync_residents_for_community(community_id: str, task_id: str = None):
                     tracker.add_log(task_id, err_msg, "error")
                 break
 
-            data_list = []
-            has_more = False
-            next_index = ""
-
-            if isinstance(result, dict):
-                if "hasMore" in result:
-                    has_more = bool(result.get("hasMore"))
-                    next_index = str(result.get("index") or "")
-
-                if isinstance(result.get("data"), list):
-                    data_list = result["data"]
-                elif isinstance(result.get("data"), dict):
-                    if isinstance(result["data"].get("list"), list):
-                        data_list = result["data"]["list"]
-                    if "hasMore" in result["data"]:
-                        has_more = bool(result["data"].get("hasMore"))
-                        next_index = str(result["data"].get("index") or "")
-                elif isinstance(result.get("list"), list):
-                    data_list = result["list"]
-            elif isinstance(result, list):
-                data_list = result
+            data_list, has_more, next_index = _extract_resident_list(result)
 
             if not data_list:
                 break
 
+            write_start = time.perf_counter()
             counts = insert_residents(data_list, community_name)
+            write_elapsed = time.perf_counter() - write_start
             total_inserted += counts["inserted"]
+            page_elapsed = time.perf_counter() - page_start
 
-            info_msg = f"Community {community_id} page {page}: processed {len(data_list)} rows"
+            info_msg = (
+                f"Community {community_id} page {page}: processed {len(data_list)} rows "
+                f"in {page_elapsed:.2f}s (request {request_elapsed:.2f}s, write {write_elapsed:.2f}s)"
+            )
             logger.info(info_msg)
             if task_id:
                 tracker.add_log(task_id, info_msg, "info")
 
-            if has_more:
+            if has_more is True:
                 if next_index:
                     index_val = next_index
                 page += 1
             else:
+                if has_more is False:
+                    break
                 if len(data_list) < page_size:
                     break
                 page += 1
     finally:
         db_session.close()
 
+    community_elapsed = time.perf_counter() - community_start
+    summary_msg = (
+        f"Community {community_id} resident sync finished: processed {total_inserted} rows "
+        f"in {community_elapsed:.2f}s"
+    )
+    logger.info(summary_msg)
+    if task_id:
+        tracker.add_log(task_id, summary_msg, "info")
+
     return total_inserted
 
 
 def sync_residents(community_ids: list = None, task_id: str = None):
+    sync_start = time.perf_counter()
     if not community_ids:
         db = SessionLocal()
         try:
@@ -221,7 +264,8 @@ def sync_residents(community_ids: list = None, task_id: str = None):
     if task_id:
         tracker.update_progress(task_id, len(community_ids), "sync completed")
         tracker.update_status(task_id, "completed")
-        tracker.add_log(task_id, f"Resident sync completed. Processed {total_all} rows", "info")
+        total_elapsed = time.perf_counter() - sync_start
+        tracker.add_log(task_id, f"Resident sync completed. Processed {total_all} rows in {total_elapsed:.2f}s", "info")
 
     return total_all
 

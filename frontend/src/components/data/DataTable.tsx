@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
-import { ArrowUpDown, ArrowUp, ArrowDown, Settings2, GripVertical, Eye, EyeOff, ChevronUp, ChevronDown, RotateCcw } from 'lucide-react';
+import { ArrowUpDown, ArrowUp, ArrowDown, Settings2, GripVertical, Eye, EyeOff, ChevronUp, ChevronDown, RotateCcw, Info } from 'lucide-react';
 import classNames from 'classnames';
 import { getMyTableColumnPreference, updateMyTableColumnPreference } from '../../services/api';
 import './DataTable.css';
@@ -651,7 +651,13 @@ const DataTable = <T extends Record<string, any>>({
                             ))
                         ) : (
                             <tr>
-                                <td colSpan={effectiveColumns.length || 1} className="empty-state">No Data Available</td>
+                                <td colSpan={effectiveColumns.length || 1} className="empty-state">
+                                    <div className="empty-state-content">
+                                        <Info size={18} className="empty-state-icon" />
+                                        <div className="empty-state-title">当前还没有可显示的数据</div>
+                                        <div className="empty-state-description">可以试试调整筛选条件，或者先同步 / 新增相关数据。</div>
+                                    </div>
+                                </td>
                             </tr>
                         )}
                     </tbody>

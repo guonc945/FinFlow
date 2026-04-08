@@ -334,6 +334,31 @@
     color: var(--text-tertiary);
 }
 
+.empty-state-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 160px;
+}
+
+.empty-state-icon {
+    color: var(--info);
+    opacity: 0.8;
+}
+
+.empty-state-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.empty-state-description {
+    font-size: 0.85rem;
+    color: var(--text-tertiary);
+}
+
 .table-loading {
     padding: 2rem;
     text-align: center;

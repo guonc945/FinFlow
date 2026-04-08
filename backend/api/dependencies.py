@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import json
 from typing import Any, Dict, List, Optional, Set
+from urllib.parse import unquote
 
 from fastapi import Depends, Header, HTTPException, Request
 from sqlalchemy import String, cast
@@ -317,34 +318,66 @@ def get_user_context(
     }
 
 
+def _get_project_ids_for_account_book(db: Session, account_book_number: str) -> List[int]:
+    normalized_book_number = str(account_book_number or "").strip()
+    if not normalized_book_number:
+        return []
+
+    rows = (
+        db.query(models.ProjectList.proj_id)
+        .join(
+            models.KingdeeAccountBook,
+            cast(models.ProjectList.kingdee_account_book_id, String) == cast(models.KingdeeAccountBook.id, String),
+        )
+        .filter(models.KingdeeAccountBook.number == normalized_book_number)
+        .all()
+    )
+    return [int(row[0]) for row in rows if row and row[0] is not None]
+
+
+def _get_user_account_book_numbers(current_user: Optional[models.User]) -> Set[str]:
+    if not current_user:
+        return set()
+
+    numbers: Set[str] = set()
+    for account_book in current_user.account_books or []:
+        number = str(getattr(account_book, "number", "") or "").strip()
+        if number:
+            numbers.add(number)
+    return numbers
+
 def get_allowed_community_ids(
     request: Request,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ) -> List[int]:
     """Get the community IDs the current user can access."""
-    # 澧炲姞绠＄悊鍛樿鑹插垽鏂細绠＄悊鍛樺彲浠ユ搷浣滄墍鏈夊洯鍖?
-    if current_user and current_user.role == 'admin':
-        all_ids = db.query(models.ProjectList.proj_id).all()
-        return [r[0] for r in all_ids]
+    selected_account_book_number = unquote(request.headers.get("X-Account-Book-Number") or "").strip()
 
-    account_book_number = request.headers.get('X-Account-Book-Number')
-    if not account_book_number:
-        # 濡傛灉娌℃湁璐︾翱鍙凤紝杩斿洖绌哄垪琛ㄥ疄鐜板畬鍏ㄩ殧绂伙紝闄ら潪鏄壒娈婄鐞嗗憳鏉冮檺锛堟殏涓嶅鐞嗭級
+    if selected_account_book_number:
+        if current_user and current_user.role != "admin":
+            user_account_book_numbers = _get_user_account_book_numbers(current_user)
+            if user_account_book_numbers and selected_account_book_number not in user_account_book_numbers:
+                return []
+
+        return _get_project_ids_for_account_book(db, selected_account_book_number)
+
+    if current_user and current_user.role == "admin":
+        rows = db.query(models.ProjectList.proj_id).all()
+        return [int(row[0]) for row in rows if row and row[0] is not None]
+
+    user_account_book_numbers = sorted(_get_user_account_book_numbers(current_user))
+    if not user_account_book_numbers:
         return []
-        
-    from sqlalchemy import cast, String
-    from urllib.parse import unquote
-    book_num = unquote(account_book_number)
-    
-    # 鏌ユ壘鍏宠仈鍒版璐︾翱鐨勬墍鏈夊洯鍖篒D
-    allowed_ids = db.query(models.ProjectList.proj_id).join(
-        models.KingdeeAccountBook, 
-        cast(models.ProjectList.kingdee_account_book_id, String) == cast(models.KingdeeAccountBook.id, String)
-    ).filter(
-        models.KingdeeAccountBook.number == book_num
-    ).all()
-    
-    return [r[0] for r in allowed_ids]
 
+    rows = (
+        db.query(models.ProjectList.proj_id)
+        .join(
+            models.KingdeeAccountBook,
+            cast(models.ProjectList.kingdee_account_book_id, String) == cast(models.KingdeeAccountBook.id, String),
+        )
+        .filter(models.KingdeeAccountBook.number.in_(user_account_book_numbers))
+        .all()
+    )
+    return [int(row[0]) for row in rows if row and row[0] is not None]
 

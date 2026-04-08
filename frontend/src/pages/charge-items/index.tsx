@@ -63,7 +63,7 @@ const ChargeItems = () => {
 
     const fetchProjects = async () => {
         try {
-            const data = await getProjects();
+            const data = await getProjects({ skip: 0, limit: 2000, current_account_book_only: true });
             setProjects(data.items || data);
         } catch (error) {
             console.error('Failed to load projects:', error);
@@ -216,12 +216,18 @@ const ChargeItems = () => {
                                         <button className="btn-text text-xs" onClick={() => setSelectedProjectIds([])}>清空</button>
                                     </div>
                                     <div className="dropdown-list custom-scrollbar">
-                                        {filteredProjectsList.map(p => (
-                                            <div key={p.proj_id} className={`dropdown-item ${selectedProjectIds.includes(p.proj_id) ? 'selected' : ''}`} onClick={(e) => { e.stopPropagation(); toggleProject(p.proj_id); }}>
-                                                <div className="checkbox">{selectedProjectIds.includes(p.proj_id) && <div className="check-dot"></div>}</div>
-                                                <div className="item-info"><span className="name">{p.proj_name}</span></div>
+                                        {filteredProjectsList.length > 0 ? (
+                                            filteredProjectsList.map(p => (
+                                                <div key={p.proj_id} className={`dropdown-item ${selectedProjectIds.includes(p.proj_id) ? 'selected' : ''}`} onClick={(e) => { e.stopPropagation(); toggleProject(p.proj_id); }}>
+                                                    <div className="checkbox">{selectedProjectIds.includes(p.proj_id) && <div className="check-dot"></div>}</div>
+                                                    <div className="item-info"><span className="name">{p.proj_name}</span></div>
+                                                </div>
+                                            ))
+                                        ) : (
+                                            <div className="p-3 text-xs text-secondary">
+                                                {projects.length === 0 ? '当前账簿下暂无关联园区' : '没有找到匹配的园区'}
                                             </div>
-                                        ))}
+                                        )}
                                     </div>
                                 </div>
                             )}
@@ -245,6 +251,11 @@ const ChargeItems = () => {
                             </button>
                         </div>
                     </div>
+                    {projects.length === 0 && (
+                        <div className="text-xs text-warning mt-2">
+                            当前账簿下暂无关联园区，请先到园区管理中配置账簿映射。
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -392,8 +403,6 @@ const Loader2 = ({ className, size }: { className?: string, size?: number }) => 
 );
 
 export default ChargeItems;
-
-
 
 
 
