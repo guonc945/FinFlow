@@ -9,6 +9,7 @@ import {
     Pencil,
     Play,
     Plus,
+    Power,
     RefreshCw,
     Settings2,
     Trash2,
@@ -299,6 +300,7 @@ export const SyncSchedulesPage = ({ moduleType = 'data-sync' }: { moduleType?: S
     const [formOpen, setFormOpen] = useState(false);
     const [configDrawerOpen, setConfigDrawerOpen] = useState(false);
     const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
+    const [latestExecDrawerOpen, setLatestExecDrawerOpen] = useState(false);
     const [editingSchedule, setEditingSchedule] = useState<SyncSchedule | null>(null);
     const [activeTargetTab, setActiveTargetTab] = useState<'mark' | 'kingdee'>('mark');
     const [voucherFormStep, setVoucherFormStep] = useState<VoucherPushFormStep>('basic');
@@ -879,67 +881,19 @@ export const SyncSchedulesPage = ({ moduleType = 'data-sync' }: { moduleType?: S
                     onClick={() => setSelectedScheduleId(schedule.id)}
                 >
                     <div className="schedule-card-top">
-                        <div>
-                            <div className="schedule-card-title-row">
-                                <h3>{schedule.name}</h3>
-                                <span className={`status-badge ${schedule.enabled ? 'active' : 'paused'}`}>
-                                    {schedule.enabled ? '启用' : '停用'}
+                        <div className="schedule-card-title-row">
+                            <h3>{schedule.name}</h3>
+                            <span className={`status-badge ${schedule.enabled ? 'active' : 'paused'}`}>
+                                {schedule.enabled ? '启用' : '停用'}
+                            </span>
+                            {schedule.is_running && (
+                                <span className="status-badge running">
+                                    <Loader2 size={12} className="spin" />
+                                    执行中
                                 </span>
-                                {schedule.is_running && (
-                                    <span className="status-badge running">
-                                        <Loader2 size={12} className="spin" />
-                                        执行中
-                                    </span>
-                                )}
-                            </div>
-                            <p>{schedule.description || '未填写说明'}</p>
+                            )}
                         </div>
-                        <div className="schedule-card-actions">
-                            <button
-                                type="button"
-                                className="icon-button"
-                                title="立即执行"
-                                onClick={(event) => {
-                                    event.stopPropagation();
-                                    handleRunNow(schedule);
-                                }}
-                            >
-                                <Play size={15} />
-                            </button>
-                            <button
-                                type="button"
-                                className="icon-button"
-                                title="编辑计划"
-                                onClick={(event) => {
-                                    event.stopPropagation();
-                                    openEditModal(schedule);
-                                }}
-                            >
-                                <Pencil size={15} />
-                            </button>
-                            <button
-                                type="button"
-                                className="icon-button"
-                                title={schedule.enabled ? '停用计划' : '启用计划'}
-                                onClick={(event) => {
-                                    event.stopPropagation();
-                                    void handleToggle(schedule);
-                                }}
-                            >
-                                {schedule.enabled ? <Pause size={15} /> : <Play size={15} />}
-                            </button>
-                            <button
-                                type="button"
-                                className="icon-button danger"
-                                title="删除计划"
-                                onClick={(event) => {
-                                    event.stopPropagation();
-                                    handleDelete(schedule);
-                                }}
-                            >
-                                <Trash2 size={15} />
-                            </button>
-                        </div>
+                        <p>{schedule.description || '未填写说明'}</p>
                     </div>
 
                     {renderSchedulePills(schedule)}
@@ -970,26 +924,71 @@ export const SyncSchedulesPage = ({ moduleType = 'data-sync' }: { moduleType?: S
                     <div className="schedule-card-entry-actions">
                         <button
                             type="button"
-                            className="schedule-card-entry-button"
+                            className="icon-button"
+                            title="查看配置"
                             onClick={(event) => {
                                 event.stopPropagation();
                                 openConfigDrawer(schedule);
                             }}
                         >
-                            查看配置
+                            <Settings2 size={15} />
                         </button>
                         <button
                             type="button"
-                            className="schedule-card-entry-button"
+                            className="icon-button"
+                            title="执行追踪"
                             onClick={(event) => {
                                 event.stopPropagation();
                                 openHistoryDrawer(schedule);
                             }}
                         >
-                            执行追踪
+                            <RefreshCw size={15} />
+                        </button>
+                        <button
+                            type="button"
+                            className="icon-button"
+                            title="立即执行"
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                handleRunNow(schedule);
+                            }}
+                        >
+                            <Play size={15} />
+                        </button>
+                        <button
+                            type="button"
+                            className="icon-button"
+                            title="编辑计划"
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                openEditModal(schedule);
+                            }}
+                        >
+                            <Pencil size={15} />
+                        </button>
+                        <button
+                            type="button"
+                            className="icon-button"
+                            title={schedule.enabled ? '停用计划' : '启用计划'}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                void handleToggle(schedule);
+                            }}
+                        >
+                            {schedule.enabled ? <Pause size={15} /> : <Power size={15} />}
+                        </button>
+                        <button
+                            type="button"
+                            className="icon-button danger"
+                            title="删除计划"
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                handleDelete(schedule);
+                            }}
+                        >
+                            <Trash2 size={15} />
                         </button>
                     </div>
-
                     <div className="schedule-footer">
                         <div>
                             <span>最近结果</span>
@@ -1525,6 +1524,10 @@ export const SyncSchedulesPage = ({ moduleType = 'data-sync' }: { moduleType?: S
                     <p className="sync-schedules-subtitle">{copy.subtitle}</p>
                 </div>
                 <div className="sync-schedules-actions">
+                    <button className="sync-action ghost" onClick={() => setLatestExecDrawerOpen(true)}>
+                        <RefreshCw size={16} />
+                        最近执行
+                    </button>
                     <button className="sync-action ghost" onClick={() => void refreshAll(selectedScheduleId)}>
                         <RefreshCw size={16} />
                         刷新数据
@@ -1550,16 +1553,6 @@ export const SyncSchedulesPage = ({ moduleType = 'data-sync' }: { moduleType?: S
                     </div>
                     {scheduleListContent}
                 </div>
-
-                <aside className="execution-sidebar">
-                    <div className="panel-header">
-                        <div>
-                            <h2>最近执行</h2>
-                            <p>这里保留最近批次的全局执行概况，详细记录请从计划卡片进入执行追踪。</p>
-                        </div>
-                    </div>
-                    {latestExecutionSection}
-                </aside>
             </section>
 
             {configDrawerOpen && (
@@ -1602,6 +1595,27 @@ export const SyncSchedulesPage = ({ moduleType = 'data-sync' }: { moduleType?: S
                             />
                         </div>
                         <div className="schedule-drawer-body">{selectedExecutionSection}</div>
+                    </aside>
+                </div>
+            )}
+
+            {latestExecDrawerOpen && (
+                <div className="schedule-drawer-overlay" onClick={() => setLatestExecDrawerOpen(false)}>
+                    <aside className="schedule-drawer" onClick={(event) => event.stopPropagation()}>
+                        <div className="schedule-drawer-header">
+                            <div>
+                                <p className="sync-schedules-eyebrow">Latest Executions</p>
+                                <h2>最近执行</h2>
+                                <p>这里显示所有计划最近批次的执行概况，详细记录请从计划卡片进入执行追踪。</p>
+                            </div>
+                            <button
+                                type="button"
+                                className="modal-close-button"
+                                onClick={() => setLatestExecDrawerOpen(false)}
+                                aria-label="关闭"
+                            />
+                        </div>
+                        <div className="schedule-drawer-body">{latestExecutionSection}</div>
                     </aside>
                 </div>
             )}
