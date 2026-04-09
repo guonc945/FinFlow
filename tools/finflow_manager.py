@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 import argparse
@@ -354,6 +354,20 @@ DEFAULT_STATE = {
     "log_archive_retention_days": "90",
     "webhook_url": "",
 }
+
+OPS_STATE_KEYS = (
+    "frontend_deploy_source",
+    "release_package_path",
+    "backup_dir",
+    "sqlcmd_path",
+    "git_repo_url",
+    "git_branch",
+    "backup_retention_days",
+    "backup_retention_count",
+    "log_max_size_mb",
+    "log_archive_retention_days",
+    "webhook_url",
+)
 
 
 def parse_bool(value: Any) -> bool:
@@ -1200,6 +1214,37 @@ def send_webhook_notification(webhook_url: str, title: str, message: str) -> boo
         return False
 
 
+def check_database_connectivity(config: Dict[str, str], sqlcmd: str = "sqlcmd") -> Tuple[bool, str]:
+    conn = extract_db_connection(config)
+    missing = [key for key in ("host", "port", "user", "dbname") if not conn.get(key)]
+    if missing:
+        return False, f"数据库配置不完整，缺少：{', '.join(missing)}"
+
+    try:
+        cmd = [
+            sqlcmd,
+            "-S", f"{conn['host']},{conn['port']}",
+            "-U", conn["user"],
+            "-d", conn["dbname"],
+            "-Q", "SELECT 1",
+            "-b",
+        ]
+        if conn.get("password"):
+            cmd.extend(["-P", conn["password"]])
+
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        result = subprocess.run(cmd, capture_output=True, text=False, timeout=15, creationflags=creationflags)
+        if result.returncode == 0:
+            return True, f"数据库 {conn['dbname']} 连接正常"
+        stderr_text = decode_console_output(result.stderr or b"")
+        stdout_text = decode_console_output(result.stdout or b"")
+        return False, (stderr_text or stdout_text or "连接失败").strip()
+    except FileNotFoundError:
+        return False, f"未找到 sqlcmd：{sqlcmd}"
+    except Exception as exc:
+        return False, f"连接检测异常：{exc}"
+
+
 class BackendProcessController:
     def __init__(self) -> None:
         self.process: subprocess.Popen | None = None
@@ -1212,6 +1257,8 @@ class BackendProcessController:
         self.last_started_at = 0.0
         self.consecutive_failed_starts = 0
         self.auto_restart_suppressed = False
+        self.last_session_marker = ""
+        self.last_session_started_label = ""
         write_runtime_state(
             backend_pid=0,
             user_stopped=False,
@@ -1222,8 +1269,6 @@ class BackendProcessController:
             last_session_marker=self.last_session_marker,
             last_session_started_label=self.last_session_started_label,
         )
-        self.last_session_marker = ""
-        self.last_session_started_label = ""
 
     def _close_handles(self) -> None:
         for handle in (self.stdout_handle, self.stderr_handle):
@@ -1749,6 +1794,7 @@ class FinFlowManagerApp:
         self.status_vars: Dict[str, tk.StringVar] = {}
         self.manager_option_vars: Dict[str, tk.BooleanVar] = {}
         self.ops_vars: Dict[str, tk.StringVar] = {}
+        self.init_ops_vars()
         self.log_choice = tk.StringVar(value="后端标准输出")
         self.log_auto_refresh = tk.BooleanVar(value=True)
         self.log_status_var = tk.StringVar(value="当前显示：历史日志")
@@ -1775,6 +1821,10 @@ class FinFlowManagerApp:
         self.schedule_log_refresh(1200)
         self.schedule_health_refresh(1800)
         self.root.after(1500, self.maybe_start_backend_on_launch)
+
+    def init_ops_vars(self) -> None:
+        for key in OPS_STATE_KEYS:
+            self.ops_vars[key] = tk.StringVar(value=str(self.manager_state.get(key, DEFAULT_STATE.get(key, ""))))
 
     def load_config_values(self) -> Tuple[Dict[str, str], Dict[str, str]]:
         values = dict(DEFAULT_ENV)
@@ -2029,6 +2079,7 @@ class FinFlowManagerApp:
             ("认证配置", "认证配置", "管理 JWT 密钥和 token 生命周期"),
             ("外部系统配置", "外部系统配置", "配置 Marki 等外部系统接入信息"),
         ]
+        config_nav_items.append(("git_repo", "Git 仓库配置", "统一维护仓库地址与分支，供运维和一键部署复用"))
         self.create_side_nav(
             nav_frame,
             config_nav_items,
@@ -2048,6 +2099,26 @@ class FinFlowManagerApp:
                 section_frame.columnconfigure(1, weight=1)
                 self.form_vars[key] = var
             self.config_section_frames[section_title] = section_frame
+
+        git_section = ttk.LabelFrame(self.config_content_host, text="Git 仓库配置", padding=16)
+        ttk.Label(
+            git_section,
+            text="运维工具中的 Git 拉取更新和一键部署（Git 模式）统一使用此处配置。",
+            justify="left",
+        ).grid(row=0, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 8))
+        ttk.Label(git_section, text="仓库地址：", width=18).grid(row=1, column=0, sticky="w", padx=6, pady=6)
+        ttk.Entry(git_section, textvariable=self.ops_vars["git_repo_url"], width=88).grid(
+            row=1, column=1, sticky="ew", padx=6, pady=6
+        )
+        ttk.Label(git_section, text="分支名称：", width=18).grid(row=2, column=0, sticky="w", padx=6, pady=6)
+        ttk.Entry(git_section, textvariable=self.ops_vars["git_branch"], width=30).grid(
+            row=2, column=1, sticky="w", padx=6, pady=6
+        )
+        ttk.Button(git_section, text="保存 Git 配置", command=self.save_manager_state).grid(
+            row=3, column=1, sticky="w", padx=6, pady=(8, 0)
+        )
+        git_section.columnconfigure(1, weight=1)
+        self.config_section_frames["git_repo"] = git_section
 
         self.show_config_section()
 
@@ -2076,8 +2147,9 @@ class FinFlowManagerApp:
         content_frame = ttk.Frame(container)
         content_frame.pack(side="left", fill="both", expand=True)
 
-        self.ops_section_var = tk.StringVar(value="frontend")
+        self.ops_section_var = tk.StringVar(value="one_click_deploy")
         ops_nav_items = [
+            ("one_click_deploy", "一键部署", "全流程编排：检查、备份、部署、启动"),
             ("frontend", "前端部署", "覆盖发布 dist，更新页面静态资源"),
             ("release", "发布包升级", "导入 ZIP 发布包并执行一键升级"),
             ("git_update", "Git 拉取更新", "从远程 Git 仓库拉取最新代码"),
@@ -2103,6 +2175,32 @@ class FinFlowManagerApp:
         self.ops_content_host = ttk.Frame(content_frame)
         self.ops_content_host.pack(fill="both", expand=True)
         self.ops_section_frames: Dict[str, ttk.Frame] = {}
+
+        one_click_frame = ttk.LabelFrame(self.ops_content_host, text="一键部署", padding=16)
+        ttk.Label(
+            one_click_frame,
+            text="自动执行环境检查、数据库备份、代码部署、依赖同步、服务启动与健康检查。",
+            justify="left",
+            wraplength=760,
+        ).pack(anchor="w", pady=(0, 12))
+
+        deploy_type_frame = ttk.Frame(one_click_frame)
+        deploy_type_frame.pack(fill="x", pady=(0, 10))
+        self.deploy_mode = tk.StringVar(value="git")
+        ttk.Radiobutton(deploy_type_frame, text="Git 拉取部署", variable=self.deploy_mode, value="git").pack(side="left", padx=20)
+        ttk.Radiobutton(deploy_type_frame, text="ZIP 发布包部署", variable=self.deploy_mode, value="zip").pack(side="left", padx=20)
+
+        deploy_log_frame = ttk.LabelFrame(one_click_frame, text="部署日志", padding=10)
+        deploy_log_frame.pack(fill="both", expand=True, pady=(0, 10))
+        self.deploy_log_text = scrolledtext.ScrolledText(deploy_log_frame, wrap="word", font=("Consolas", 9), height=14)
+        self.deploy_log_text.pack(fill="both", expand=True)
+        self.deploy_log_text.configure(state="disabled")
+
+        deploy_actions = ttk.Frame(one_click_frame)
+        deploy_actions.pack(fill="x")
+        ttk.Button(deploy_actions, text="开始一键部署", command=self.start_one_click_deploy).pack(side="left", padx=4)
+        ttk.Button(deploy_actions, text="清空日志", command=self.clear_deploy_log).pack(side="left", padx=4)
+        self.ops_section_frames["one_click_deploy"] = one_click_frame
 
         frontend_frame = ttk.LabelFrame(self.ops_content_host, text="前端部署", padding=16)
         frontend_top = ttk.Frame(frontend_frame)
@@ -2188,13 +2286,16 @@ class FinFlowManagerApp:
         git_config.pack(fill="x", pady=(0, 10))
         
         ttk.Label(git_config, text="仓库地址：", width=12).grid(row=0, column=0, sticky="w", padx=6, pady=6)
-        ttk.Entry(git_config, textvariable=self.ops_vars["git_repo_url"], width=60).grid(
+        ttk.Label(git_config, textvariable=self.ops_vars["git_repo_url"]).grid(
             row=0, column=1, sticky="ew", padx=6, pady=6
         )
         
         ttk.Label(git_config, text="分支名称：", width=12).grid(row=1, column=0, sticky="w", padx=6, pady=6)
-        ttk.Entry(git_config, textvariable=self.ops_vars["git_branch"], width=20).grid(
+        ttk.Label(git_config, textvariable=self.ops_vars["git_branch"]).grid(
             row=1, column=1, sticky="w", padx=6, pady=6
+        )
+        ttk.Label(git_config, text="如需修改仓库配置，请到“配置管理”页操作。", foreground="#666666").grid(
+            row=2, column=0, columnspan=2, sticky="w", padx=6, pady=(4, 0)
         )
         git_config.columnconfigure(1, weight=1)
         
@@ -2386,14 +2487,14 @@ class FinFlowManagerApp:
         self.refresh_side_nav_styles(self.config_nav_items, active_key)
 
     def show_ops_section(self) -> None:
-        active_key = getattr(self, "ops_section_var", tk.StringVar(value="frontend")).get()
+        active_key = getattr(self, "ops_section_var", tk.StringVar(value="one_click_deploy")).get()
         for section_key, frame in self.ops_section_frames.items():
             if section_key == active_key:
                 frame.pack(fill="both", expand=True)
             else:
                 frame.pack_forget()
         
-        if active_key in ("frontend", "release"):
+        if active_key in ("frontend", "release", "one_click_deploy"):
             self.ops_common_group.pack(fill="x", pady=(0, 10))
         else:
             self.ops_common_group.pack_forget()
@@ -2651,6 +2752,7 @@ class FinFlowManagerApp:
     def handle_save_config(self) -> None:
         try:
             self.save_config_values()
+            self.save_manager_state()
         except Exception as exc:
             messagebox.showerror("保存失败", str(exc))
             return
@@ -3301,6 +3403,349 @@ class FinFlowManagerApp:
             self.notify_tray("数据库迁移成功", "SQL 脚本已执行")
         else:
             messagebox.showerror("执行失败", detail)
+
+    def append_deploy_log(self, message: str) -> None:
+        self.deploy_log_text.configure(state="normal")
+        self.deploy_log_text.insert("end", f"[{datetime.now().strftime('%H:%M:%S')}] {message}\n")
+        self.deploy_log_text.see("end")
+        self.deploy_log_text.configure(state="disabled")
+        self.root.update()
+
+    def clear_deploy_log(self) -> None:
+        self.deploy_log_text.configure(state="normal")
+        self.deploy_log_text.delete("1.0", tk.END)
+        self.deploy_log_text.configure(state="disabled")
+
+    def start_one_click_deploy(self) -> None:
+        self.save_manager_state()
+        self.clear_deploy_log()
+        
+        mode = self.deploy_mode.get()
+        repo_url = self.ops_vars["git_repo_url"].get().strip()
+        branch = self.ops_vars["git_branch"].get().strip() or "main"
+        sqlcmd = self.ops_vars["sqlcmd_path"].get().strip() or "sqlcmd"
+        config = self.get_effective_config()
+        
+        if mode == "git" and not repo_url:
+            messagebox.showerror("错误", "Git 部署模式需要先配置仓库地址")
+            return
+        if mode == "zip":
+            pkg = Path(self.ops_vars["release_package_path"].get().strip())
+            if not pkg.exists():
+                messagebox.showerror("错误", "ZIP 部署模式需要先选择发布包文件")
+                return
+        
+        proceed = messagebox.askyesno(
+            "确认一键部署",
+            "一键部署将自动执行以下流程：\n"
+            "1. 环境检查（Git/Python/sqlcmd）\n"
+            "2. 数据库连通性检测\n"
+            "3. 数据库备份\n"
+            "4. 代码部署（Git 拉取 或 ZIP 升级）\n"
+            "5. 依赖同步\n"
+            "6. 服务启动\n"
+            "7. 健康检查\n\n"
+            "是否继续？"
+        )
+        if not proceed:
+            return
+        
+        self.root.config(cursor="watch")
+        self.root.update()
+        
+        try:
+            self._run_one_click_deploy(mode, repo_url, branch, sqlcmd, config)
+        except Exception as exc:
+            self.append_deploy_log(f"部署异常: {exc}")
+        finally:
+            self.root.config(cursor="")
+
+    def _run_one_click_deploy(self, mode: str, repo_url: str, branch: str, sqlcmd: str, config: Dict[str, str]) -> None:
+        steps_passed = 0
+        total_steps = 7
+        
+        self.append_deploy_log(f"{'='*50}")
+        self.append_deploy_log(f"开始一键部署 (模式: {'Git 拉取' if mode == 'git' else 'ZIP 发布包'})")
+        self.append_deploy_log(f"{'='*50}")
+        
+        # Step 1: 环境检查与自动完善
+        self.append_deploy_log(f"[1/{total_steps}] 环境检查...")
+        
+        # 检查 Python
+        python_exe = BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
+        system_python = "python"
+        try:
+            result = subprocess.run(
+                [system_python, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if result.returncode == 0:
+                self.append_deploy_log(f"  [OK] 系统 Python 已安装: {result.stdout.strip()}")
+        except Exception:
+            self.append_deploy_log("  [FAIL] 系统未安装 Python，请先安装 Python 3.9+")
+            messagebox.showerror("环境缺失", "请先安装 Python 3.9 或更高版本\n下载地址：https://www.python.org/downloads/")
+            return
+        
+        # 检查并创建虚拟环境
+        if not python_exe.exists():
+            self.append_deploy_log("  正在创建后端虚拟环境...")
+            try:
+                result = subprocess.run(
+                    [system_python, "-m", "venv", str(BACKEND_DIR / ".venv")],
+                    cwd=BACKEND_DIR,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                if result.returncode == 0:
+                    self.append_deploy_log("  [OK] 后端虚拟环境已创建")
+                else:
+                    error_msg = result.stderr or result.stdout or "创建失败"
+                    self.append_deploy_log(f"  [FAIL] 创建虚拟环境失败: {error_msg}")
+                    return
+            except Exception as exc:
+                self.append_deploy_log(f"  [FAIL] 创建虚拟环境异常: {exc}")
+                return
+        else:
+            self.append_deploy_log("  [OK] 后端虚拟环境已存在")
+        
+        # 升级虚拟环境中的 pip
+        self.append_deploy_log("  正在升级虚拟环境 pip...")
+        try:
+            upgrade_result = subprocess.run(
+                [str(python_exe), "-m", "pip", "install", "--upgrade", "pip"],
+                cwd=BACKEND_DIR,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if upgrade_result.returncode == 0:
+                self.append_deploy_log("  [OK] pip 升级成功")
+            else:
+                self.append_deploy_log(f"  [WARN] pip 升级失败: {upgrade_result.stderr or upgrade_result.stdout}")
+        except Exception as exc:
+            self.append_deploy_log(f"  [WARN] pip 升级异常: {exc}")
+        
+        # 检查 Git
+        if not self.check_git_available():
+            self.append_deploy_log("  [FAIL] Git 未安装")
+            messagebox.showerror("环境缺失", "请先安装 Git 并添加到系统 PATH\n下载地址：https://git-scm.com/download/win")
+            return
+        self.append_deploy_log("  [OK] Git 可用")
+        
+        # 检查并初始化 Git 仓库
+        git_dir = ROOT_DIR / ".git"
+        if not git_dir.exists():
+            if mode == "git" and repo_url:
+                self.append_deploy_log("  正在初始化 Git 仓库...")
+                try:
+                    result = subprocess.run(
+                        ["git", "init"],
+                        cwd=ROOT_DIR,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    )
+                    if result.returncode == 0:
+                        self.append_deploy_log("  [OK] Git 仓库已初始化")
+                        
+                        # 添加远程仓库
+                        result = subprocess.run(
+                            ["git", "remote", "add", "origin", repo_url],
+                            cwd=ROOT_DIR,
+                            capture_output=True,
+                            text=True,
+                            timeout=30,
+                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                        )
+                        if result.returncode == 0:
+                            self.append_deploy_log("  [OK] 远程仓库已配置")
+                        else:
+                            self.append_deploy_log(f"  [WARN] 添加远程仓库失败: {result.stderr}")
+                    else:
+                        self.append_deploy_log(f"  [FAIL] Git 初始化失败: {result.stderr}")
+                        return
+                except Exception as exc:
+                    self.append_deploy_log(f"  [FAIL] Git 初始化异常: {exc}")
+                    return
+            else:
+                self.append_deploy_log("  [WARN] Git 仓库未初始化，且未配置远程仓库地址")
+        else:
+            self.append_deploy_log("  [OK] Git 仓库已存在")
+        
+        # 检查 sqlcmd
+        try:
+            subprocess.run([sqlcmd, "-?"], capture_output=True, timeout=5, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            self.append_deploy_log("  [OK] sqlcmd 可用")
+        except Exception:
+            self.append_deploy_log("  [WARN] sqlcmd 不可用，数据库相关操作将跳过")
+            sqlcmd = ""
+        
+        steps_passed += 1
+        
+        # Step 2: 数据库连通性
+        self.append_deploy_log(f"[2/{total_steps}] 数据库连通性检测...")
+        if sqlcmd:
+            db_ok, db_msg = check_database_connectivity(config, sqlcmd)
+            if db_ok:
+                self.append_deploy_log(f"  [OK] {db_msg}")
+            else:
+                self.append_deploy_log(f"  [FAIL] {db_msg}")
+                return
+        else:
+            self.append_deploy_log("  [SKIP] sqlcmd 不可用")
+        steps_passed += 1
+        
+        # Step 3: 数据库备份
+        self.append_deploy_log(f"[3/{total_steps}] 数据库备份...")
+        if sqlcmd:
+            backup_dir = Path(self.ops_vars["backup_dir"].get().strip() or str(BACKUP_DIR))
+            retention_days = int(self.ops_vars["backup_retention_days"].get().strip() or 30)
+            retention_count = int(self.ops_vars["backup_retention_count"].get().strip() or 10)
+            bak_ok, bak_msg = run_database_backup_with_cleanup(config, backup_dir, sqlcmd, retention_days, retention_count)
+            if bak_ok:
+                self.append_deploy_log(f"  [OK] {bak_msg}")
+            else:
+                self.append_deploy_log(f"  [WARN] 备份失败: {bak_msg} (继续部署)")
+        else:
+            self.append_deploy_log("  [SKIP] sqlcmd 不可用")
+        steps_passed += 1
+        
+        # Step 4: 代码部署
+        self.append_deploy_log(f"[4/{total_steps}] 代码部署...")
+        was_running = self.backend.is_running()
+        if was_running:
+            self.backend.stop()
+            self.append_deploy_log("  已停止后端服务")
+        
+        if mode == "git":
+            if not (ROOT_DIR / ".git").exists():
+                self.append_deploy_log("  初始化 Git 仓库...")
+                temp_clone_dir = Path(tempfile.mkdtemp(prefix="finflow_git_clone_"))
+                try:
+                    result = subprocess.run(
+                        ["git", "clone", "--branch", branch, "--depth", "1", repo_url, str(temp_clone_dir)],
+                        capture_output=True, text=True, timeout=300,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    )
+                    if result.returncode != 0:
+                        self.append_deploy_log(f"  [FAIL] 克隆失败: {result.stderr.strip()}")
+                        return
+                    
+                    backup_root = UPGRADE_BACKUP_DIR / datetime.now().strftime("%Y%m%d_%H%M%S_oneclick")
+                    for item_name in ("backend", "frontend", "tools", "deploy"):
+                        src = temp_clone_dir / item_name
+                        if src.exists():
+                            overlay_directory(src, ROOT_DIR / item_name, backup_root)
+                    
+                    self.append_deploy_log(f"  [OK] 代码已克隆并覆盖")
+                finally:
+                    shutil.rmtree(temp_clone_dir, ignore_errors=True)
+            else:
+                diff_result = subprocess.run(
+                    ["git", "diff", "--quiet"], cwd=ROOT_DIR, capture_output=True, timeout=10,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                if diff_result.returncode != 0:
+                    subprocess.run(
+                        ["git", "stash", "push", "-m", f"One-click deploy auto-stash {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"],
+                        cwd=ROOT_DIR, capture_output=True, text=True, timeout=30,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    )
+                    self.append_deploy_log("  已暂存本地变更")
+                
+                fetch_result = subprocess.run(
+                    ["git", "fetch", "origin", branch], cwd=ROOT_DIR, capture_output=True, text=True, timeout=60,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                if fetch_result.returncode != 0:
+                    self.append_deploy_log(f"  [FAIL] fetch 失败: {fetch_result.stderr.strip()}")
+                    return
+                
+                pull_result = subprocess.run(
+                    ["git", "pull", "origin", branch], cwd=ROOT_DIR, capture_output=True, text=True, timeout=300,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                if pull_result.returncode != 0:
+                    self.append_deploy_log(f"  [FAIL] pull 失败: {pull_result.stderr.strip()}")
+                    return
+                
+                if "Already up to date" in pull_result.stdout:
+                    self.append_deploy_log("  [OK] 代码已是最新")
+                else:
+                    self.append_deploy_log(f"  [OK] 代码已更新")
+        else:
+            package_path = Path(self.ops_vars["release_package_path"].get().strip())
+            extract_dir = Path(tempfile.mkdtemp(prefix="finflow_release_"))
+            backup_root = UPGRADE_BACKUP_DIR / datetime.now().strftime("%Y%m%d_%H%M%S_oneclick")
+            try:
+                with zipfile.ZipFile(package_path, "r") as archive:
+                    archive.extractall(extract_dir)
+                
+                release_root = detect_release_root(extract_dir)
+                if (release_root / "backend").exists():
+                    overlay_directory(release_root / "backend", ROOT_DIR / "backend", backup_root)
+                if (release_root / "frontend" / "dist").exists():
+                    replace_directory(release_root / "frontend" / "dist", ROOT_DIR / "frontend" / "dist", backup_root)
+                if (release_root / "tools").exists():
+                    overlay_directory(release_root / "tools", ROOT_DIR / "tools", backup_root)
+                if (release_root / "deploy").exists():
+                    overlay_directory(release_root / "deploy", ROOT_DIR / "deploy", backup_root)
+                
+                self.append_deploy_log(f"  [OK] ZIP 发布包已应用")
+            finally:
+                shutil.rmtree(extract_dir, ignore_errors=True)
+        
+        steps_passed += 1
+        
+        # Step 5: 依赖同步
+        self.append_deploy_log(f"[5/{total_steps}] 依赖同步...")
+        dep_ok, dep_msg = sync_backend_dependencies()
+        if dep_ok:
+            self.append_deploy_log(f"  [OK] {dep_msg}")
+        else:
+            self.append_deploy_log(f"  [WARN] {dep_msg}")
+        steps_passed += 1
+        
+        # Step 6: 服务启动
+        self.append_deploy_log(f"[6/{total_steps}] 服务启动...")
+        ok, msg = self.backend.start(config)
+        if ok:
+            self.append_deploy_log(f"  [OK] {msg}")
+        else:
+            self.append_deploy_log(f"  [FAIL] {msg}")
+            return
+        steps_passed += 1
+        
+        # Wait for backend to start
+        self.append_deploy_log("  等待服务启动...")
+        time.sleep(3)
+        
+        # Step 7: 健康检查
+        self.append_deploy_log(f"[7/{total_steps}] 健康检查...")
+        host = resolve_browser_host(config.get("APP_HOST", "127.0.0.1"))
+        port = config.get("APP_PORT", "8100")
+        base_url = f"http://{host}:{port}"
+        h_ok, h_detail = probe_backend_health(base_url)
+        if h_ok:
+            self.append_deploy_log(f"  [OK] {h_detail}")
+        else:
+            self.append_deploy_log(f"  [WARN] {h_detail}")
+        
+        self.append_deploy_log(f"{'='*50}")
+        self.append_deploy_log(f"一键部署完成! 通过 {steps_passed}/{total_steps} 个检查点")
+        self.append_deploy_log(f"访问地址: {base_url}")
+        self.append_deploy_log(f"{'='*50}")
+        
+        self.refresh_status()
+        self.notify_tray("一键部署完成", f"通过 {steps_passed}/{total_steps} 个检查点")
+        messagebox.showinfo("一键部署完成", f"部署成功！通过 {steps_passed}/{total_steps} 个检查点。\n访问地址：{base_url}")
 
     def manual_cleanup_backups(self) -> None:
         self.save_manager_state()
