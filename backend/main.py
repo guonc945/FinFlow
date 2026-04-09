@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session, joinedload, selectinload
-from sqlalchemy import and_, desc, func, extract, or_, cast, String
+from sqlalchemy import and_, desc, func, extract, or_, cast, String, text
 from sqlalchemy.exc import IntegrityError
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -1079,6 +1079,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 frontend_module.mount_frontend_assets(app)
+
+
+@app.get("/api/health")
+def health_check():
+    frontend_ok = (frontend_module.FRONTEND_DIST_DIR / "index.html").is_file()
+    response = {
+        "ok": True,
+        "database": "ok",
+        "frontend_dist": frontend_ok,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+    }
+    try:
+        with database.engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as exc:
+        response["ok"] = False
+        response["database"] = str(exc)
+        return JSONResponse(status_code=503, content=response)
+    return response
+
 
 # Dependency
 def get_db():

@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
+import argparse
 import json
 import os
 import platform
 import secrets
+import signal
 import shutil
 import socket
 import subprocess
@@ -14,35 +18,172 @@ import webbrowser
 import zipfile
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, List, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 import http.client
-import tkinter.scrolledtext as scrolledtext
 
-import tkinter as tk
-from tkinter import filedialog, messagebox, scrolledtext, ttk
+tk = None
+ttk = None
+filedialog = None
+messagebox = None
+scrolledtext = None
+Image = None
+ImageDraw = None
+Icon = None
+Menu = None
+MenuItem = None
 
-try:
-    from PIL import Image, ImageDraw
-except ModuleNotFoundError as exc:
-    print(
+def ensure_gui_dependencies() -> None:
+    global tk, ttk, filedialog, messagebox, scrolledtext
+    global Image, ImageDraw, Icon, Menu, MenuItem
+
+    if tk is not None and Image is not None and Icon is not None:
+        return
+
+    import tkinter as _tk
+    from tkinter import filedialog as _filedialog, messagebox as _messagebox, scrolledtext as _scrolledtext, ttk as _ttk
+
+    try:
+        from PIL import Image as _Image, ImageDraw as _ImageDraw
+    except ModuleNotFoundError as exc:
+        print(
         "缺少管理器依赖 Pillow。\n"
         "请先执行：python -m pip install -r deploy\\windows\\manager_requirements.txt\n"
         f"详细信息：{exc}"
-    )
-    raise SystemExit(1) from exc
+        )
+        raise SystemExit(1) from exc
 
-try:
-    from pystray import Icon, Menu, MenuItem
-except ModuleNotFoundError as exc:
-    print(
+    try:
+        from pystray import Icon as _Icon, Menu as _Menu, MenuItem as _MenuItem
+    except ModuleNotFoundError as exc:
+        print(
         "缺少管理器依赖 pystray。\n"
         "请先执行：python -m pip install -r deploy\\windows\\manager_requirements.txt\n"
         f"详细信息：{exc}"
-    )
-    raise SystemExit(1) from exc
+        )
+        raise SystemExit(1) from exc
+
+    tk = _tk
+    ttk = _ttk
+    filedialog = _filedialog
+    messagebox = _messagebox
+    scrolledtext = _scrolledtext
+    Image = _Image
+    ImageDraw = _ImageDraw
+    Icon = _Icon
+    Menu = _Menu
+    MenuItem = _MenuItem
+
+
+def build_cli_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="FinFlow manager CLI")
+    parser.add_argument("--service-run", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--daemon", action="store_true", help="Run in daemon mode with console logging")
+    parser.add_argument("--start", action="store_true", help="Start backend service host")
+    parser.add_argument("--stop", action="store_true", help="Stop backend service host")
+    parser.add_argument("--restart", action="store_true", help="Restart backend service host")
+    parser.add_argument("--backup", action="store_true", help="Run database backup")
+    parser.add_argument("--restore", action="store_true", help="Restore database from .bak file")
+    parser.add_argument("--status", action="store_true", help="Print runtime status")
+    parser.add_argument("--health", action="store_true", help="Run health check probe")
+    parser.add_argument("--sync-deps", action="store_true", help="Sync backend Python dependencies")
+    parser.add_argument("--backup-dir", default="", help="Backup output directory")
+    parser.add_argument("--sqlcmd-path", default="", help="sqlcmd executable path")
+    parser.add_argument("--restore-file", default="", help="Path to .bak file for restore")
+    return parser
+
+
+def run_cli(args: argparse.Namespace) -> int:
+    if args.service_run:
+        host = BackendServiceHost()
+        return host.run()
+
+    if args.daemon:
+        host = BackendServiceHost()
+        return host.run_daemon()
+
+    mode_flags = [args.start, args.stop, args.restart, args.backup, args.restore, args.status, args.health, args.sync_deps]
+    if not any(mode_flags):
+        try:
+            app = FinFlowManagerApp()
+            app.run()
+            return 0
+        except Exception as exc:
+            print(f"启动 GUI 失败: {exc}")
+            return 1
+
+    controller = ManagedBackendController()
+
+    if args.status:
+        print(controller.poll_status())
+        return 0
+
+    if args.health:
+        config = load_effective_config_from_disk()
+        host = resolve_browser_host(config.get("APP_HOST", "127.0.0.1"))
+        port = config.get("APP_PORT", "8100")
+        base_url = f"http://{host}:{port}"
+        ok, detail = probe_backend_health(base_url)
+        print(f"健康检查: {'正常' if ok else '异常'} - {detail}")
+        return 0 if ok else 1
+
+    if args.sync_deps:
+        ok, detail = sync_backend_dependencies()
+        print(f"依赖同步: {'成功' if ok else '失败'} - {detail}")
+        return 0 if ok else 1
+
+    if args.start:
+        ok, message = controller.start(load_effective_config_from_disk())
+        print(message)
+        return 0 if ok else 1
+
+    if args.stop:
+        ok, message = controller.stop()
+        print(message)
+        return 0 if ok else 1
+
+    if args.restart:
+        ok, message = controller.restart(load_effective_config_from_disk())
+        print(message)
+        return 0 if ok else 1
+
+    if args.backup:
+        state = read_state_file(STATE_PATH)
+        backup_dir = Path((args.backup_dir or "").strip() or str(state.get("backup_dir") or BACKUP_DIR))
+        sqlcmd_path = (args.sqlcmd_path or "").strip() or str(state.get("sqlcmd_path") or "sqlcmd")
+        retention_days = int(state.get("backup_retention_days", 30))
+        retention_count = int(state.get("backup_retention_count", 10))
+        ok, detail = run_database_backup_with_cleanup(load_effective_config_from_disk(), backup_dir, sqlcmd_path, retention_days, retention_count)
+        if ok:
+            print(f"数据库备份成功: {detail}")
+            return 0
+        print(f"数据库备份失败: {detail}")
+        return 1
+
+    if args.restore:
+        state = read_state_file(STATE_PATH)
+        sqlcmd_path = (args.sqlcmd_path or "").strip() or str(state.get("sqlcmd_path") or "sqlcmd")
+        restore_file = (args.restore_file or "").strip()
+        if not restore_file:
+            bak_files = sorted(BACKUP_DIR.glob("*.bak"), key=lambda p: p.stat().st_mtime, reverse=True)
+            if bak_files:
+                restore_file = str(bak_files[0])
+                print(f"未指定恢复文件，使用最新备份: {restore_file}")
+            else:
+                print("未指定恢复文件，且备份目录中无 .bak 文件")
+                return 1
+        ok, detail = restore_database_from_backup(load_effective_config_from_disk(), Path(restore_file), sqlcmd_path)
+        if ok:
+            print(f"数据库恢复成功: {detail}")
+            return 0
+        print(f"数据库恢复失败: {detail}")
+        return 1
+
+    print("未识别的命令")
+    return 2
 
 
 def ensure_tcl_tk_environment() -> None:
@@ -105,6 +246,10 @@ UPGRADE_BACKUP_DIR = ROOT_DIR / "deploy" / "windows" / "upgrade_backups"
 LOG_ARCHIVE_DIR = LOG_DIR / "archive"
 STARTUP_DIR = Path(os.environ.get("APPDATA") or str(ROOT_DIR)) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
 STARTUP_SCRIPT_PATH = STARTUP_DIR / "FinFlowManager.cmd"
+RUNTIME_DIR = ROOT_DIR / "deploy" / "windows" / "runtime"
+RUNTIME_STATE_PATH = RUNTIME_DIR / "service_runtime.json"
+STOP_REQUEST_PATH = RUNTIME_DIR / "service.stop"
+SERVICE_HOST_LOG = LOG_DIR / "manager.service.log"
 STATUS_REFRESH_INTERVAL_MS = 2000
 LOG_REFRESH_INTERVAL_MS = 2500
 HEALTH_CHECK_INTERVAL_MS = 5000
@@ -203,6 +348,11 @@ DEFAULT_STATE = {
     "sqlcmd_path": "sqlcmd",
     "git_repo_url": "",
     "git_branch": "main",
+    "backup_retention_days": "30",
+    "backup_retention_count": "10",
+    "log_max_size_mb": "20",
+    "log_archive_retention_days": "90",
+    "webhook_url": "",
 }
 
 
@@ -264,13 +414,119 @@ def write_state_file(path: Path, state: Dict[str, Any]) -> None:
     path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+DEFAULT_RUNTIME_STATE = {
+    "service_host_pid": 0,
+    "backend_pid": 0,
+    "user_stopped": False,
+    "last_start_attempt": 0.0,
+    "last_exit_code": None,
+    "last_exit_at": 0.0,
+    "last_started_at": 0.0,
+    "consecutive_failed_starts": 0,
+    "auto_restart_suppressed": False,
+    "last_session_marker": "",
+    "last_session_started_label": "",
+}
+
+
+def ensure_runtime_dir() -> None:
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def read_runtime_state() -> Dict[str, Any]:
+    state = dict(DEFAULT_RUNTIME_STATE)
+    if not RUNTIME_STATE_PATH.exists():
+        return state
+    try:
+        raw = json.loads(RUNTIME_STATE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return state
+
+    for key, default_value in DEFAULT_RUNTIME_STATE.items():
+        if key not in raw:
+            continue
+        value = raw[key]
+        if isinstance(default_value, bool):
+            state[key] = parse_bool(value)
+        elif isinstance(default_value, int):
+            state[key] = int(value or 0)
+        elif isinstance(default_value, float):
+            state[key] = float(value or 0)
+        else:
+            state[key] = value
+    return state
+
+
+def write_runtime_state(**updates: Any) -> Dict[str, Any]:
+    ensure_runtime_dir()
+    state = read_runtime_state()
+    state.update(updates)
+    RUNTIME_STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    return state
+
+
+def reset_runtime_state() -> None:
+    ensure_runtime_dir()
+    RUNTIME_STATE_PATH.write_text(json.dumps(DEFAULT_RUNTIME_STATE, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def create_stop_request() -> None:
+    ensure_runtime_dir()
+    STOP_REQUEST_PATH.write_text("stop\n", encoding="utf-8")
+
+
+def clear_stop_request() -> None:
+    STOP_REQUEST_PATH.unlink(missing_ok=True)
+
+
+def is_process_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def load_effective_config_from_disk() -> Dict[str, str]:
+    values = dict(DEFAULT_ENV)
+    values.update(read_env_file(ENV_EXAMPLE_PATH))
+    values.update(read_env_file(ENV_PATH))
+    values["APP_RELOAD"] = "false"
+    return values
+
+
 def create_tray_image() -> Image.Image:
+    ensure_gui_dependencies()
     image = Image.new("RGBA", (64, 64), (27, 84, 157, 255))
     draw = ImageDraw.Draw(image)
     draw.rounded_rectangle((8, 8, 56, 56), radius=12, fill=(39, 125, 161, 255))
     draw.rectangle((20, 18, 44, 24), fill=(255, 255, 255, 255))
     draw.rectangle((20, 30, 44, 36), fill=(255, 255, 255, 255))
     draw.rectangle((20, 42, 36, 48), fill=(255, 255, 255, 255))
+    return image
+
+
+def create_window_icon() -> Image.Image:
+    ensure_gui_dependencies()
+    image = Image.new("RGBA", (256, 256), (27, 84, 157, 255))
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((32, 32, 224, 224), radius=48, fill=(39, 125, 161, 255))
+    draw.rectangle((80, 64, 176, 96), fill=(255, 255, 255, 255))
+    draw.rectangle((80, 112, 176, 144), fill=(255, 255, 255, 255))
+    draw.rectangle((80, 160, 144, 192), fill=(255, 255, 255, 255))
+    return image
+
+
+def create_high_res_icon() -> Image.Image:
+    ensure_gui_dependencies()
+    image = Image.new("RGBA", (512, 512), (27, 84, 157, 255))
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((64, 64, 448, 448), radius=96, fill=(39, 125, 161, 255))
+    draw.rectangle((160, 128, 352, 192), fill=(255, 255, 255, 255))
+    draw.rectangle((160, 224, 352, 288), fill=(255, 255, 255, 255))
+    draw.rectangle((160, 320, 320, 384), fill=(255, 255, 255, 255))
     return image
 
 
@@ -531,6 +787,144 @@ def extract_db_connection(config: Dict[str, str]) -> Dict[str, str]:
     }
 
 
+def sync_backend_dependencies(timeout_seconds: int = 900) -> Tuple[bool, str]:
+    python_exe = BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
+    requirements_path = BACKEND_DIR / "requirements.txt"
+    if not python_exe.exists():
+        return False, f"未找到后端虚拟环境：{python_exe}"
+    if not requirements_path.exists():
+        return False, f"未找到依赖清单：{requirements_path}"
+
+    try:
+        result = subprocess.run(
+            [str(python_exe), "-m", "pip", "install", "-r", str(requirements_path)],
+            cwd=BACKEND_DIR,
+            capture_output=True,
+            text=False,
+            timeout=timeout_seconds,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception as exc:
+        return False, f"安装依赖失败：{exc}"
+
+    stdout_text = decode_console_output(result.stdout or b"").strip()
+    stderr_text = decode_console_output(result.stderr or b"").strip()
+    if result.returncode != 0:
+        detail = stderr_text or stdout_text or "未知错误"
+        return False, detail
+    return True, stdout_text or "依赖已同步"
+
+
+def run_database_backup(config: Dict[str, str], backup_dir: Path, sqlcmd: str) -> Tuple[bool, str]:
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    conn = extract_db_connection(config)
+    missing = [key for key in ("host", "port", "user", "dbname") if not conn.get(key)]
+    if missing:
+        return False, f"数据库配置不完整，缺少：{', '.join(missing)}"
+
+    filename = f"finflow_{datetime.now().strftime('%Y%m%d_%H%M%S')}.bak"
+    target_file = backup_dir / filename
+    query = f"BACKUP DATABASE [{conn['dbname']}] TO DISK = N'{target_file}' WITH INIT, NAME = N'FinFlow Full Backup'"
+    cmd = [
+        sqlcmd,
+        "-S",
+        f"{conn['host']},{conn['port']}",
+        "-U",
+        conn["user"],
+        "-d",
+        conn["dbname"],
+        "-Q",
+        query,
+    ]
+    if conn.get("password"):
+        cmd.extend(["-P", conn["password"]])
+
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=ROOT_DIR,
+            capture_output=True,
+            text=False,
+            timeout=600,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except FileNotFoundError:
+        return False, f"未找到 sqlcmd：{sqlcmd}"
+    except Exception as exc:
+        return False, f"执行 sqlcmd 失败：{exc}"
+
+    stdout_text = decode_console_output(result.stdout or b"")
+    stderr_text = decode_console_output(result.stderr or b"")
+    if result.returncode != 0:
+        if target_file.exists():
+            remove_path(target_file)
+        return False, (stderr_text or stdout_text or "未知错误").strip()
+
+    return True, str(target_file)
+
+
+def run_database_backup_with_cleanup(config: Dict[str, str], backup_dir: Path, sqlcmd: str, retention_days: int = 30, retention_count: int = 10) -> Tuple[bool, str]:
+    ok, detail = run_database_backup(config, backup_dir, sqlcmd)
+    if ok:
+        try:
+            cleanup_old_backups(backup_dir, retention_days, retention_count)
+        except Exception:
+            pass
+    return ok, detail
+
+
+def restore_database_from_backup(config: Dict[str, str], bak_file: Path, sqlcmd: str) -> Tuple[bool, str]:
+    if not bak_file.exists() or not bak_file.is_file():
+        return False, f"备份文件不存在: {bak_file}"
+    if bak_file.suffix.lower() != ".bak":
+        return False, "恢复文件必须是 .bak 格式"
+
+    conn = extract_db_connection(config)
+    missing = [key for key in ("host", "port", "user", "dbname") if not conn.get(key)]
+    if missing:
+        return False, f"数据库配置不完整，缺少：{', '.join(missing)}"
+
+    db_name = conn["dbname"]
+    logical_name = db_name
+
+    try:
+        filelist_cmd = f"RESTORE FILELISTONLY FROM DISK = N'{bak_file}'"
+        cmd_list = [
+            sqlcmd, "-S", f"{conn['host']},{conn['port']}",
+            "-U", conn["user"], "-d", "master",
+            "-Q", filelist_cmd, "-h", "-1", "-W",
+        ]
+        if conn.get("password"):
+            cmd_list.extend(["-P", conn["password"]])
+
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        result = subprocess.run(cmd_list, capture_output=True, text=False, timeout=60, creationflags=creationflags)
+        stdout_text = decode_console_output(result.stdout or b"")
+
+        for line in stdout_text.splitlines():
+            parts = line.split()
+            if parts and parts[0].upper() in ("PRIMARY", "LOG"):
+                logical_name = parts[0]
+                break
+    except Exception:
+        pass
+
+    data_file = f"C:\\Program Files\\Microsoft SQL Server\\MSSQL13.MSSQLSERVER\\MSSQL\\DATA\\{db_name}.mdf"
+    log_file = f"C:\\Program Files\\Microsoft SQL Server\\MSSQL13.MSSQLSERVER\\MSSQL\\DATA\\{db_name}_log.ldf"
+
+    restore_sql = (
+        f"USE master;\n"
+        f"ALTER DATABASE [{db_name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;\n"
+        f"RESTORE DATABASE [{db_name}] FROM DISK = N'{bak_file}' "
+        f"WITH REPLACE, "
+        f"MOVE N'{logical_name}' TO N'{data_file}', "
+        f"MOVE N'{logical_name}_log' TO N'{log_file}';\n"
+        f"ALTER DATABASE [{db_name}] SET MULTI_USER;\n"
+    )
+
+    return execute_sql_script_via_sqlcmd(restore_sql, config, sqlcmd)
+
+
 def resolve_manager_launcher() -> List[str]:
     if getattr(sys, "frozen", False):
         return [str(Path(sys.executable).resolve())]
@@ -665,6 +1059,134 @@ def probe_http(url: str) -> Tuple[bool, str]:
         return False, str(exc)
 
 
+def probe_backend_health(base_url: str) -> Tuple[bool, str]:
+    health_url = base_url.rstrip("/") + "/api/health"
+    request = Request(health_url, headers={"User-Agent": "FinFlowManager/1.0", "Accept": "application/json"})
+    try:
+        with urlopen(request, timeout=HEALTH_CHECK_TIMEOUT) as response:
+            code = int(getattr(response, "status", response.getcode()))
+            payload = json.loads(decode_console_output(response.read() or b"{}"))
+            if 200 <= code < 400 and payload.get("ok") is True:
+                return True, f"HTTP {code}"
+            detail = payload.get("detail") or payload.get("database") or f"HTTP {code}"
+            return False, str(detail)
+    except HTTPError as exc:
+        try:
+            payload = json.loads(decode_console_output(exc.read() or b"{}"))
+            detail = payload.get("detail") or payload.get("database") or f"HTTP {exc.code}"
+        except Exception:
+            detail = f"HTTP {exc.code}"
+        return False, str(detail)
+    except URLError as exc:
+        reason = exc.reason.strerror if hasattr(exc.reason, "strerror") else str(exc.reason)
+        return False, reason or "连接失败"
+    except Exception as exc:
+        return False, str(exc)
+
+
+def execute_sql_script_via_sqlcmd(sql_content: str, config: Dict[str, str], sqlcmd: str) -> Tuple[bool, str]:
+    conn = extract_db_connection(config)
+    missing = [key for key in ("host", "port", "user", "dbname") if not conn.get(key)]
+    if missing:
+        return False, f"数据库配置不完整，缺少：{', '.join(missing)}"
+
+    tmp_sql = Path(tempfile.gettempdir()) / f"finflow_migration_{int(time.time())}.sql"
+    try:
+        tmp_sql.write_text(sql_content, encoding="utf-8")
+        cmd = [
+            sqlcmd,
+            "-S", f"{conn['host']},{conn['port']}",
+            "-U", conn["user"],
+            "-d", conn["dbname"],
+            "-i", str(tmp_sql),
+            "-b",
+        ]
+        if conn.get("password"):
+            cmd.extend(["-P", conn["password"]])
+
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        result = subprocess.run(cmd, capture_output=True, text=False, timeout=300, creationflags=creationflags)
+        stdout_text = decode_console_output(result.stdout or b"")
+        stderr_text = decode_console_output(result.stderr or b"")
+        if result.returncode != 0:
+            return False, (stderr_text or stdout_text or "执行失败").strip()
+        return True, "SQL 脚本执行成功"
+    except Exception as exc:
+        return False, f"执行异常：{exc}"
+    finally:
+        tmp_sql.unlink(missing_ok=True)
+
+
+def rotate_log_file(path: Path, max_size_mb: float) -> Path | None:
+    if not path.exists():
+        return None
+    try:
+        size_mb = path.stat().st_size / (1024 * 1024)
+        if size_mb < max_size_mb:
+            return None
+        LOG_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archived_name = f"{path.stem}_rotated_{timestamp}{path.suffix}"
+        archived_path = LOG_ARCHIVE_DIR / archived_name
+        shutil.move(str(path), str(archived_path))
+        path.touch()
+        return archived_path
+    except Exception:
+        return None
+
+
+def cleanup_old_backups(backup_dir: Path, retention_days: int, retention_count: int) -> Tuple[int, str]:
+    if not backup_dir.exists():
+        return 0, "备份目录不存在"
+    bak_files = sorted(backup_dir.glob("*.bak"), key=lambda p: p.stat().st_mtime, reverse=True)
+    cutoff_time = time.time() - (retention_days * 86400)
+    removed = 0
+    for idx, f in enumerate(bak_files):
+        should_remove = False
+        if f.stat().st_mtime < cutoff_time:
+            should_remove = True
+        if idx >= retention_count:
+            should_remove = True
+        if should_remove:
+            try:
+                f.unlink()
+                removed += 1
+            except Exception:
+                pass
+    return removed, f"已清理 {removed} 个过期备份"
+
+
+def cleanup_old_archived_logs(retention_days: int) -> Tuple[int, str]:
+    if not LOG_ARCHIVE_DIR.exists():
+        return 0, "归档目录不存在"
+    cutoff_time = time.time() - (retention_days * 86400)
+    removed = 0
+    for f in LOG_ARCHIVE_DIR.iterdir():
+        if f.is_file() and f.stat().st_mtime < cutoff_time:
+            try:
+                f.unlink()
+                removed += 1
+            except Exception:
+                pass
+    return removed, f"已清理 {removed} 个过期归档日志"
+
+
+def send_webhook_notification(webhook_url: str, title: str, message: str) -> bool:
+    if not webhook_url or not webhook_url.startswith("http"):
+        return False
+    payload = {
+        "msgtype": "text",
+        "text": {"content": f"[FinFlow {title}]\n{message}"},
+    }
+    try:
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        req = Request(webhook_url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+        with urlopen(req, timeout=5) as resp:
+            return 200 <= resp.status < 300
+    except Exception:
+        return False
+
+
 class BackendProcessController:
     def __init__(self) -> None:
         self.process: subprocess.Popen | None = None
@@ -677,6 +1199,16 @@ class BackendProcessController:
         self.last_started_at = 0.0
         self.consecutive_failed_starts = 0
         self.auto_restart_suppressed = False
+        write_runtime_state(
+            backend_pid=self.process.pid,
+            user_stopped=False,
+            last_start_attempt=self.last_start_attempt,
+            last_started_at=self.last_started_at,
+            last_exit_code=None,
+            auto_restart_suppressed=False,
+            last_session_marker=self.last_session_marker,
+            last_session_started_label=self.last_session_started_label,
+        )
         self.last_session_marker = ""
         self.last_session_started_label = ""
 
@@ -704,6 +1236,16 @@ class BackendProcessController:
         self.last_exit_at = time.time()
         self.process = None
         self._close_handles()
+        write_runtime_state(
+            backend_pid=0,
+            last_exit_code=code,
+            last_exit_at=self.last_exit_at,
+            user_stopped=self.user_stopped,
+            consecutive_failed_starts=self.consecutive_failed_starts,
+            auto_restart_suppressed=self.auto_restart_suppressed,
+            last_session_marker=self.last_session_marker,
+            last_session_started_label=self.last_session_started_label,
+        )
         return code
 
     def start(self, config: Dict[str, str]) -> Tuple[bool, str]:
@@ -719,6 +1261,14 @@ class BackendProcessController:
             return False, "未找到 backend/.encryption.key，请先生成或放入正确密钥"
 
         ensure_log_dir()
+        max_size = 20.0
+        try:
+            state = read_state_file(STATE_PATH)
+            max_size = float(state.get("log_max_size_mb", 20))
+        except Exception:
+            pass
+        for log_path in (STDOUT_LOG, STDERR_LOG):
+            rotate_log_file(log_path, max_size)
 
         env = os.environ.copy()
         env.update(config)
@@ -775,6 +1325,7 @@ class BackendProcessController:
             return False, "后端未运行"
 
         self.user_stopped = True
+        write_runtime_state(user_stopped=True)
         try:
             assert self.process is not None
             self.process.terminate()
@@ -820,17 +1371,365 @@ class BackendProcessController:
     def clear_restart_failure_state(self) -> None:
         self.consecutive_failed_starts = 0
         self.auto_restart_suppressed = False
+        write_runtime_state(consecutive_failed_starts=0, auto_restart_suppressed=False)
+
+
+def resolve_service_host_launcher() -> List[str]:
+    if getattr(sys, "frozen", False):
+        return [str(Path(sys.executable).resolve()), "--service-run"]
+
+    python_exe = Path(sys.executable).resolve()
+    if python_exe.name.lower() == "pythonw.exe":
+        candidate = python_exe.with_name("python.exe")
+        if candidate.exists():
+            python_exe = candidate
+    return [str(python_exe), str(Path(__file__).resolve()), "--service-run"]
+
+
+def read_managed_runtime_state() -> Dict[str, Any]:
+    state = read_runtime_state()
+    host_pid = int(state.get("service_host_pid") or 0)
+    backend_pid = int(state.get("backend_pid") or 0)
+    host_alive = is_process_alive(host_pid)
+    backend_alive = is_process_alive(backend_pid)
+
+    normalized = dict(state)
+    normalized["service_host_alive"] = host_alive
+    normalized["backend_alive"] = backend_alive
+    if not host_alive:
+        normalized["service_host_pid"] = 0
+        if not backend_alive:
+            normalized["backend_pid"] = 0
+    if not backend_alive:
+        normalized["backend_pid"] = 0
+    return normalized
+
+
+class ManagedBackendController:
+    def __init__(self) -> None:
+        self.process: SimpleNamespace | None = None
+
+    def _state(self) -> Dict[str, Any]:
+        state = read_managed_runtime_state()
+        backend_pid = int(state.get("backend_pid") or 0)
+        self.process = SimpleNamespace(pid=backend_pid) if backend_pid > 0 else None
+        return state
+
+    @property
+    def user_stopped(self) -> bool:
+        return bool(self._state().get("user_stopped", False))
+
+    @property
+    def last_start_attempt(self) -> float:
+        return float(self._state().get("last_start_attempt", 0.0) or 0.0)
+
+    @property
+    def last_exit_code(self) -> int | None:
+        return self._state().get("last_exit_code")
+
+    @property
+    def last_exit_at(self) -> float:
+        return float(self._state().get("last_exit_at", 0.0) or 0.0)
+
+    @property
+    def consecutive_failed_starts(self) -> int:
+        return int(self._state().get("consecutive_failed_starts", 0) or 0)
+
+    @consecutive_failed_starts.setter
+    def consecutive_failed_starts(self, value: int) -> None:
+        write_runtime_state(consecutive_failed_starts=int(value or 0))
+
+    @property
+    def auto_restart_suppressed(self) -> bool:
+        return bool(self._state().get("auto_restart_suppressed", False))
+
+    @auto_restart_suppressed.setter
+    def auto_restart_suppressed(self, value: bool) -> None:
+        write_runtime_state(auto_restart_suppressed=bool(value))
+
+    @property
+    def last_session_marker(self) -> str:
+        return str(self._state().get("last_session_marker", "") or "")
+
+    @property
+    def last_session_started_label(self) -> str:
+        return str(self._state().get("last_session_started_label", "") or "")
+
+    def is_running(self) -> bool:
+        state = self._state()
+        return bool(state.get("service_host_alive") or state.get("backend_alive"))
+
+    def clear_restart_failure_state(self) -> None:
+        write_runtime_state(consecutive_failed_starts=0, auto_restart_suppressed=False)
+
+    def register_failed_start_if_needed(self, fast_fail_window_seconds: int = 15, max_failures: int = 3) -> bool:
+        state = self._state()
+        last_exit_at = float(state.get("last_exit_at", 0.0) or 0.0)
+        last_started_at = float(state.get("last_started_at", 0.0) or 0.0)
+        runtime = last_exit_at - last_started_at
+        if last_exit_at <= 0 or last_started_at <= 0 or runtime < 0 or runtime > fast_fail_window_seconds:
+            write_runtime_state(consecutive_failed_starts=0)
+            return False
+
+        failures = int(state.get("consecutive_failed_starts", 0) or 0) + 1
+        suppressed = failures >= max_failures
+        write_runtime_state(consecutive_failed_starts=failures, auto_restart_suppressed=suppressed)
+        return True
+
+    def start(self, _config: Dict[str, str] | None = None) -> Tuple[bool, str]:
+        state = self._state()
+        if state.get("service_host_alive"):
+            host_pid = int(state.get("service_host_pid") or 0)
+            return False, f"服务宿主已在运行，PID={host_pid}"
+
+        ensure_runtime_dir()
+        clear_stop_request()
+        ensure_log_dir()
+        creationflags = 0
+        for flag_name in ("CREATE_NO_WINDOW", "DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP"):
+            creationflags |= getattr(subprocess, flag_name, 0)
+
+        launcher = resolve_service_host_launcher()
+        with open(SERVICE_HOST_LOG, "a", encoding="utf-8", errors="ignore") as service_log:
+            process = subprocess.Popen(
+                launcher,
+                cwd=ROOT_DIR,
+                stdout=service_log,
+                stderr=service_log,
+                creationflags=creationflags,
+            )
+
+        deadline = time.time() + 8
+        while time.time() < deadline:
+            current = self._state()
+            if current.get("service_host_alive"):
+                return True, f"服务宿主已启动，PID={int(current.get('service_host_pid') or process.pid)}"
+            time.sleep(0.25)
+        return True, f"已发送服务宿主启动命令，PID={process.pid}"
+
+    def stop(self) -> Tuple[bool, str]:
+        state = self._state()
+        host_pid = int(state.get("service_host_pid") or 0)
+        backend_pid = int(state.get("backend_pid") or 0)
+        if host_pid <= 0 and backend_pid <= 0:
+            return False, "后端未运行"
+
+        create_stop_request()
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            current = self._state()
+            if not current.get("service_host_alive") and not current.get("backend_alive"):
+                clear_stop_request()
+                return True, "后端已停止"
+            time.sleep(0.5)
+
+        if host_pid > 0 and is_process_alive(host_pid):
+            try:
+                os.kill(host_pid, signal.SIGTERM)
+            except OSError:
+                pass
+        if backend_pid > 0 and is_process_alive(backend_pid):
+            try:
+                os.kill(backend_pid, signal.SIGTERM)
+            except OSError:
+                pass
+        clear_stop_request()
+        return True, "已发送停止命令，正在结束后台宿主"
+
+    def restart(self, config: Dict[str, str] | None = None) -> Tuple[bool, str]:
+        self.stop()
+        time.sleep(1)
+        return self.start(config)
+
+    def poll_status(self) -> str:
+        state = self._state()
+        host_pid = int(state.get("service_host_pid") or 0)
+        backend_pid = int(state.get("backend_pid") or 0)
+        if state.get("service_host_alive") and state.get("backend_alive"):
+            return f"运行中 (宿主 PID {host_pid}, 后端 PID {backend_pid})"
+        if state.get("service_host_alive"):
+            return f"宿主运行中 (PID {host_pid})，后端启动中或异常退出"
+        if state.get("backend_alive"):
+            return f"后端运行中 (PID {backend_pid})，但未由服务宿主管理"
+        if state.get("last_exit_code") is not None:
+            return f"未运行 (最近退出码 {state['last_exit_code']})"
+        return "未运行"
+
+
+class BackendServiceHost:
+    def __init__(self) -> None:
+        self.backend = BackendProcessController()
+        self.stop_event = threading.Event()
+
+    def request_stop(self, *_args: Any) -> None:
+        self.stop_event.set()
+
+    def _sync_runtime_state(self) -> None:
+        backend_pid = self.backend.process.pid if self.backend.is_running() and self.backend.process else 0
+        write_runtime_state(
+            service_host_pid=os.getpid(),
+            backend_pid=backend_pid,
+            user_stopped=self.backend.user_stopped,
+            last_start_attempt=self.backend.last_start_attempt,
+            last_exit_code=self.backend.last_exit_code,
+            last_exit_at=self.backend.last_exit_at,
+            last_started_at=self.backend.last_started_at,
+            consecutive_failed_starts=self.backend.consecutive_failed_starts,
+            auto_restart_suppressed=self.backend.auto_restart_suppressed,
+            last_session_marker=self.backend.last_session_marker,
+            last_session_started_label=self.backend.last_session_started_label,
+        )
+
+    def run(self) -> int:
+        ensure_runtime_dir()
+        ensure_log_dir()
+        clear_stop_request()
+        reset_runtime_state()
+        write_runtime_state(service_host_pid=os.getpid(), user_stopped=False)
+
+        for sig in (getattr(signal, "SIGTERM", None), getattr(signal, "SIGINT", None), getattr(signal, "SIGBREAK", None)):
+            if sig is None:
+                continue
+            try:
+                signal.signal(sig, self.request_stop)
+            except Exception:
+                pass
+
+        config = load_effective_config_from_disk()
+        ok, message = self.backend.start(config)
+        self._sync_runtime_state()
+        if not ok:
+            print(message)
+
+        while not self.stop_event.is_set():
+            if STOP_REQUEST_PATH.exists():
+                self.backend.user_stopped = True
+                self.stop_event.set()
+                break
+
+            self.backend.capture_exit()
+            manager_state = read_state_file(STATE_PATH)
+            if (
+                manager_state.get("auto_restart_backend", True)
+                and not self.backend.is_running()
+                and not self.backend.user_stopped
+                and not self.backend.auto_restart_suppressed
+                and time.time() - self.backend.last_start_attempt > 8
+                and self.backend.last_start_attempt > 0
+            ):
+                self.backend.register_failed_start_if_needed()
+                self.backend.start(load_effective_config_from_disk())
+            if self.backend.is_running():
+                self.backend.consecutive_failed_starts = 0
+
+            self._sync_runtime_state()
+            time.sleep(1)
+
+        if self.backend.is_running():
+            self.backend.stop()
+        self.backend.capture_exit()
+        clear_stop_request()
+        reset_runtime_state()
+        return 0
+
+    def run_daemon(self) -> int:
+        ensure_runtime_dir()
+        ensure_log_dir()
+        clear_stop_request()
+        reset_runtime_state()
+        write_runtime_state(service_host_pid=os.getpid(), user_stopped=False)
+
+        for sig in (getattr(signal, "SIGTERM", None), getattr(signal, "SIGINT", None), getattr(signal, "SIGBREAK", None)):
+            if sig is None:
+                continue
+            try:
+                signal.signal(sig, self.request_stop)
+            except Exception:
+                pass
+
+        config = load_effective_config_from_disk()
+        host_label = config.get("APP_HOST", "127.0.0.1")
+        port_label = config.get("APP_PORT", "8100")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] FinFlow 守护进程启动 (PID {os.getpid()})")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 监听地址: {host_label}:{port_label}")
+
+        ok, message = self.backend.start(config)
+        self._sync_runtime_state()
+        if not ok:
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 启动失败: {message}")
+        else:
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 后端已启动: {message}")
+
+        last_health_time = 0.0
+        while not self.stop_event.is_set():
+            if STOP_REQUEST_PATH.exists():
+                self.backend.user_stopped = True
+                self.stop_event.set()
+                break
+
+            self.backend.capture_exit()
+            manager_state = read_state_file(STATE_PATH)
+
+            if self.backend.is_running():
+                self.backend.consecutive_failed_starts = 0
+                now = time.time()
+                if now - last_health_time > 30:
+                    last_health_time = now
+                    base_url = f"http://{resolve_browser_host(host_label)}:{port_label}"
+                    h_ok, h_detail = probe_backend_health(base_url)
+                    status_icon = "✓" if h_ok else "✗"
+                    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 健康检查 {status_icon}: {h_detail}")
+            else:
+                if (
+                    manager_state.get("auto_restart_backend", True)
+                    and not self.backend.user_stopped
+                    and not self.backend.auto_restart_suppressed
+                    and time.time() - self.backend.last_start_attempt > 8
+                    and self.backend.last_start_attempt > 0
+                ):
+                    self.backend.register_failed_start_if_needed()
+                    if self.backend.auto_restart_suppressed:
+                        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 启动失败过多，暂停自动拉起")
+                    else:
+                        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 后端异常退出，正在自动拉起...")
+                        ok, message = self.backend.start(load_effective_config_from_disk())
+                        if ok:
+                            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 自动拉起成功: {message}")
+                        else:
+                            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 自动拉起失败: {message}")
+
+            self._sync_runtime_state()
+            time.sleep(1)
+
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 收到停止信号，正在关闭...")
+        if self.backend.is_running():
+            self.backend.stop()
+        self.backend.capture_exit()
+        clear_stop_request()
+        reset_runtime_state()
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] FinFlow 守护进程已退出")
+        return 0
 
 
 class FinFlowManagerApp:
     def __init__(self) -> None:
+        ensure_gui_dependencies()
         ensure_tcl_tk_environment()
         self.root = tk.Tk()
         self.root.title("FinFlow 管理器")
         self.root.geometry("980x760")
         self.root.minsize(900, 680)
+        
+        try:
+            high_res_icon = create_high_res_icon()
+            window_icon_path = ROOT_DIR / "deploy" / "windows" / "finflow_icon_temp.ico"
+            high_res_icon.save(window_icon_path, format="ICO", sizes=[(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (16, 16)])
+            self.root.iconbitmap(window_icon_path)
+            window_icon_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
-        self.backend = BackendProcessController()
+        self.backend = ManagedBackendController()
         self.manager_state = read_state_file(STATE_PATH)
         self.config_values, self.extra_env_values = self.load_config_values()
         self.form_vars: Dict[str, tk.StringVar] = {}
@@ -1169,11 +2068,14 @@ class FinFlowManagerApp:
             ("frontend", "前端部署", "覆盖发布 dist，更新页面静态资源"),
             ("release", "发布包升级", "导入 ZIP 发布包并执行一键升级"),
             ("git_update", "Git 拉取更新", "从远程 Git 仓库拉取最新代码"),
+            ("migration", "数据库迁移", "执行 SQL 脚本更新数据库结构"),
             ("backup", "数据库备份", "调用 sqlcmd 执行数据库备份"),
+            ("maintenance", "日志与备份维护", "清理过期日志和备份文件"),
+            ("alert", "告警通知", "配置 Webhook 告警接收地址"),
             ("notes", "使用说明", "查看当前运维方式和操作建议"),
         ]
 
-        for key in ("frontend_deploy_source", "release_package_path", "backup_dir", "sqlcmd_path", "git_repo_url", "git_branch"):
+        for key in ("frontend_deploy_source", "release_package_path", "backup_dir", "sqlcmd_path", "git_repo_url", "git_branch", "backup_retention_days", "backup_retention_count", "log_max_size_mb", "log_archive_retention_days", "webhook_url"):
             if key not in self.ops_vars:
                 self.ops_vars[key] = tk.StringVar(value=str(self.manager_state.get(key, DEFAULT_STATE.get(key, ""))))
 
@@ -1258,6 +2160,7 @@ class FinFlowManagerApp:
         backup_actions = ttk.Frame(backup_frame)
         backup_actions.pack(fill="x")
         ttk.Button(backup_actions, text="立即备份数据库", command=self.backup_database).pack(side="left", padx=4)
+        ttk.Button(backup_actions, text="从备份恢复", command=self.restore_database).pack(side="left", padx=4)
         ttk.Button(backup_actions, text="打开备份目录", command=self.open_backup_folder).pack(side="left", padx=4)
         self.ops_section_frames["backup"] = backup_frame
 
@@ -1289,6 +2192,62 @@ class FinFlowManagerApp:
         ttk.Button(git_actions, text="查看提交历史", command=self.git_show_history).pack(side="left", padx=4)
         ttk.Button(git_actions, text="回滚版本", command=self.git_rollback).pack(side="left", padx=4)
         self.ops_section_frames["git_update"] = git_frame
+
+        migration_frame = ttk.LabelFrame(self.ops_content_host, text="数据库迁移", padding=16)
+        ttk.Label(
+            migration_frame,
+            text="选择或粘贴 SQL 脚本，通过 sqlcmd 在目标数据库上执行。适用于 SQL Server 2016 结构变更。",
+            justify="left",
+        ).pack(anchor="w", pady=(0, 8))
+        
+        migration_config = ttk.Frame(migration_frame)
+        migration_config.pack(fill="x", pady=(0, 8))
+        ttk.Button(migration_config, text="选择 SQL 文件", command=self.select_migration_file).pack(side="left", padx=4)
+        ttk.Button(migration_config, text="清空脚本", command=self.clear_migration_script).pack(side="left", padx=4)
+        
+        self.migration_script_text = scrolledtext.ScrolledText(migration_frame, wrap="word", font=("Consolas", 9), height=12)
+        self.migration_script_text.pack(fill="both", expand=True, pady=(0, 8))
+        
+        migration_actions = ttk.Frame(migration_frame)
+        migration_actions.pack(fill="x")
+        ttk.Button(migration_actions, text="执行迁移", command=self.execute_migration).pack(side="left", padx=4)
+        self.ops_section_frames["migration"] = migration_frame
+
+        maintenance_frame = ttk.LabelFrame(self.ops_content_host, text="日志与备份维护", padding=16)
+        maint_grid = ttk.Frame(maintenance_frame)
+        maint_grid.pack(fill="x", pady=(0, 10))
+        
+        maint_fields = [
+            ("backup_retention_days", "备份保留天数", "保留最近 N 天的备份"),
+            ("backup_retention_count", "备份保留数量", "最多保留 N 个备份文件"),
+            ("log_max_size_mb", "日志轮转阈值(MB)", "单日志文件超过此大小自动归档"),
+            ("log_archive_retention_days", "归档日志保留天数", "自动清理超过 N 天的归档文件"),
+        ]
+        for idx, (key, label, desc) in enumerate(maint_fields):
+            ttk.Label(maint_grid, text=f"{label}：", width=18).grid(row=idx, column=0, sticky="w", padx=6, pady=4)
+            ttk.Entry(maint_grid, textvariable=self.ops_vars[key], width=20).grid(row=idx, column=1, sticky="w", padx=6, pady=4)
+            ttk.Label(maint_grid, text=desc, foreground="#666666").grid(row=idx, column=2, sticky="w", padx=6, pady=4)
+            
+        maint_actions = ttk.Frame(maintenance_frame)
+        maint_actions.pack(fill="x")
+        ttk.Button(maint_actions, text="立即清理过期备份", command=self.manual_cleanup_backups).pack(side="left", padx=4)
+        ttk.Button(maint_actions, text="立即清理过期归档", command=self.manual_cleanup_logs).pack(side="left", padx=4)
+        ttk.Button(maint_actions, text="同步后端依赖", command=self.sync_backend_deps).pack(side="left", padx=4)
+        self.ops_section_frames["maintenance"] = maintenance_frame
+
+        alert_frame = ttk.LabelFrame(self.ops_content_host, text="告警通知", padding=16)
+        ttk.Label(
+            alert_frame,
+            text="配置 Webhook 地址，在后端异常退出或健康检查失败时发送告警。支持企业微信/钉钉/飞书等标准格式。",
+            justify="left",
+        ).pack(anchor="w", pady=(0, 8))
+        alert_grid = ttk.Frame(alert_frame)
+        alert_grid.pack(fill="x", pady=(0, 8))
+        ttk.Label(alert_grid, text="Webhook URL：", width=12).grid(row=0, column=0, sticky="w", padx=6, pady=6)
+        ttk.Entry(alert_grid, textvariable=self.ops_vars["webhook_url"], width=80).grid(row=0, column=1, sticky="ew", padx=6, pady=6)
+        alert_grid.columnconfigure(1, weight=1)
+        ttk.Button(alert_frame, text="发送测试告警", command=self.send_test_alert).pack(side="left", padx=4)
+        self.ops_section_frames["alert"] = alert_frame
 
         notes_frame = ttk.LabelFrame(self.ops_content_host, text="使用说明", padding=16)
         ttk.Label(
@@ -1996,62 +2955,16 @@ class FinFlowManagerApp:
         self.save_manager_state()
         backup_dir = Path(self.ops_vars["backup_dir"].get().strip() or str(BACKUP_DIR))
         sqlcmd = self.ops_vars["sqlcmd_path"].get().strip() or "sqlcmd"
+        retention_days = int(self.ops_vars["backup_retention_days"].get().strip() or 30)
+        retention_count = int(self.ops_vars["backup_retention_count"].get().strip() or 10)
         backup_dir.mkdir(parents=True, exist_ok=True)
 
         config = self.get_effective_config()
-        conn = extract_db_connection(config)
-        missing = [key for key in ("host", "port", "user", "dbname") if not conn.get(key)]
-        if missing:
-            messagebox.showerror("备份失败", f"数据库配置不完整，缺少：{', '.join(missing)}")
-            return
-
-        filename = f"finflow_{datetime.now().strftime('%Y%m%d_%H%M%S')}.bak"
-        target_file = backup_dir / filename
-        
-        query = f"BACKUP DATABASE [{conn['dbname']}] TO DISK = N'{target_file}' WITH INIT, NAME = N'FinFlow Full Backup'"
-        
-        cmd = [
-            sqlcmd,
-            "-S",
-            f"{conn['host']},{conn['port']}",
-            "-U",
-            conn['user'],
-            "-d",
-            conn['dbname'],
-            "-Q",
-            query,
-        ]
-
-        if conn.get("password"):
-            cmd.extend(["-P", conn["password"]])
-
-        try:
-            result = subprocess.run(
-                cmd,
-                cwd=ROOT_DIR,
-                capture_output=True,
-                text=False,
-                timeout=600,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-        except FileNotFoundError:
-            messagebox.showerror("备份失败", f"未找到 sqlcmd：{sqlcmd}")
-            return
-        except Exception as exc:
-            messagebox.showerror("备份失败", f"执行 sqlcmd 失败：{exc}")
-            return
-
-        stdout_text = decode_console_output(result.stdout or b"")
-        stderr_text = decode_console_output(result.stderr or b"")
-
-        if result.returncode != 0:
-            detail = (stderr_text or stdout_text or "未知错误").strip()
+        ok, detail = run_database_backup_with_cleanup(config, backup_dir, sqlcmd, retention_days, retention_count)
+        if ok:
+            messagebox.showinfo("备份成功", f"数据库已备份到：{detail}")
+        else:
             messagebox.showerror("备份失败", detail)
-            if target_file.exists():
-                remove_path(target_file)
-            return
-
-        messagebox.showinfo("备份成功", f"数据库已备份到：{target_file}")
 
     def check_git_available(self) -> bool:
         try:
@@ -2082,9 +2995,13 @@ class FinFlowManagerApp:
         
         branch = self.ops_vars["git_branch"].get().strip() or "main"
         
+        if not (ROOT_DIR / ".git").exists():
+            messagebox.showinfo("检查结果", "当前目录没有 Git 仓库，无法检查更新")
+            return
+        
         try:
             result = subprocess.run(
-                ["git", "ls-remote", "--heads", repo_url, branch],
+                ["git", "fetch", "--dry-run"],
                 cwd=ROOT_DIR,
                 capture_output=True,
                 text=True,
@@ -2092,15 +3009,54 @@ class FinFlowManagerApp:
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             
-            if result.returncode != 0:
-                messagebox.showerror("检查失败", f"无法访问仓库或分支不存在：\n{result.stderr.strip()}")
+            fetch_result = subprocess.run(
+                ["git", "fetch", "origin", branch],
+                cwd=ROOT_DIR,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            
+            if fetch_result.returncode != 0:
+                messagebox.showerror("检查失败", f"无法获取远程仓库信息：\n{fetch_result.stderr.strip()}")
                 return
             
-            if not result.stdout.strip():
-                messagebox.showinfo("检查结果", f"分支 '{branch}' 不存在于仓库中")
-                return
+            local_commit = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=ROOT_DIR,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            ).stdout.strip()
             
-            messagebox.showinfo("检查结果", f"分支 '{branch}' 存在，可以拉取更新")
+            remote_commit = subprocess.run(
+                ["git", "rev-parse", f"origin/{branch}"],
+                cwd=ROOT_DIR,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            ).stdout.strip()
+            
+            if local_commit == remote_commit:
+                messagebox.showinfo("检查结果", "代码已是最新版本，无需更新")
+            else:
+                log_result = subprocess.run(
+                    ["git", "log", "--oneline", f"{local_commit}..{remote_commit}"],
+                    cwd=ROOT_DIR,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                new_commits = log_result.stdout.strip()
+                commit_count = len([l for l in new_commits.split("\n") if l.strip()])
+                messagebox.showinfo(
+                    "检查结果",
+                    f"发现 {commit_count} 个新提交，可以拉取更新：\n\n{new_commits}"
+                )
             
         except Exception as exc:
             messagebox.showerror("检查失败", f"检查更新时出错：{exc}")
@@ -2122,29 +3078,85 @@ class FinFlowManagerApp:
         if not (ROOT_DIR / ".git").exists():
             proceed = messagebox.askyesno(
                 "初始化 Git 仓库",
-                "当前项目目录没有 Git 仓库，是否初始化并从远程仓库克隆？\n注意：这会覆盖本地的 backend、frontend 等目录。",
+                "当前项目目录没有 Git 仓库，是否先在临时目录克隆，再覆盖到项目目录？\n注意：这会覆盖本地的 backend、frontend 等目录。",
             )
             if not proceed:
                 return
             
+            temp_clone_dir = Path(tempfile.mkdtemp(prefix="finflow_git_clone_"))
             try:
-                subprocess.run(
-                    ["git", "clone", "--branch", branch, repo_url, str(ROOT_DIR)],
+                result = subprocess.run(
+                    ["git", "clone", "--branch", branch, "--depth", "1", repo_url, str(temp_clone_dir)],
                     capture_output=True,
                     text=True,
                     timeout=300,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
-                messagebox.showinfo("成功", "Git 仓库初始化完成，代码已克隆")
+                
+                if result.returncode != 0:
+                    messagebox.showerror("失败", f"克隆仓库失败：\n{result.stderr.strip()}")
+                    return
+                
+                was_running = self.backend.is_running()
+                if was_running:
+                    self.backend.stop()
+                
+                backup_root = UPGRADE_BACKUP_DIR / datetime.now().strftime("%Y%m%d_%H%M%S_git_init")
+                overlay_directory(temp_clone_dir / "backend", ROOT_DIR / "backend", backup_root) if (temp_clone_dir / "backend").exists() else None
+                overlay_directory(temp_clone_dir / "frontend", ROOT_DIR / "frontend", backup_root) if (temp_clone_dir / "frontend").exists() else None
+                overlay_directory(temp_clone_dir / "tools", ROOT_DIR / "tools", backup_root) if (temp_clone_dir / "tools").exists() else None
+                
+                for item in temp_clone_dir.iterdir():
+                    if item.name in ("__pycache__", ".git"):
+                        continue
+                    dest = ROOT_DIR / item.name
+                    if item.is_dir():
+                        if dest.exists():
+                            shutil.rmtree(dest)
+                        shutil.copytree(item, dest)
+                    else:
+                        shutil.copy2(item, dest)
+                
+                ok, dep_msg = sync_backend_dependencies()
+                if not ok:
+                    messagebox.showwarning("依赖同步警告", f"代码克隆成功，但依赖同步失败：\n{dep_msg}")
+                
                 self.refresh_status()
+                self.notify_tray("Git 初始化完成", "代码已从远程仓库克隆")
+                messagebox.showinfo("成功", f"Git 仓库初始化完成，代码已克隆。\n备份目录：{backup_root}\n依赖同步：{'成功' if ok else '失败'}")
                 return
             except Exception as exc:
                 messagebox.showerror("失败", f"克隆仓库失败：{exc}")
                 return
+            finally:
+                shutil.rmtree(temp_clone_dir, ignore_errors=True)
         
         was_running = self.backend.is_running()
+        had_local_changes = False
         
         try:
+            diff_result = subprocess.run(
+                ["git", "diff", "--quiet"],
+                cwd=ROOT_DIR,
+                capture_output=True,
+                timeout=10,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            had_local_changes = diff_result.returncode != 0
+            
+            if had_local_changes:
+                stash_result = subprocess.run(
+                    ["git", "stash", "push", "-m", f"FinFlow Manager auto-stash {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"],
+                    cwd=ROOT_DIR,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                if stash_result.returncode != 0:
+                    messagebox.showerror("拉取失败", f"本地变更暂存失败：\n{stash_result.stderr.strip()}")
+                    return
+            
             if was_running:
                 self.backend.stop()
             
@@ -2167,10 +3179,19 @@ class FinFlowManagerApp:
                 messagebox.showinfo("结果", "代码已是最新，无需更新")
                 return
             
-            messagebox.showinfo("成功", f"代码已更新：\n{stdout_text}")
+            ok, dep_msg = sync_backend_dependencies()
             
             self.refresh_status()
-            self.notify_tray("Git 更新完成", "代码已从远程仓库拉取")
+            self.notify_tray("Git 更新完成", "代码已从远程仓库拉取，依赖已同步")
+            
+            detail_msg = f"代码已更新：\n{stdout_text}"
+            if ok:
+                detail_msg += f"\n\n依赖同步：成功"
+            else:
+                detail_msg += f"\n\n依赖同步失败：{dep_msg}"
+            if had_local_changes:
+                detail_msg += "\n\n注意：本地变更已暂存，可通过 git stash pop 恢复"
+            messagebox.showinfo("成功", detail_msg)
             
         except Exception as exc:
             messagebox.showerror("失败", f"拉取更新时出错：{exc}")
@@ -2185,14 +3206,13 @@ class FinFlowManagerApp:
             messagebox.showerror("错误", "未找到 Git 命令，请先安装 Git 并添加到系统 PATH")
             return
         
-        repo_url = self.ops_vars["git_repo_url"].get().strip()
-        if not repo_url:
-            messagebox.showerror("错误", "请先配置 Git 仓库地址")
+        if not (ROOT_DIR / ".git").exists():
+            messagebox.showerror("错误", "当前项目目录没有 Git 仓库")
             return
         
         try:
             result = subprocess.run(
-                ["git", "log", "-5", "--oneline"],
+                ["git", "log", "-10", "--oneline"],
                 cwd=ROOT_DIR,
                 capture_output=True,
                 text=True,
@@ -2219,13 +3239,23 @@ class FinFlowManagerApp:
             )
             repo_dir = top_level.stdout.strip() if top_level.returncode == 0 else str(ROOT_DIR)
             
+            branch_result = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=ROOT_DIR,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            current_branch = branch_result.stdout.strip() or "(detached)"
+            
             history_window = tk.Toplevel(self.root)
-            history_window.title("Git 提交历史")
-            history_window.geometry("600x400")
+            history_window.title(f"Git 提交历史 - {current_branch}")
+            history_window.geometry("650x450")
             
             text_widget = scrolledtext.ScrolledText(history_window, wrap="word", font=("Consolas", 10))
             text_widget.pack(fill="both", expand=True, padx=10, pady=10)
-            text_widget.insert("1.0", f"仓库目录：{repo_dir}\n\n{history}")
+            text_widget.insert("1.0", f"仓库目录：{repo_dir}\n当前分支：{current_branch}\n\n{history}")
             text_widget.configure(state="disabled")
             
             ttk.Button(history_window, text="关闭", command=history_window.destroy).pack(pady=10)
@@ -2276,7 +3306,7 @@ class FinFlowManagerApp:
             
             rollback_window = tk.Toplevel(self.root)
             rollback_window.title("选择回滚版本")
-            rollback_window.geometry("500x400")
+            rollback_window.geometry("550x450")
             
             ttk.Label(rollback_window, text="选择要回滚到的版本：").pack(pady=10)
             
@@ -2285,6 +3315,13 @@ class FinFlowManagerApp:
             
             for commit_hash, message in commits:
                 listbox.insert("end", f"{commit_hash} {message}")
+            
+            ttk.Label(
+                rollback_window,
+                text="提示：回滚前会自动备份当前状态，并暂存本地变更",
+                foreground="#666666",
+                font=("Microsoft YaHei UI", 8),
+            ).pack(pady=(0, 5))
             
             ttk.Button(rollback_window, text="确定回滚", command=lambda: self.execute_rollback(listbox, rollback_window)).pack(pady=10)
             
@@ -2302,7 +3339,13 @@ class FinFlowManagerApp:
         
         proceed = messagebox.askyesno(
             "确认回滚",
-            f"确定要回滚到版本 {commit_hash} 吗？\n\n注意：这会覆盖本地的代码变更。",
+            f"确定要回滚到版本 {commit_hash} 吗？\n\n"
+            f"操作说明：\n"
+            f"1. 自动备份当前状态到 deploy/windows/upgrade_backups\n"
+            f"2. 暂存本地未提交变更\n"
+            f"3. 执行 git reset --hard\n"
+            f"4. 同步 Python 依赖\n"
+            f"5. 自动重启后端服务",
         )
         if not proceed:
             return
@@ -2312,6 +3355,32 @@ class FinFlowManagerApp:
         try:
             if was_running:
                 self.backend.stop()
+            
+            backup_root = UPGRADE_BACKUP_DIR / datetime.now().strftime("%Y%m%d_%H%M%S_rollback")
+            backup_root.mkdir(parents=True, exist_ok=True)
+            
+            for item_name in ("backend", "frontend", "tools", "deploy"):
+                src = ROOT_DIR / item_name
+                if src.exists():
+                    dest = backup_root / item_name
+                    shutil.copytree(src, dest)
+            
+            diff_result = subprocess.run(
+                ["git", "diff", "--quiet"],
+                cwd=ROOT_DIR,
+                capture_output=True,
+                timeout=10,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if diff_result.returncode != 0:
+                subprocess.run(
+                    ["git", "stash", "push", "-m", f"Pre-rollback stash {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"],
+                    cwd=ROOT_DIR,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
             
             result = subprocess.run(
                 ["git", "reset", "--hard", commit_hash],
@@ -2326,10 +3395,17 @@ class FinFlowManagerApp:
                 messagebox.showerror("回滚失败", f"Git reset 失败：\n{result.stderr.strip()}")
                 return
             
-            messagebox.showinfo("成功", f"已回滚到版本 {commit_hash}")
+            ok, dep_msg = sync_backend_dependencies()
             
             self.refresh_status()
             self.notify_tray("Git 回滚完成", f"已回滚到版本 {commit_hash}")
+            
+            detail_msg = f"已回滚到版本 {commit_hash}\n备份目录：{backup_root}"
+            if ok:
+                detail_msg += "\n依赖同步：成功"
+            else:
+                detail_msg += f"\n依赖同步失败：{dep_msg}"
+            messagebox.showinfo("成功", detail_msg)
             
         except Exception as exc:
             messagebox.showerror("失败", f"回滚时出错：{exc}")
@@ -2337,6 +3413,127 @@ class FinFlowManagerApp:
             if was_running and not self.backend.is_running():
                 self.backend.start(self.get_effective_config())
             window.destroy()
+
+    def select_migration_file(self) -> None:
+        path = filedialog.askopenfilename(title="选择 SQL 脚本", filetypes=[("SQL 文件", "*.sql"), ("所有文件", "*.*")])
+        if path:
+            try:
+                content = Path(path).read_text(encoding="utf-8")
+                self.migration_script_text.configure(state="normal")
+                self.migration_script_text.delete("1.0", tk.END)
+                self.migration_script_text.insert("1.0", content)
+                self.migration_script_text.configure(state="disabled")
+            except Exception as exc:
+                messagebox.showerror("读取失败", f"无法读取 SQL 文件：{exc}")
+
+    def clear_migration_script(self) -> None:
+        self.migration_script_text.configure(state="normal")
+        self.migration_script_text.delete("1.0", tk.END)
+        self.migration_script_text.configure(state="disabled")
+
+    def execute_migration(self) -> None:
+        self.save_manager_state()
+        sql_content = self.migration_script_text.get("1.0", tk.END).strip()
+        if not sql_content:
+            messagebox.showwarning("提示", "请先输入或选择 SQL 脚本内容")
+            return
+        
+        sqlcmd = self.ops_vars["sqlcmd_path"].get().strip() or "sqlcmd"
+        config = self.get_effective_config()
+        
+        proceed = messagebox.askyesno("确认执行", "确定要执行此 SQL 脚本吗？\n请确保脚本内容正确，执行后将直接修改数据库。")
+        if not proceed:
+            return
+            
+        ok, detail = execute_sql_script_via_sqlcmd(sql_content, config, sqlcmd)
+        if ok:
+            messagebox.showinfo("执行成功", detail)
+            self.notify_tray("数据库迁移成功", "SQL 脚本已执行")
+        else:
+            messagebox.showerror("执行失败", detail)
+
+    def manual_cleanup_backups(self) -> None:
+        self.save_manager_state()
+        backup_dir = Path(self.ops_vars["backup_dir"].get().strip() or str(BACKUP_DIR))
+        retention_days = int(self.ops_vars["backup_retention_days"].get().strip() or 30)
+        retention_count = int(self.ops_vars["backup_retention_count"].get().strip() or 10)
+        
+        removed, msg = cleanup_old_backups(backup_dir, retention_days, retention_count)
+        messagebox.showinfo("清理完成", msg)
+
+    def manual_cleanup_logs(self) -> None:
+        self.save_manager_state()
+        retention_days = int(self.ops_vars["log_archive_retention_days"].get().strip() or 90)
+        
+        removed, msg = cleanup_old_archived_logs(retention_days)
+        messagebox.showinfo("清理完成", msg)
+
+    def send_test_alert(self) -> None:
+        self.save_manager_state()
+        webhook_url = self.ops_vars["webhook_url"].get().strip()
+        if not webhook_url:
+            messagebox.showwarning("提示", "请先配置 Webhook URL")
+            return
+            
+        ok = send_webhook_notification(webhook_url, "测试告警", "这是一条来自 FinFlow 管理器的测试告警消息。")
+        if ok:
+            messagebox.showinfo("发送成功", "测试告警已发送，请检查接收端。")
+        else:
+            messagebox.showerror("发送失败", "Webhook 发送失败，请检查 URL 和网络连接。")
+
+    def sync_backend_deps(self) -> None:
+        proceed = messagebox.askyesno("确认同步", "将使用 pip 安装 backend/requirements.txt 中的所有依赖。\n这可能需要几分钟，是否继续？")
+        if not proceed:
+            return
+        
+        self.log_status_var.set("当前显示：正在同步后端依赖...")
+        ok, detail = sync_backend_dependencies()
+        if ok:
+            messagebox.showinfo("同步成功", detail)
+            self.notify_tray("依赖同步成功", "后端 Python 依赖已更新")
+        else:
+            messagebox.showerror("同步失败", detail)
+
+    def restore_database(self) -> None:
+        self.save_manager_state()
+        sqlcmd = self.ops_vars["sqlcmd_path"].get().strip() or "sqlcmd"
+        backup_dir = Path(self.ops_vars["backup_dir"].get().strip() or str(BACKUP_DIR))
+        
+        bak_files = sorted(backup_dir.glob("*.bak"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if not bak_files:
+            messagebox.showerror("恢复失败", f"备份目录中未找到 .bak 文件：{backup_dir}")
+            return
+        
+        file_list = [f"{f.name} ({f.stat().st_size / (1024*1024):.1f} MB)" for f in bak_files[:10]]
+        choice_window = tk.Toplevel(self.root)
+        choice_window.title("选择恢复文件")
+        choice_window.geometry("500x350")
+        
+        ttk.Label(choice_window, text="选择要恢复的备份文件：").pack(pady=10)
+        listbox = tk.Listbox(choice_window, height=12, font=("Consolas", 9))
+        listbox.pack(fill="both", expand=True, padx=10, pady=5)
+        for item in file_list:
+            listbox.insert("end", item)
+        
+        def do_restore():
+            sel = listbox.curselection()
+            if not sel:
+                messagebox.showwarning("警告", "请选择一个备份文件")
+                return
+            selected_file = bak_files[sel[0]]
+            proceed = messagebox.askyesno("确认恢复", f"确定要从以下备份恢复数据库吗？\n{selected_file.name}\n\n警告：这将覆盖当前数据库中的所有数据！")
+            if not proceed:
+                return
+            
+            ok, detail = restore_database_from_backup(self.get_effective_config(), selected_file, sqlcmd)
+            choice_window.destroy()
+            if ok:
+                messagebox.showinfo("恢复成功", f"数据库已从 {selected_file.name} 恢复")
+                self.notify_tray("数据库恢复成功", f"已从 {selected_file.name} 恢复")
+            else:
+                messagebox.showerror("恢复失败", detail)
+        
+        ttk.Button(choice_window, text="确认恢复", command=do_restore).pack(pady=10)
 
     def hide_to_tray(self) -> None:
         self.root.withdraw()
@@ -2399,11 +3596,14 @@ class FinFlowManagerApp:
             self.last_notified_exit_at = self.backend.last_exit_at
             fast_failed = self.backend.register_failed_start_if_needed()
             self.notify_tray("后端异常退出", f"退出码：{self.backend.last_exit_code}")
+            webhook_url = self.manager_state.get("webhook_url", "")
+            send_webhook_notification(webhook_url, "后端异常退出", f"退出码：{self.backend.last_exit_code}")
             if self.backend.auto_restart_suppressed:
                 self.status_vars["backend_status"].set(
                     f"启动失败过多，已暂停自动拉起 (最近退出码 {self.backend.last_exit_code})"
                 )
                 self.notify_tray("已暂停自动拉起", "后端连续快速失败 3 次，请先修复依赖或配置后再手动启动")
+                send_webhook_notification(webhook_url, "已暂停自动拉起", "后端连续快速失败 3 次")
             elif fast_failed:
                 self.status_vars["backend_status"].set(
                     f"启动后快速退出，等待自动重试 ({self.backend.consecutive_failed_starts}/3)"
@@ -2452,14 +3652,17 @@ class FinFlowManagerApp:
             self.schedule_health_refresh()
             return
 
-        ok, detail = probe_http(self.get_app_url())
+        ok, detail = probe_backend_health(self.get_app_url())
         new_state = "healthy" if ok else "unhealthy"
         self.status_vars["health_status"].set(f"正常 ({detail})" if ok else f"异常 ({detail})")
         if self.last_health_state not in {"unknown", new_state}:
+            webhook_url = self.manager_state.get("webhook_url", "")
             if ok:
                 self.notify_tray("健康检查恢复", f"{self.get_app_url()} 已恢复可访问")
+                send_webhook_notification(webhook_url, "健康检查恢复", f"{self.get_app_url()} 已恢复可访问")
             else:
                 self.notify_tray("健康检查异常", f"{self.get_app_url()} 当前不可访问：{detail}")
+                send_webhook_notification(webhook_url, "健康检查异常", f"{self.get_app_url()} 当前不可访问：{detail}")
         self.last_health_state = new_state
         self.update_tray_title()
         self.schedule_health_refresh()
@@ -2540,18 +3743,6 @@ class FinFlowManagerApp:
 
 
 if __name__ == "__main__":
-    try:
-        app = FinFlowManagerApp()
-        app.run()
-    except tk.TclError as exc:
-        print(
-            "当前 Python 环境的 Tcl/Tk 组件不可用，无法启动 Tkinter 图形界面。\n"
-            "当前脚本已经尝试自动补全 Tcl/Tk 路径；如果仍失败，请确认你的 Python 安装目录下存在 tcl\\tcl8.6 和 tcl\\tk8.6。\n"
-            "如果你坚持使用 Python 3.13，请优先检查虚拟环境是否引用到了正确的 base Python 安装。\n"
-            "推荐步骤：\n"
-            "1. 确认 C:\\Program Files\\Python313\\tcl\\tcl8.6 与 tk8.6 存在\n"
-            "2. 重新进入虚拟环境后再启动管理器\n"
-            "3. 如仍失败，再重建 backend/.venv\n"
-            f"详细错误：{exc}"
-        )
-        raise SystemExit(1) from exc
+    cli_parser = build_cli_parser()
+    cli_args = cli_parser.parse_args()
+    raise SystemExit(run_cli(cli_args))
