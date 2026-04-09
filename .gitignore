@@ -21,3 +21,12 @@ frontend/dist/
 
 # VS Code
 .vscode/
+
+# FinFlow Manager 本地状态（不应进入版本控制）
+deploy/windows/manager_state.json
+deploy/windows/runtime/
+deploy/windows/upgrade_backups/
+
+# 构建和分发文件
+deploy/windows/dist/
+deploy/windows/build/
