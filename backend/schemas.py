@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, List, Any, Literal, Dict
 from datetime import date, datetime
 from decimal import Decimal
@@ -33,8 +33,7 @@ class CashJournalResponse(BaseModel):
     error_msg: Optional[str]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # Voucher Preview Schema
 class VoucherEntry(BaseModel):
@@ -87,8 +86,7 @@ class OrganizationResponse(OrganizationBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class OrganizationTree(OrganizationResponse):
@@ -133,8 +131,7 @@ class UserResponse(UserBase):
     account_book_ids: Optional[List[str]] = None
     role: Optional[str] = "user"
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserTableColumnPreferenceUpdate(BaseModel):
@@ -148,8 +145,7 @@ class UserTableColumnPreferenceResponse(BaseModel):
     order: List[str] = Field(default_factory=list)
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class MenuPermissionMenuItem(BaseModel):
@@ -302,8 +298,7 @@ class DepositRecordResponse(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PrepaymentRecordResponse(BaseModel):
@@ -339,8 +334,7 @@ class PrepaymentRecordResponse(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class BillPreviewRef(BaseModel):
@@ -421,8 +415,7 @@ class ExternalServiceResponse(ExternalServiceBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # External API Schemas
 class ExternalApiBase(BaseModel):
@@ -458,8 +451,7 @@ class ExternalApiResponse(ExternalApiBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ExternalServiceWithApis(ExternalServiceResponse):
     apis: List[ExternalApiResponse] = []
@@ -502,8 +494,7 @@ class ReportingDbConnectionResponse(ReportingDbConnectionBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ReportingDatasetBase(BaseModel):
@@ -538,8 +529,7 @@ class ReportingDatasetResponse(ReportingDatasetBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ReportingReportBase(BaseModel):
@@ -570,8 +560,7 @@ class ReportingReportResponse(ReportingReportBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ReportingDatasetPreviewRequest(BaseModel):
@@ -616,8 +605,7 @@ class GlobalVariableResponse(GlobalVariableBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ExpressionFunctionResponse(BaseModel):
@@ -648,8 +636,7 @@ class VoucherEntryRuleResponse(VoucherEntryRuleBase):
     rule_id: int
     template_id: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class VoucherTemplateBase(BaseModel):
     template_id: str
@@ -692,8 +679,7 @@ class VoucherTemplateResponse(VoucherTemplateBase):
     category_path: Optional[str] = None
     rules: List[VoucherEntryRuleResponse] = Field(default_factory=list)
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class VoucherTemplateCategoryBase(BaseModel):
@@ -723,8 +709,7 @@ class VoucherTemplateCategoryResponse(VoucherTemplateCategoryBase):
     updated_at: Optional[datetime] = None
     children: List["VoucherTemplateCategoryResponse"] = []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AccountingSubjectBase(BaseModel):
@@ -757,8 +742,7 @@ class AccountingSubjectResponse(AccountingSubjectBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class AccountingSubjectSyncRequest(BaseModel):
     override_config: Optional[dict] = None
@@ -791,8 +775,7 @@ class CustomerResponse(CustomerBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class CustomerSyncRequest(BaseModel):
     override_config: Optional[dict] = None
@@ -817,8 +800,7 @@ class SupplierResponse(SupplierBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class SupplierSyncRequest(BaseModel):
     override_config: Optional[dict] = None
@@ -843,8 +825,7 @@ class TaxRateResponse(TaxRateBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class TaxRateSyncRequest(BaseModel):
     override_config: Optional[dict] = None
@@ -869,8 +850,7 @@ class KingdeeHouseResponse(KingdeeHouseBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class KingdeeHouseSyncRequest(BaseModel):
     override_config: Optional[dict] = None
@@ -899,8 +879,7 @@ class KingdeeAccountBookResponse(KingdeeAccountBookBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class KingdeeAccountBookSyncRequest(BaseModel):
     override_config: Optional[dict] = None
@@ -930,8 +909,7 @@ class HouseUserItemResponse(BaseModel):
     period_num: Optional[int] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class HouseParkBriefResponse(BaseModel):
@@ -948,8 +926,7 @@ class HouseParkBriefResponse(BaseModel):
     house_fk: Optional[int] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class HouseResponse(BaseModel):
@@ -986,8 +963,7 @@ class HouseResponse(BaseModel):
     kingdee_house: Optional[KingdeeHouseResponse] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class HouseUpdate(BaseModel):
     kingdee_house_id: Optional[str] = None
@@ -1008,8 +984,7 @@ class ResidentResponse(BaseModel):
     kingdee_customer: Optional[CustomerResponse] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ResidentUpdate(BaseModel):
     kingdee_customer_id: Optional[str] = None
@@ -1033,8 +1008,7 @@ class ParkResponse(BaseModel):
     kingdee_house: Optional[KingdeeHouseResponse] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ParkUpdate(BaseModel):
     kingdee_house_id: Optional[str] = None
@@ -1063,8 +1037,7 @@ class AuxiliaryDataResponse(AuxiliaryDataBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class AuxiliaryDataSyncRequest(BaseModel):
     override_config: Optional[dict] = None
@@ -1091,8 +1064,7 @@ class AuxiliaryDataCategoryResponse(AuxiliaryDataCategoryBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class AuxiliaryDataCategorySyncRequest(BaseModel):
     override_config: Optional[dict] = None
@@ -1118,8 +1090,7 @@ class ChargeItemResponse(ChargeItemBase):
     created_at: datetime
     kingdee_tax_rate: Optional[TaxRateResponse] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ChargeItemUpdate(BaseModel):
     kingdee_tax_rate_id: Optional[str] = None
@@ -1156,8 +1127,7 @@ class KingdeeBankAccountResponse(KingdeeBankAccountBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class KingdeeBankAccountSyncRequest(BaseModel):
     override_config: Optional[dict] = None
