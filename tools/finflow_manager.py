@@ -236,10 +236,14 @@ DIST_DIR = FRONTEND_DIR / "dist"
 LOG_DIR = BACKEND_DIR / "logs"
 ENV_PATH = BACKEND_DIR / ".env"
 ENV_EXAMPLE_PATH = BACKEND_DIR / ".env.example"
+FRONTEND_ENV_PATH = FRONTEND_DIR / ".env"
+FRONTEND_ENV_EXAMPLE_PATH = FRONTEND_DIR / ".env.example"
 KEY_PATH = BACKEND_DIR / ".encryption.key"
 STATE_PATH = ROOT_DIR / "deploy" / "windows" / "manager_state.json"
 STDOUT_LOG = LOG_DIR / "backend.stdout.log"
 STDERR_LOG = LOG_DIR / "backend.stderr.log"
+FRONTEND_STDOUT_LOG = LOG_DIR / "frontend.stdout.log"
+FRONTEND_STDERR_LOG = LOG_DIR / "frontend.stderr.log"
 PROJECT_SYNC_LOG = BACKEND_DIR / "scripts" / "fetch_projects.log"
 BACKUP_DIR = ROOT_DIR / "backups"
 UPGRADE_BACKUP_DIR = ROOT_DIR / "deploy" / "windows" / "upgrade_backups"
@@ -253,6 +257,7 @@ SERVICE_HOST_LOG = LOG_DIR / "manager.service.log"
 STATUS_REFRESH_INTERVAL_MS = 2000
 LOG_REFRESH_INTERVAL_MS = 2500
 HEALTH_CHECK_INTERVAL_MS = 5000
+DB_MONITOR_INTERVAL_MS = 15000
 HEALTH_CHECK_TIMEOUT = 3
 
 PROTECTED_EXACT_PATHS = {
@@ -338,10 +343,13 @@ DEFAULT_ENV = {
 
 DEFAULT_STATE = {
     "auto_restart_backend": True,
+    "auto_restart_frontend": True,
     "start_backend_on_launch": False,
+    "start_frontend_on_launch": False,
     "hide_to_tray_on_close": True,
     "launch_manager_on_startup": False,
     "enable_health_check": True,
+    "enable_db_monitor": True,
     "frontend_deploy_source": "",
     "release_package_path": "",
     "backup_dir": str(BACKUP_DIR),
@@ -405,6 +413,19 @@ def write_env_file(path: Path, values: Dict[str, str], extra_values: Dict[str, s
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def write_key_value_env_file(path: Path, ordered_keys: List[str], values: Dict[str, str]) -> None:
+    seen: set[str] = set()
+    lines: List[str] = []
+    for key in ordered_keys:
+        if key in values:
+            lines.append(f"{key}={values[key]}")
+            seen.add(key)
+    for key in sorted(values.keys()):
+        if key not in seen:
+            lines.append(f"{key}={values[key]}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def read_state_file(path: Path) -> Dict[str, Any]:
     if not path.exists():
         return dict(DEFAULT_STATE)
@@ -431,6 +452,7 @@ def write_state_file(path: Path, state: Dict[str, Any]) -> None:
 DEFAULT_RUNTIME_STATE = {
     "service_host_pid": 0,
     "backend_pid": 0,
+    "frontend_pid": 0,
     "user_stopped": False,
     "last_start_attempt": 0.0,
     "last_exit_code": None,
@@ -440,6 +462,15 @@ DEFAULT_RUNTIME_STATE = {
     "auto_restart_suppressed": False,
     "last_session_marker": "",
     "last_session_started_label": "",
+    "frontend_user_stopped": False,
+    "frontend_last_start_attempt": 0.0,
+    "frontend_last_exit_code": None,
+    "frontend_last_exit_at": 0.0,
+    "frontend_last_started_at": 0.0,
+    "frontend_consecutive_failed_starts": 0,
+    "frontend_auto_restart_suppressed": False,
+    "frontend_last_session_marker": "",
+    "frontend_last_session_started_label": "",
 }
 
 
@@ -481,7 +512,22 @@ def write_runtime_state(**updates: Any) -> Dict[str, Any]:
 
 def reset_runtime_state() -> None:
     ensure_runtime_dir()
-    RUNTIME_STATE_PATH.write_text(json.dumps(DEFAULT_RUNTIME_STATE, ensure_ascii=False, indent=2), encoding="utf-8")
+    state = dict(DEFAULT_RUNTIME_STATE)
+    current = read_runtime_state()
+    for key in (
+        "frontend_pid",
+        "frontend_user_stopped",
+        "frontend_last_start_attempt",
+        "frontend_last_exit_code",
+        "frontend_last_exit_at",
+        "frontend_last_started_at",
+        "frontend_consecutive_failed_starts",
+        "frontend_auto_restart_suppressed",
+        "frontend_last_session_marker",
+        "frontend_last_session_started_label",
+    ):
+        state[key] = current.get(key, DEFAULT_RUNTIME_STATE[key])
+    RUNTIME_STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def create_stop_request() -> None:
@@ -801,6 +847,108 @@ def extract_db_connection(config: Dict[str, str]) -> Dict[str, str]:
     }
 
 
+def get_database_connection_issues(config: Dict[str, str]) -> Tuple[Dict[str, str], List[str]]:
+    conn = extract_db_connection(config)
+    missing = [key for key in ("host", "port", "user", "dbname") if not conn.get(key)]
+    return conn, missing
+
+
+def describe_database_configuration(config: Dict[str, str]) -> Tuple[str, str]:
+    conn, missing = get_database_connection_issues(config)
+    if missing:
+        return "missing_config", f"数据库配置不完整，缺少：{', '.join(missing)}"
+    return "ready", f"{conn['host']}:{conn['port']} / {conn['dbname']} / 用户 {conn['user']}"
+
+
+def describe_database_configuration_from_disk() -> Tuple[str, str]:
+    if not ENV_PATH.exists():
+        return "missing_env", "未找到 backend/.env，请先在“配置管理”中保存数据库连接配置"
+    return describe_database_configuration(load_effective_config_from_disk())
+
+
+def check_database_connectivity_via_backend_runtime(config: Dict[str, str]) -> Tuple[bool, str]:
+    python_exe = BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
+    if not python_exe.exists():
+        return False, f"未找到后端虚拟环境 Python：{python_exe}"
+
+    env = os.environ.copy()
+    env.update(config)
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+
+    script = (
+        "from sqlalchemy import create_engine, text\n"
+        "from database import _build_database_url, _connect_args\n"
+        "engine = create_engine(_build_database_url(), pool_pre_ping=True, connect_args=_connect_args)\n"
+        "with engine.connect() as conn:\n"
+        "    conn.execute(text('SELECT 1'))\n"
+        "print('数据库连接正常')\n"
+    )
+    try:
+        result = subprocess.run(
+            [str(python_exe), "-c", script],
+            cwd=BACKEND_DIR,
+            env=env,
+            capture_output=True,
+            text=False,
+            timeout=20,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception as exc:
+        return False, f"后端数据库驱动检查异常：{exc}"
+
+    stdout_text = decode_console_output(result.stdout or b"").strip()
+    stderr_text = decode_console_output(result.stderr or b"").strip()
+    if result.returncode == 0:
+        conn = extract_db_connection(config)
+        return True, stdout_text or f"数据库 {conn.get('dbname') or ''} 连接正常".strip()
+    return False, stderr_text or stdout_text or "数据库连接失败"
+
+
+def evaluate_database_runtime_status(sqlcmd: str = "sqlcmd") -> Tuple[str, str]:
+    config_state, config_detail = describe_database_configuration_from_disk()
+    if config_state != "ready":
+        return config_state, config_detail
+
+    config = load_effective_config_from_disk()
+    runtime_python = BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
+    if runtime_python.exists():
+        ok, detail = check_database_connectivity_via_backend_runtime(config)
+        return ("ok" if ok else "error"), detail
+
+    sqlcmd = (sqlcmd or "").strip()
+    sqlcmd_available = False
+    if sqlcmd:
+        sqlcmd_path = Path(sqlcmd)
+        sqlcmd_available = sqlcmd_path.exists() if sqlcmd_path.suffix else shutil.which(sqlcmd) is not None
+    if not sqlcmd_available:
+        return "missing_runtime", "未找到后端虚拟环境，且 sqlcmd 不可用，暂时无法检查数据库连接"
+
+    ok, detail = check_database_connectivity(config, sqlcmd)
+    return ("ok" if ok else "error"), detail
+
+
+def format_database_config_status(state: str, detail: str) -> str:
+    prefix = {
+        "ready": "已配置",
+        "missing_env": "待配置",
+        "missing_config": "配置不完整",
+    }.get(state, "未知")
+    return f"{prefix} ({detail})"
+
+
+def format_database_connection_status(state: str, detail: str) -> str:
+    prefix = {
+        "ok": "正常",
+        "error": "异常",
+        "missing_env": "待配置",
+        "missing_config": "配置不完整",
+        "missing_sqlcmd": "工具不可用",
+        "missing_runtime": "环境未就绪",
+    }.get(state, "未检查")
+    return f"{prefix} ({detail})"
+
+
 def sync_backend_dependencies(timeout_seconds: int = 900) -> Tuple[bool, str]:
     python_exe = BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
     requirements_path = BACKEND_DIR / "requirements.txt"
@@ -840,6 +988,149 @@ def sync_backend_dependencies(timeout_seconds: int = 900) -> Tuple[bool, str]:
         detail = stderr_text or stdout_text or "未知错误"
         return False, detail
     return True, stdout_text or "依赖已同步"
+
+
+def resolve_frontend_service_settings(config: Dict[str, str] | None = None) -> Dict[str, str]:
+    effective_config = dict(config or load_effective_config_from_disk())
+    frontend_values = read_env_file(FRONTEND_ENV_EXAMPLE_PATH)
+    frontend_values.update(read_env_file(FRONTEND_ENV_PATH))
+
+    backend_host = resolve_browser_host(effective_config.get("APP_HOST", "127.0.0.1"))
+    backend_port = (effective_config.get("APP_PORT") or "8100").strip() or "8100"
+    frontend_port = (frontend_values.get("VITE_PORT") or "5273").strip() or "5273"
+
+    api_base_url = (frontend_values.get("VITE_API_BASE_URL") or "").strip()
+    if not api_base_url or api_base_url == "auto":
+        api_base_url = "/api"
+
+    return {
+        "frontend_host": backend_host,
+        "frontend_port": frontend_port,
+        "frontend_url": f"http://{backend_host}:{frontend_port}/",
+        "backend_host": backend_host,
+        "backend_port": backend_port,
+        "api_base_url": api_base_url,
+        "api_proxy_target": f"http://{backend_host}:{backend_port}",
+    }
+
+
+def sync_frontend_runtime_env(config: Dict[str, str]) -> Tuple[bool, str]:
+    settings = resolve_frontend_service_settings(config)
+    current_values = read_env_file(FRONTEND_ENV_EXAMPLE_PATH)
+    current_values.update(read_env_file(FRONTEND_ENV_PATH))
+    current_values.update(
+        {
+            "VITE_API_BASE_URL": settings["api_base_url"],
+            "VITE_PORT": settings["frontend_port"],
+            "VITE_API_PORT": settings["backend_port"],
+            "VITE_API_PROXY_TARGET": settings["api_proxy_target"],
+        }
+    )
+
+    try:
+        FRONTEND_ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
+        write_key_value_env_file(
+            FRONTEND_ENV_PATH,
+            ["VITE_API_BASE_URL", "VITE_PORT", "VITE_API_PORT", "VITE_API_PROXY_TARGET"],
+            current_values,
+        )
+    except Exception as exc:
+        return False, f"同步前端环境失败: {exc}"
+
+    return True, f"前端环境已同步: {settings['frontend_url']} -> {settings['api_proxy_target']}"
+
+
+def sync_frontend_dependencies(timeout_seconds: int = 900) -> Tuple[bool, str]:
+    package_json = FRONTEND_DIR / "package.json"
+    if not package_json.exists():
+        return False, f"未找到 package.json: {package_json}"
+
+    npm_exe = "npm.cmd" if os.name == "nt" else "npm"
+    node_exe = "node.exe" if os.name == "nt" else "node"
+
+    try:
+        subprocess.run(
+            [node_exe, "--version"],
+            capture_output=True,
+            timeout=5,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except FileNotFoundError:
+        return False, "Node.js 未安装，无法同步前端依赖"
+    except Exception as exc:
+        return False, f"检查 Node.js 失败: {exc}"
+
+    try:
+        result = subprocess.run(
+            [npm_exe, "install"],
+            cwd=FRONTEND_DIR,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except FileNotFoundError:
+        return False, f"未找到 npm: {npm_exe}"
+    except Exception as exc:
+        return False, f"安装前端依赖失败: {exc}"
+
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "未知错误").strip()
+        return False, detail
+    return True, "前端依赖已同步"
+
+
+def build_frontend(timeout_seconds: int = 600) -> Tuple[bool, str]:
+    frontend_dir = ROOT_DIR / "frontend"
+    package_json = frontend_dir / "package.json"
+    dist_dir = frontend_dir / "dist"
+    node_modules = frontend_dir / "node_modules"
+
+    if not package_json.exists():
+        return False, "frontend/package.json 不存在，跳过前端构建"
+
+    if dist_dir.exists() and node_modules.exists():
+        return True, "前端构建产物已存在，跳过构建"
+
+    node_exe = "node"
+    npm_exe = "npm"
+
+    try:
+        subprocess.run([node_exe, "--version"], capture_output=True, timeout=5, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except FileNotFoundError:
+        return False, "Node.js 未安装，跳过前端构建"
+
+    if not node_modules.exists():
+        result = subprocess.run(
+            [npm_exe, "install"],
+            cwd=frontend_dir,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if result.returncode != 0:
+            return False, f"npm install 失败: {result.stderr or result.stdout}"
+
+    result = subprocess.run(
+        [npm_exe, "run", "build"],
+        cwd=frontend_dir,
+        capture_output=True,
+        text=True,
+        timeout=timeout_seconds,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    if result.returncode != 0:
+        return False, f"npm run build 失败: {result.stderr or result.stdout}"
+
+    if not dist_dir.exists():
+        return False, "构建完成但 dist 目录不存在"
+
+    return True, f"前端构建成功: {dist_dir}"
+
+
+def sync_keys_to_frontend(config: Dict[str, str]) -> Tuple[bool, str]:
+    return sync_frontend_runtime_env(config)
 
 
 def run_database_backup(config: Dict[str, str], backup_dir: Path, sqlcmd: str) -> Tuple[bool, str]:
@@ -1215,8 +1506,7 @@ def send_webhook_notification(webhook_url: str, title: str, message: str) -> boo
 
 
 def check_database_connectivity(config: Dict[str, str], sqlcmd: str = "sqlcmd") -> Tuple[bool, str]:
-    conn = extract_db_connection(config)
-    missing = [key for key in ("host", "port", "user", "dbname") if not conn.get(key)]
+    conn, missing = get_database_connection_issues(config)
     if missing:
         return False, f"数据库配置不完整，缺少：{', '.join(missing)}"
 
@@ -1432,6 +1722,226 @@ class BackendProcessController:
         write_runtime_state(consecutive_failed_starts=0, auto_restart_suppressed=False)
 
 
+class FrontendProcessController:
+    def __init__(self) -> None:
+        state = read_runtime_state()
+        frontend_pid = int(state.get("frontend_pid") or 0)
+        self.process: subprocess.Popen | SimpleNamespace | None = (
+            SimpleNamespace(pid=frontend_pid) if is_process_alive(frontend_pid) else None
+        )
+        self.stdout_handle = None
+        self.stderr_handle = None
+        self.user_stopped = bool(state.get("frontend_user_stopped", False))
+        self.last_start_attempt = float(state.get("frontend_last_start_attempt", 0.0) or 0.0)
+        self.last_exit_code = state.get("frontend_last_exit_code")
+        self.last_exit_at = float(state.get("frontend_last_exit_at", 0.0) or 0.0)
+        self.last_started_at = float(state.get("frontend_last_started_at", 0.0) or 0.0)
+        self.consecutive_failed_starts = int(state.get("frontend_consecutive_failed_starts", 0) or 0)
+        self.auto_restart_suppressed = bool(state.get("frontend_auto_restart_suppressed", False))
+        self.last_session_marker = str(state.get("frontend_last_session_marker", "") or "")
+        self.last_session_started_label = str(state.get("frontend_last_session_started_label", "") or "")
+        if frontend_pid > 0 and self.process is None:
+            write_runtime_state(frontend_pid=0)
+
+    def _close_handles(self) -> None:
+        for handle in (self.stdout_handle, self.stderr_handle):
+            try:
+                if handle:
+                    handle.flush()
+                    handle.close()
+            except Exception:
+                pass
+        self.stdout_handle = None
+        self.stderr_handle = None
+
+    def _sync_runtime_state(self, **updates: Any) -> None:
+        write_runtime_state(
+            frontend_pid=int(getattr(self.process, "pid", 0) or 0),
+            frontend_user_stopped=self.user_stopped,
+            frontend_last_start_attempt=self.last_start_attempt,
+            frontend_last_exit_code=self.last_exit_code,
+            frontend_last_exit_at=self.last_exit_at,
+            frontend_last_started_at=self.last_started_at,
+            frontend_consecutive_failed_starts=self.consecutive_failed_starts,
+            frontend_auto_restart_suppressed=self.auto_restart_suppressed,
+            frontend_last_session_marker=self.last_session_marker,
+            frontend_last_session_started_label=self.last_session_started_label,
+            **updates,
+        )
+
+    def is_running(self) -> bool:
+        if self.process is None:
+            return False
+        if isinstance(self.process, subprocess.Popen):
+            return self.process.poll() is None
+        return is_process_alive(int(getattr(self.process, "pid", 0) or 0))
+
+    def capture_exit(self) -> int | None:
+        if self.process is None:
+            return None
+        if isinstance(self.process, subprocess.Popen):
+            code = self.process.poll()
+            if code is None:
+                return None
+        else:
+            pid = int(getattr(self.process, "pid", 0) or 0)
+            if is_process_alive(pid):
+                return None
+            code = self.last_exit_code
+
+        self.last_exit_code = code
+        self.last_exit_at = time.time()
+        self.process = None
+        self._close_handles()
+        self._sync_runtime_state(frontend_pid=0)
+        return code
+
+    def start(self, config: Dict[str, str]) -> Tuple[bool, str]:
+        if self.is_running():
+            return False, "前端已在运行"
+
+        package_json = FRONTEND_DIR / "package.json"
+        vite_cli = FRONTEND_DIR / "node_modules" / "vite" / "bin" / "vite.js"
+        node_exe = "node.exe" if os.name == "nt" else "node"
+        if not package_json.exists():
+            return False, "未找到 frontend/package.json，请确认前端工程目录完整"
+        if not vite_cli.exists():
+            return False, "未找到前端运行依赖，请先执行“同步前端依赖”"
+        try:
+            subprocess.run(
+                [node_exe, "--version"],
+                capture_output=True,
+                timeout=5,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except FileNotFoundError:
+            return False, "未找到 Node.js，请先安装 Node.js 后再启动前端"
+        except Exception as exc:
+            return False, f"检查 Node.js 失败: {exc}"
+
+        ok, detail = sync_frontend_runtime_env(config)
+        if not ok:
+            return False, detail
+
+        ensure_log_dir()
+        max_size = 20.0
+        try:
+            state = read_state_file(STATE_PATH)
+            max_size = float(state.get("log_max_size_mb", 20))
+        except Exception:
+            pass
+        for log_path in (FRONTEND_STDOUT_LOG, FRONTEND_STDERR_LOG):
+            rotate_log_file(log_path, max_size)
+
+        settings = resolve_frontend_service_settings(config)
+        frontend_host = settings["frontend_host"]
+        frontend_port = settings["frontend_port"]
+        if frontend_port.isdigit():
+            port_num = int(frontend_port)
+            if is_port_open(frontend_host, port_num):
+                if can_connect_http(frontend_host, port_num):
+                    return False, f"前端端口 {frontend_port} 已被现有服务占用，请先停止旧实例后再启动"
+                return False, f"前端端口 {frontend_port} 已被其他进程占用，请先释放端口后再启动"
+
+        env = os.environ.copy()
+        env.update(read_env_file(FRONTEND_ENV_EXAMPLE_PATH))
+        env.update(read_env_file(FRONTEND_ENV_PATH))
+        env["BROWSER"] = "none"
+        env["FORCE_COLOR"] = "0"
+
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        session_label = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.last_session_started_label = session_label
+        self.last_session_marker = f"===== FinFlowManager Frontend Session Start {session_label} ====="
+        for log_path in (FRONTEND_STDOUT_LOG, FRONTEND_STDERR_LOG):
+            with open(log_path, "a", encoding="utf-8", errors="ignore") as marker_handle:
+                marker_handle.write(f"\n{self.last_session_marker}\n")
+        self.stdout_handle = open(FRONTEND_STDOUT_LOG, "a", encoding="utf-8", errors="ignore")
+        self.stderr_handle = open(FRONTEND_STDERR_LOG, "a", encoding="utf-8", errors="ignore")
+
+        try:
+            self.process = subprocess.Popen(
+                [node_exe, str(vite_cli), "--host", "0.0.0.0", "--port", frontend_port],
+                cwd=FRONTEND_DIR,
+                env=env,
+                stdout=self.stdout_handle,
+                stderr=self.stderr_handle,
+                creationflags=creationflags,
+            )
+        except Exception as exc:
+            self._close_handles()
+            self.process = None
+            return False, f"启动前端失败: {exc}"
+
+        self.user_stopped = False
+        self.last_start_attempt = time.time()
+        self.last_started_at = self.last_start_attempt
+        self.last_exit_code = None
+        self.auto_restart_suppressed = False
+        self._sync_runtime_state()
+        return True, f"前端已启动，PID={self.process.pid}，访问地址 {settings['frontend_url']}"
+
+    def stop(self) -> Tuple[bool, str]:
+        if not self.is_running():
+            self.capture_exit()
+            return False, "前端未运行"
+
+        self.user_stopped = True
+        self._sync_runtime_state(frontend_user_stopped=True)
+        try:
+            if isinstance(self.process, subprocess.Popen):
+                self.process.terminate()
+                self.process.wait(timeout=10)
+            else:
+                pid = int(getattr(self.process, "pid", 0) or 0)
+                if pid > 0:
+                    os.kill(pid, signal.SIGTERM)
+        except Exception:
+            try:
+                pid = int(getattr(self.process, "pid", 0) or 0)
+                if pid > 0:
+                    os.kill(pid, signal.SIGTERM)
+            except Exception:
+                pass
+        finally:
+            self.capture_exit()
+
+        return True, "前端已停止"
+
+    def restart(self, config: Dict[str, str]) -> Tuple[bool, str]:
+        self.stop()
+        time.sleep(1)
+        return self.start(config)
+
+    def poll_status(self) -> str:
+        if self.is_running():
+            return f"运行中 (PID {int(getattr(self.process, 'pid', 0) or 0)})"
+        exit_code = self.capture_exit()
+        if exit_code is not None:
+            return f"已退出 (code {exit_code})"
+        return "未运行"
+
+    def register_failed_start_if_needed(self, fast_fail_window_seconds: int = 15, max_failures: int = 3) -> bool:
+        if self.last_exit_at <= 0 or self.last_started_at <= 0:
+            return False
+        runtime = self.last_exit_at - self.last_started_at
+        if runtime < 0 or runtime > fast_fail_window_seconds:
+            self.consecutive_failed_starts = 0
+            self._sync_runtime_state(frontend_consecutive_failed_starts=0)
+            return False
+
+        self.consecutive_failed_starts += 1
+        if self.consecutive_failed_starts >= max_failures:
+            self.auto_restart_suppressed = True
+        self._sync_runtime_state()
+        return True
+
+    def clear_restart_failure_state(self) -> None:
+        self.consecutive_failed_starts = 0
+        self.auto_restart_suppressed = False
+        self._sync_runtime_state(frontend_consecutive_failed_starts=0, frontend_auto_restart_suppressed=False)
+
+
 def resolve_service_host_launcher() -> List[str]:
     if getattr(sys, "frozen", False):
         return [str(Path(sys.executable).resolve()), "--service-run"]
@@ -1448,18 +1958,23 @@ def read_managed_runtime_state() -> Dict[str, Any]:
     state = read_runtime_state()
     host_pid = int(state.get("service_host_pid") or 0)
     backend_pid = int(state.get("backend_pid") or 0)
+    frontend_pid = int(state.get("frontend_pid") or 0)
     host_alive = is_process_alive(host_pid)
     backend_alive = is_process_alive(backend_pid)
+    frontend_alive = is_process_alive(frontend_pid)
 
     normalized = dict(state)
     normalized["service_host_alive"] = host_alive
     normalized["backend_alive"] = backend_alive
+    normalized["frontend_alive"] = frontend_alive
     if not host_alive:
         normalized["service_host_pid"] = 0
         if not backend_alive:
             normalized["backend_pid"] = 0
     if not backend_alive:
         normalized["backend_pid"] = 0
+    if not frontend_alive:
+        normalized["frontend_pid"] = 0
     return normalized
 
 
@@ -1788,6 +2303,7 @@ class FinFlowManagerApp:
             pass
 
         self.backend = ManagedBackendController()
+        self.frontend = FrontendProcessController()
         self.manager_state = read_state_file(STATE_PATH)
         self.config_values, self.extra_env_values = self.load_config_values()
         self.form_vars: Dict[str, tk.StringVar] = {}
@@ -1802,10 +2318,15 @@ class FinFlowManagerApp:
         self.tray_thread: threading.Thread | None = None
         self.exiting = False
         self.last_notified_exit_at = 0.0
+        self.last_notified_frontend_exit_at = 0.0
+        self.last_backend_health_state = "unknown"
+        self.last_frontend_health_state = "unknown"
         self.last_health_state = "unknown"
+        self.last_database_status_state = "unknown"
         self.status_job: str | None = None
         self.log_job: str | None = None
         self.health_job: str | None = None
+        self.db_job: str | None = None
         self.config_nav_items: Dict[str, Dict[str, Any]] = {}
         self.ops_nav_items: Dict[str, Dict[str, Any]] = {}
         self.env_nav_items: Dict[str, Dict[str, Any]] = {}
@@ -1820,7 +2341,8 @@ class FinFlowManagerApp:
         self.schedule_status_refresh(800)
         self.schedule_log_refresh(1200)
         self.schedule_health_refresh(1800)
-        self.root.after(1500, self.maybe_start_backend_on_launch)
+        self.schedule_db_refresh(2200)
+        self.root.after(1500, self.maybe_start_services_on_launch)
 
     def init_ops_vars(self) -> None:
         for key in OPS_STATE_KEYS:
@@ -1872,6 +2394,7 @@ class FinFlowManagerApp:
         self.build_logs_tab(logs_frame)
 
     def build_status_tab(self, parent: ttk.Frame) -> None:
+        db_config_state, db_config_detail = describe_database_configuration_from_disk()
         canvas = tk.Canvas(parent, highlightthickness=0)
         scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
@@ -1896,8 +2419,17 @@ class FinFlowManagerApp:
             "key_file": "已存在" if KEY_PATH.exists() else "缺失",
             "dist_dir": "已存在" if (DIST_DIR / "index.html").exists() else "缺失",
             "backend_status": "未运行",
-            "port_owner": "未占用",
-            "health_status": "未检查",
+            "backend_port_owner": "未占用",
+            "backend_health_status": "未检查",
+            "backend_url": self.get_backend_url(),
+            "frontend_status": self.frontend.poll_status(),
+            "frontend_port_owner": "未占用",
+            "frontend_health_status": "未检查",
+            "frontend_url": self.get_frontend_url(),
+            "db_config_status": format_database_config_status(db_config_state, db_config_detail),
+            "db_connection_status": "未检查",
+            "db_monitor_status": "监控中" if self.manager_state.get("enable_db_monitor", True) else "已关闭",
+            "db_last_check_at": "未检查",
             "startup_status": self.get_startup_status_text(),
             "app_url": self.get_app_url(),
         }
@@ -1910,10 +2442,19 @@ class FinFlowManagerApp:
                 "key_file": "加密密钥",
                 "dist_dir": "前端构建",
                 "backend_status": "后端状态",
-                "port_owner": "端口占用",
-                "health_status": "健康检查",
+                "backend_port_owner": "后端端口占用",
+                "backend_health_status": "后端健康检查",
+                "backend_url": "后端入口",
+                "frontend_status": "前端状态",
+                "frontend_port_owner": "前端端口占用",
+                "frontend_health_status": "前端健康检查",
+                "frontend_url": "前端入口",
+                "db_config_status": "数据库配置",
+                "db_connection_status": "数据库连接",
+                "db_monitor_status": "数据库监控",
+                "db_last_check_at": "最后检查",
                 "startup_status": "开机自启",
-                "app_url": "访问地址",
+                "app_url": "默认访问地址",
             }[key]
             ttk.Label(summary, text=f"{label_text}：").grid(row=row, column=0, sticky="w", pady=4)
             var = tk.StringVar(value=value)
@@ -1924,24 +2465,34 @@ class FinFlowManagerApp:
         actions = ttk.LabelFrame(scrollable_frame, text="服务操作", padding=16)
         actions.pack(fill="x", padx=10, pady=10)
 
-        ttk.Button(actions, text="启动后端", command=self.handle_start_backend).grid(row=0, column=0, padx=6, pady=6)
-        ttk.Button(actions, text="停止后端", command=self.handle_stop_backend).grid(row=0, column=1, padx=6, pady=6)
-        ttk.Button(actions, text="重启后端", command=self.handle_restart_backend).grid(row=0, column=2, padx=6, pady=6)
+        ttk.Button(actions, text="启动全部", command=self.handle_start_all).grid(row=0, column=0, padx=6, pady=6)
+        ttk.Button(actions, text="停止全部", command=self.handle_stop_all).grid(row=0, column=1, padx=6, pady=6)
+        ttk.Button(actions, text="重启全部", command=self.handle_restart_all).grid(row=0, column=2, padx=6, pady=6)
         ttk.Button(actions, text="打开前端", command=self.open_frontend).grid(row=0, column=3, padx=6, pady=6)
-        ttk.Button(actions, text="接管现有实例", command=self.handle_takeover_backend).grid(row=0, column=4, padx=6, pady=6)
-        ttk.Button(actions, text="强制释放端口", command=self.handle_force_release_port).grid(row=0, column=5, padx=6, pady=6)
-        ttk.Button(actions, text="打开日志目录", command=self.open_logs_folder).grid(row=0, column=6, padx=6, pady=6)
-        ttk.Button(actions, text="隐藏到托盘", command=self.hide_to_tray).grid(row=0, column=7, padx=6, pady=6)
+        ttk.Button(actions, text="打开日志目录", command=self.open_logs_folder).grid(row=0, column=4, padx=6, pady=6)
+        ttk.Button(actions, text="隐藏到托盘", command=self.hide_to_tray).grid(row=0, column=5, padx=6, pady=6)
+        ttk.Button(actions, text="启动后端", command=self.handle_start_backend).grid(row=1, column=0, padx=6, pady=6)
+        ttk.Button(actions, text="停止后端", command=self.handle_stop_backend).grid(row=1, column=1, padx=6, pady=6)
+        ttk.Button(actions, text="重启后端", command=self.handle_restart_backend).grid(row=1, column=2, padx=6, pady=6)
+        ttk.Button(actions, text="接管现有后端", command=self.handle_takeover_backend).grid(row=1, column=3, padx=6, pady=6)
+        ttk.Button(actions, text="释放后端端口", command=self.handle_force_release_port).grid(row=1, column=4, padx=6, pady=6)
+        ttk.Button(actions, text="启动前端", command=self.handle_start_frontend).grid(row=2, column=0, padx=6, pady=6)
+        ttk.Button(actions, text="停止前端", command=self.handle_stop_frontend).grid(row=2, column=1, padx=6, pady=6)
+        ttk.Button(actions, text="重启前端", command=self.handle_restart_frontend).grid(row=2, column=2, padx=6, pady=6)
+        ttk.Button(actions, text="检查数据库连接", command=self.check_database_connection).grid(row=2, column=3, padx=6, pady=6)
 
         options = ttk.LabelFrame(scrollable_frame, text="管理器选项", padding=16)
         options.pack(fill="x", padx=10, pady=10)
 
         option_items = [
             ("auto_restart_backend", "后端异常退出后自动拉起"),
+            ("auto_restart_frontend", "前端异常退出后自动拉起"),
             ("start_backend_on_launch", "打开管理器后自动启动后端"),
+            ("start_frontend_on_launch", "打开管理器后自动启动前端"),
             ("hide_to_tray_on_close", "关闭窗口时最小化到托盘"),
             ("launch_manager_on_startup", "Windows 登录后自动启动管理器"),
             ("enable_health_check", "启用健康检查与托盘状态提示"),
+            ("enable_db_monitor", "启用数据库连接监控与告警"),
         ]
         for idx, (key, label) in enumerate(option_items):
             var = tk.BooleanVar(value=self.manager_state.get(key, False))
@@ -1956,8 +2507,8 @@ class FinFlowManagerApp:
             tips,
             text=(
                 "当前模式下不依赖 IIS、NSSM 或 Windows 服务。\n"
-                "管理器负责配置 backend/.env、backend/.encryption.key，以及后端进程的启动、停止、监控和自动拉起。\n"
-                "前端由 FastAPI 直接托管 frontend/dist，访问时只需要一个端口。"
+                "管理器负责配置 backend/.env、backend/.encryption.key，并统一管理后端 API 与前端服务的启动、停止、监控和自动拉起。\n"
+                "如果前端服务未启动，而 frontend/dist 已构建完成，仍然可以通过后端入口访问内置静态页面。"
             ),
             justify="left",
         ).pack(anchor="w")
@@ -2149,11 +2700,12 @@ class FinFlowManagerApp:
 
         self.ops_section_var = tk.StringVar(value="one_click_deploy")
         ops_nav_items = [
-            ("one_click_deploy", "一键部署", "全流程编排：检查、备份、部署、启动"),
+            ("one_click_deploy", "一键部署", "全流程编排：检查、部署、启动、后置配置检查"),
             ("frontend", "前端部署", "覆盖发布 dist，更新页面静态资源"),
             ("release", "发布包升级", "导入 ZIP 发布包并执行一键升级"),
             ("git_update", "Git 拉取更新", "从远程 Git 仓库拉取最新代码"),
             ("migration", "数据库迁移", "执行 SQL 脚本更新数据库结构"),
+            ("db_monitor", "数据库监控", "检查数据库连接状态并开启持续监控"),
             ("backup", "数据库备份", "调用 sqlcmd 执行数据库备份"),
             ("maintenance", "日志与备份维护", "清理过期日志和备份文件"),
             ("alert", "告警通知", "配置 Webhook 告警接收地址"),
@@ -2179,7 +2731,7 @@ class FinFlowManagerApp:
         one_click_frame = ttk.LabelFrame(self.ops_content_host, text="一键部署", padding=16)
         ttk.Label(
             one_click_frame,
-            text="自动执行环境检查、数据库备份、代码部署、依赖同步、服务启动与健康检查。",
+            text="自动执行环境检查、代码部署、运行配置写入、依赖同步、服务启动、健康检查与数据库后置配置检查。",
             justify="left",
             wraplength=760,
         ).pack(anchor="w", pady=(0, 12))
@@ -2261,6 +2813,41 @@ class FinFlowManagerApp:
         ttk.Button(release_actions, text="一键升级发布包", command=self.apply_release_package).pack(side="left", padx=4)
         ttk.Button(release_actions, text="打开项目目录", command=self.open_project_root).pack(side="left", padx=4)
         self.ops_section_frames["release"] = release_frame
+
+        db_monitor_frame = ttk.LabelFrame(self.ops_content_host, text="数据库连接状态与监控", padding=16)
+        ttk.Label(
+            db_monitor_frame,
+            text="数据库检查以当前 backend/.env 为准；一键部署阶段不再前置校验数据库，而是在部署完成后执行后置配置检查。",
+            justify="left",
+            wraplength=760,
+        ).pack(anchor="w", pady=(0, 8))
+        db_monitor_grid = ttk.Frame(db_monitor_frame)
+        db_monitor_grid.pack(fill="x", pady=(0, 10))
+        ttk.Label(db_monitor_grid, text="数据库配置：", width=14).grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        ttk.Label(db_monitor_grid, textvariable=self.status_vars["db_config_status"]).grid(row=0, column=1, sticky="w", padx=6, pady=4)
+        ttk.Label(db_monitor_grid, text="连接状态：", width=14).grid(row=1, column=0, sticky="w", padx=6, pady=4)
+        ttk.Label(db_monitor_grid, textvariable=self.status_vars["db_connection_status"]).grid(row=1, column=1, sticky="w", padx=6, pady=4)
+        ttk.Label(db_monitor_grid, text="监控状态：", width=14).grid(row=2, column=0, sticky="w", padx=6, pady=4)
+        ttk.Label(db_monitor_grid, textvariable=self.status_vars["db_monitor_status"]).grid(row=2, column=1, sticky="w", padx=6, pady=4)
+        ttk.Label(db_monitor_grid, text="最后检查：", width=14).grid(row=3, column=0, sticky="w", padx=6, pady=4)
+        ttk.Label(db_monitor_grid, textvariable=self.status_vars["db_last_check_at"]).grid(row=3, column=1, sticky="w", padx=6, pady=4)
+        ttk.Label(db_monitor_grid, text="说明：", width=14).grid(row=4, column=0, sticky="nw", padx=6, pady=4)
+        ttk.Label(
+            db_monitor_grid,
+            text="启用后每 15 秒自动检查一次数据库连接；优先使用后端虚拟环境中的数据库驱动直连，若运行环境未就绪则再回退到 sqlcmd。",
+            justify="left",
+            wraplength=620,
+        ).grid(row=4, column=1, sticky="w", padx=6, pady=4)
+        db_monitor_actions = ttk.Frame(db_monitor_frame)
+        db_monitor_actions.pack(fill="x")
+        ttk.Button(db_monitor_actions, text="立即检查数据库连接", command=self.check_database_connection).pack(side="left", padx=4)
+        ttk.Checkbutton(
+            db_monitor_actions,
+            text="启用数据库连接监控",
+            variable=self.manager_option_vars["enable_db_monitor"],
+            command=self.save_manager_state,
+        ).pack(side="left", padx=12)
+        self.ops_section_frames["db_monitor"] = db_monitor_frame
 
         backup_frame = ttk.LabelFrame(self.ops_content_host, text="数据库备份", padding=16)
         ttk.Label(
@@ -2347,6 +2934,7 @@ class FinFlowManagerApp:
         ttk.Button(maint_actions, text="立即清理过期备份", command=self.manual_cleanup_backups).pack(side="left", padx=4)
         ttk.Button(maint_actions, text="立即清理过期归档", command=self.manual_cleanup_logs).pack(side="left", padx=4)
         ttk.Button(maint_actions, text="同步后端依赖", command=self.sync_backend_deps).pack(side="left", padx=4)
+        ttk.Button(maint_actions, text="同步前端依赖", command=self.sync_frontend_deps).pack(side="left", padx=4)
         self.ops_section_frames["maintenance"] = maintenance_frame
 
         alert_frame = ttk.LabelFrame(self.ops_content_host, text="告警通知", padding=16)
@@ -2369,8 +2957,9 @@ class FinFlowManagerApp:
             text=(
                 "1. 前端建议先在构建机完成 npm run build，再把 dist 目录复制到服务器。\n"
                 "2. 一键升级建议使用标准 ZIP 发布包，包内至少包含 backend 或 frontend/dist。\n"
-                "3. 数据库备份使用 sqlcmd 工具，运行前请先确认 sqlcmd 可执行文件可用（SQL Server 2016 及以上版本自带）。\n"
-                "4. Git 拉取更新需要服务器已安装 Git，且仓库可访问。"
+                "3. 一键部署不再前置检查数据库连接，部署完成后会执行后置配置检查；数据库备份请在配置完成后单独执行。\n"
+                "4. 数据库连接监控优先使用后端运行环境中的数据库驱动；sqlcmd 主要用于数据库备份、恢复和手工 SQL 执行。\n"
+                "5. Git 拉取更新需要服务器已安装 Git，且仓库可访问。"
             ),
             justify="left",
         ).pack(anchor="w")
@@ -2460,7 +3049,7 @@ class FinFlowManagerApp:
         toolbar.pack(fill="x", padx=10, pady=10)
 
         ttk.Label(toolbar, text="日志文件：").pack(side="left")
-        choices = ["后端标准输出", "后端错误输出", "项目同步日志"]
+        choices = ["后端标准输出", "后端错误输出", "前端标准输出", "前端错误输出", "项目同步日志"]
         ttk.Combobox(toolbar, state="readonly", values=choices, textvariable=self.log_choice, width=20).pack(
             side="left", padx=6
         )
@@ -2551,12 +3140,15 @@ class FinFlowManagerApp:
                 f"项目目录: {ROOT_DIR}",
                 f"访问地址: {self.get_app_url()}",
                 f"后端状态: {self.backend.poll_status()}",
-                f"端口占用: {self.status_vars.get('port_owner').get() if self.status_vars.get('port_owner') else '未知'}",
+                f"后端端口占用: {self.status_vars.get('backend_port_owner').get() if self.status_vars.get('backend_port_owner') else '未知'}",
+                f"前端状态: {self.frontend.poll_status()}",
+                f"前端端口占用: {self.status_vars.get('frontend_port_owner').get() if self.status_vars.get('frontend_port_owner') else '未知'}",
                 f"配置文件: {'存在' if ENV_PATH.exists() else '缺失'}",
                 f"加密密钥: {'存在' if KEY_PATH.exists() else '缺失'}",
                 f"前端构建: {'存在' if (DIST_DIR / 'index.html').exists() else '缺失'}",
                 f"日志目录: {'存在' if LOG_DIR.exists() else '缺失'}",
-                f"健康检查: {self.status_vars.get('health_status').get() if self.status_vars.get('health_status') else '未检查'}",
+                f"后端健康检查: {self.status_vars.get('backend_health_status').get() if self.status_vars.get('backend_health_status') else '未检查'}",
+                f"前端健康检查: {self.status_vars.get('frontend_health_status').get() if self.status_vars.get('frontend_health_status') else '未检查'}",
             ]
         )
 
@@ -2634,9 +3226,15 @@ class FinFlowManagerApp:
     def create_tray_icon(self) -> None:
         menu = Menu(
             MenuItem("打开管理器", lambda: self.root.after(0, self.show_window)),
+            MenuItem("启动全部", lambda: self.root.after(0, self.handle_start_all)),
+            MenuItem("停止全部", lambda: self.root.after(0, self.handle_stop_all)),
+            MenuItem("重启全部", lambda: self.root.after(0, self.handle_restart_all)),
             MenuItem("启动后端", lambda: self.root.after(0, self.handle_start_backend)),
             MenuItem("停止后端", lambda: self.root.after(0, self.handle_stop_backend)),
             MenuItem("重启后端", lambda: self.root.after(0, self.handle_restart_backend)),
+            MenuItem("启动前端", lambda: self.root.after(0, self.handle_start_frontend)),
+            MenuItem("停止前端", lambda: self.root.after(0, self.handle_stop_frontend)),
+            MenuItem("重启前端", lambda: self.root.after(0, self.handle_restart_frontend)),
             MenuItem("打开前端", lambda: self.root.after(0, self.open_frontend)),
             MenuItem("退出管理器", lambda: self.root.after(0, self.exit_application)),
         )
@@ -2657,10 +3255,10 @@ class FinFlowManagerApp:
         if not self.tray_icon:
             return
         backend_status = self.status_vars.get("backend_status")
-        health_status = self.status_vars.get("health_status")
+        frontend_status = self.status_vars.get("frontend_status")
         backend_text = backend_status.get() if backend_status else "未运行"
-        health_text = health_status.get() if health_status else "未检查"
-        self.tray_icon.title = f"FinFlow 管理器 | {backend_text} | 健康：{health_text}"
+        frontend_text = frontend_status.get() if frontend_status else "未运行"
+        self.tray_icon.title = f"FinFlow 管理器 | 后端：{backend_text} | 前端：{frontend_text}"
 
     def get_startup_status_text(self) -> str:
         enabled = bool(self.manager_state.get("launch_manager_on_startup", False))
@@ -2722,6 +3320,16 @@ class FinFlowManagerApp:
                 pass
         self.health_job = self.root.after(delay_ms, self.refresh_health_status)
 
+    def schedule_db_refresh(self, delay_ms: int = DB_MONITOR_INTERVAL_MS) -> None:
+        if self.exiting:
+            return
+        if self.db_job:
+            try:
+                self.root.after_cancel(self.db_job)
+            except Exception:
+                pass
+        self.db_job = self.root.after(delay_ms, self.refresh_database_status)
+
     def save_manager_state(self) -> None:
         for key, var in self.manager_option_vars.items():
             self.manager_state[key] = bool(var.get())
@@ -2729,7 +3337,10 @@ class FinFlowManagerApp:
             self.manager_state[key] = var.get().strip()
         write_state_file(STATE_PATH, self.manager_state)
         self.sync_startup_entry(show_message=False)
+        if "db_monitor_status" in self.status_vars:
+            self.status_vars["db_monitor_status"].set("监控中" if self.manager_state.get("enable_db_monitor", True) else "已关闭")
         self.refresh_status()
+        self.schedule_db_refresh(200)
 
     def select_path_for_var(self, key: str, mode: str) -> None:
         initial_value = self.ops_vars[key].get().strip()
@@ -2745,9 +3356,16 @@ class FinFlowManagerApp:
             self.ops_vars[key].set(selected)
             self.save_manager_state()
 
-    def maybe_start_backend_on_launch(self) -> None:
-        if self.manager_state.get("start_backend_on_launch"):
+    def maybe_start_services_on_launch(self) -> None:
+        start_backend = bool(self.manager_state.get("start_backend_on_launch"))
+        start_frontend = bool(self.manager_state.get("start_frontend_on_launch"))
+        if start_backend and start_frontend:
+            self.handle_start_all(show_dialog=False)
+            return
+        if start_backend:
             self.handle_start_backend()
+        if start_frontend:
+            self.handle_start_frontend(show_dialog=False)
 
     def handle_save_config(self) -> None:
         try:
@@ -2786,11 +3404,19 @@ class FinFlowManagerApp:
         data["APP_RELOAD"] = "false"
         return data
 
-    def get_app_url(self) -> str:
+    def get_backend_url(self) -> str:
         config = self.get_effective_config()
         host = resolve_browser_host(config.get("APP_HOST", "127.0.0.1"))
         port = config.get("APP_PORT", "8100") or "8100"
         return f"http://{host}:{port}/"
+
+    def get_frontend_url(self) -> str:
+        return resolve_frontend_service_settings(self.get_effective_config())["frontend_url"]
+
+    def get_app_url(self) -> str:
+        if self.frontend.is_running():
+            return self.get_frontend_url()
+        return self.get_backend_url()
 
     def handle_start_backend(self) -> None:
         try:
@@ -2828,6 +3454,99 @@ class FinFlowManagerApp:
             self.log_status_var.set(f"当前显示：本次启动日志（自 {self.backend.last_session_started_label} 起）")
             self.notify_tray("FinFlow 已重启", message)
         messagebox.showinfo("重启结果", message)
+
+    def handle_start_frontend(self, show_dialog: bool = True) -> Tuple[bool, str]:
+        try:
+            self.save_config_values()
+        except Exception as exc:
+            if show_dialog:
+                messagebox.showerror("无法启动", str(exc))
+            return False, str(exc)
+        self.frontend.clear_restart_failure_state()
+        ok, message = self.frontend.start(self.get_effective_config())
+        if not ok:
+            if show_dialog:
+                messagebox.showwarning("启动结果", message)
+        else:
+            self.log_status_var.set(f"当前显示：本次启动日志（前端，自 {self.frontend.last_session_started_label} 起）")
+            self.notify_tray("前端已启动", message)
+        self.refresh_status()
+        return ok, message
+
+    def handle_stop_frontend(self, show_dialog: bool = True) -> Tuple[bool, str]:
+        ok, message = self.frontend.stop()
+        self.frontend.clear_restart_failure_state()
+        self.last_frontend_health_state = "unknown"
+        self.refresh_status()
+        if show_dialog:
+            messagebox.showinfo("停止结果", message)
+        return ok, message
+
+    def handle_restart_frontend(self, show_dialog: bool = True) -> Tuple[bool, str]:
+        try:
+            self.save_config_values()
+        except Exception as exc:
+            if show_dialog:
+                messagebox.showerror("无法重启", str(exc))
+            return False, str(exc)
+        self.frontend.clear_restart_failure_state()
+        ok, message = self.frontend.restart(self.get_effective_config())
+        self.last_frontend_health_state = "unknown"
+        self.refresh_status()
+        if ok:
+            self.log_status_var.set(f"当前显示：本次启动日志（前端，自 {self.frontend.last_session_started_label} 起）")
+            self.notify_tray("前端已重启", message)
+        if show_dialog:
+            messagebox.showinfo("重启结果", message)
+        return ok, message
+
+    def handle_start_all(self, show_dialog: bool = True) -> Tuple[bool, str]:
+        backend_started = False
+        backend_message = ""
+        try:
+            self.save_config_values()
+            self.backend.clear_restart_failure_state()
+            backend_started, backend_message = self.backend.start(self.get_effective_config())
+        except Exception as exc:
+            backend_message = str(exc)
+        if not backend_started and self.backend.is_running():
+            backend_started = True
+            backend_message = backend_message or "后端已在运行"
+
+        frontend_ok = False
+        frontend_message = "后端启动失败，未继续启动前端"
+        if backend_started:
+            frontend_ok, frontend_message = self.handle_start_frontend(show_dialog=False)
+        self.refresh_status()
+        message = f"后端：{backend_message}\n前端：{frontend_message}"
+        if show_dialog:
+            messagebox.showinfo("启动结果", message)
+        return backend_started and frontend_ok, message
+
+    def handle_stop_all(self, show_dialog: bool = True) -> Tuple[bool, str]:
+        frontend_ok, frontend_message = self.handle_stop_frontend(show_dialog=False)
+        backend_ok = False
+        backend_message = ""
+        try:
+            backend_ok, backend_message = self.backend.stop()
+        except Exception as exc:
+            backend_message = str(exc)
+        self.backend.clear_restart_failure_state()
+        self.refresh_status()
+        message = f"前端：{frontend_message}\n后端：{backend_message}"
+        if show_dialog:
+            messagebox.showinfo("停止结果", message)
+        return frontend_ok or backend_ok, message
+
+    def handle_restart_all(self, show_dialog: bool = True) -> Tuple[bool, str]:
+        self.handle_stop_all(show_dialog=False)
+        time.sleep(1)
+        ok, message = self.handle_start_all(show_dialog=False)
+        self.last_backend_health_state = "unknown"
+        self.last_frontend_health_state = "unknown"
+        if show_dialog:
+            messagebox.showinfo("重启结果", message)
+        return ok, message
 
     def handle_takeover_backend(self) -> None:
         config = self.get_effective_config()
@@ -2982,15 +3701,16 @@ class FinFlowManagerApp:
 
         proceed = messagebox.askyesno(
             "确认升级",
-            "升级过程会自动停止后端，覆盖发布包中的代码和前端构建文件，同时保留本机配置、密钥、虚拟环境与日志。是否继续？",
+            "升级过程会自动停止前后端，覆盖发布包中的代码和前端构建文件，同时保留本机配置、密钥、虚拟环境与日志。是否继续？",
         )
         if not proceed:
             return
 
         extract_dir = Path(tempfile.mkdtemp(prefix="finflow_release_"))
         backup_root = UPGRADE_BACKUP_DIR / datetime.now().strftime("%Y%m%d_%H%M%S")
-        was_running = self.backend.is_running()
-        restored_after_error = False
+        backend_was_running = self.backend.is_running()
+        frontend_was_running = self.frontend.is_running()
+        restored_services: List[str] = []
 
         try:
             with zipfile.ZipFile(package_path, "r") as archive:
@@ -3015,7 +3735,9 @@ class FinFlowManagerApp:
             if not any([has_backend, has_frontend_dist, has_tools, has_deploy, has_root_files]):
                 raise RuntimeError("发布包内未检测到可升级内容，至少应包含 backend 或 frontend/dist")
 
-            if was_running:
+            if frontend_was_running:
+                self.frontend.stop()
+            if backend_was_running:
                 self.backend.stop()
 
             copied_counts: Dict[str, int] = {}
@@ -3034,33 +3756,48 @@ class FinFlowManagerApp:
                     backup_root,
                 )
 
-            restart_message = ""
-            if was_running:
+            restart_messages: List[str] = []
+            if backend_was_running:
                 ok, restart_message = self.backend.start(self.get_effective_config())
+                restart_messages.append(f"后端：{restart_message}")
                 if not ok:
                     raise RuntimeError(f"升级完成，但后端自动重启失败：{restart_message}")
+            if frontend_was_running:
+                ok, restart_message = self.frontend.start(self.get_effective_config())
+                restart_messages.append(f"前端：{restart_message}")
+                if not ok:
+                    raise RuntimeError(f"升级完成，但前端自动重启失败：{restart_message}")
 
-            self.last_health_state = "unknown"
+            self.last_backend_health_state = "unknown"
+            self.last_frontend_health_state = "unknown"
             self.refresh_status()
             self.notify_tray("发布包升级完成", f"已应用：{package_path.name}")
             summary = "，".join(f"{key}={value}" for key, value in copied_counts.items() if value)
             detail = f"升级完成。\n备份目录：{backup_root}\n覆盖内容：{summary or '无文件变更'}"
-            if restart_message:
-                detail += f"\n后端重启：{restart_message}"
+            if restart_messages:
+                detail += "\n服务恢复：\n" + "\n".join(restart_messages)
             messagebox.showinfo("升级完成", detail)
         except Exception as exc:
-            if was_running and not self.backend.is_running():
+            restart_result = []
+            if backend_was_running and not self.backend.is_running():
                 ok, restart_message = self.backend.start(self.get_effective_config())
-                restored_after_error = ok
+                restart_result.append(f"后端：{restart_message}")
                 if ok:
-                    self.last_health_state = "unknown"
+                    restored_services.append("backend")
             else:
-                restart_message = "后端未重启"
+                restart_result.append("后端：未重启")
+            if frontend_was_running and not self.frontend.is_running():
+                ok, restart_message = self.frontend.start(self.get_effective_config())
+                restart_result.append(f"前端：{restart_message}")
+                if ok:
+                    restored_services.append("frontend")
+            else:
+                restart_result.append("前端：未重启")
 
             backup_info = str(backup_root) if backup_root.exists() else "未生成备份目录"
-            detail = f"{exc}\n备份目录：{backup_info}\n恢复结果：{restart_message}"
-            if restored_after_error:
-                self.notify_tray("发布包升级失败", "已尝试恢复后端运行")
+            detail = f"{exc}\n备份目录：{backup_info}\n恢复结果：" + "\n".join(restart_result)
+            if restored_services:
+                self.notify_tray("发布包升级失败", f"已尝试恢复服务：{', '.join(restored_services)}")
             messagebox.showerror("升级失败", detail)
         finally:
             shutil.rmtree(extract_dir, ignore_errors=True)
@@ -3170,10 +3907,13 @@ class FinFlowManagerApp:
                 messagebox.showerror("失败", f"克隆仓库失败：{exc}")
                 return
         
-        was_running = self.backend.is_running()
+        backend_was_running = self.backend.is_running()
+        frontend_was_running = self.frontend.is_running()
         
         try:
-            if was_running:
+            if frontend_was_running:
+                self.frontend.stop()
+            if backend_was_running:
                 self.backend.stop()
             
             result = subprocess.run(
@@ -3203,8 +3943,10 @@ class FinFlowManagerApp:
         except Exception as exc:
             messagebox.showerror("失败", f"拉取更新时出错：{exc}")
         finally:
-            if was_running and not self.backend.is_running():
+            if backend_was_running and not self.backend.is_running():
                 self.backend.start(self.get_effective_config())
+            if frontend_was_running and not self.frontend.is_running():
+                self.frontend.start(self.get_effective_config())
 
     def git_show_history(self) -> None:
         self.save_manager_state()
@@ -3335,10 +4077,13 @@ class FinFlowManagerApp:
         if not proceed:
             return
         
-        was_running = self.backend.is_running()
+        backend_was_running = self.backend.is_running()
+        frontend_was_running = self.frontend.is_running()
         
         try:
-            if was_running:
+            if frontend_was_running:
+                self.frontend.stop()
+            if backend_was_running:
                 self.backend.stop()
             
             result = subprocess.run(
@@ -3362,8 +4107,10 @@ class FinFlowManagerApp:
         except Exception as exc:
             messagebox.showerror("失败", f"回滚时出错：{exc}")
         finally:
-            if was_running and not self.backend.is_running():
+            if backend_was_running and not self.backend.is_running():
                 self.backend.start(self.get_effective_config())
+            if frontend_was_running and not self.frontend.is_running():
+                self.frontend.start(self.get_effective_config())
             window.destroy()
 
     def select_migration_file(self) -> None:
@@ -3438,13 +4185,15 @@ class FinFlowManagerApp:
         proceed = messagebox.askyesno(
             "确认一键部署",
             "一键部署将自动执行以下流程：\n"
-            "1. 环境检查（Git/Python/sqlcmd）\n"
-            "2. 数据库连通性检测\n"
-            "3. 数据库备份\n"
-            "4. 代码部署（Git 拉取 或 ZIP 升级）\n"
-            "5. 依赖同步\n"
-            "6. 服务启动\n"
-            "7. 健康检查\n\n"
+            "1. 环境检查（Git/Python/Node/sqlcmd）\n"
+            "2. 停止前后端服务\n"
+            "3. 代码部署（Git 拉取 或 ZIP 升级）\n"
+            "4. 依赖同步（后端 + 前端）\n"
+            "5. 运行配置写入、前端构建与运行配置同步\n"
+            "6. 启动后端服务\n"
+            "7. 启动前端服务\n"
+            "8. 前后端健康检查\n"
+            "9. 数据库后置配置检查（如未配置则提示待处理）\n\n"
             "是否继续？"
         )
         if not proceed:
@@ -3455,6 +4204,8 @@ class FinFlowManagerApp:
         
         try:
             self._run_one_click_deploy(mode, repo_url, branch, sqlcmd, config)
+        except RuntimeError:
+            pass
         except Exception as exc:
             self.append_deploy_log(f"部署异常: {exc}")
         finally:
@@ -3462,11 +4213,45 @@ class FinFlowManagerApp:
 
     def _run_one_click_deploy(self, mode: str, repo_url: str, branch: str, sqlcmd: str, config: Dict[str, str]) -> None:
         steps_passed = 0
-        total_steps = 7
+        total_steps = 9
+        backend_was_running = self.backend.is_running()
+        frontend_was_running = self.frontend.is_running()
+        services_stopped = False
+        backend_started_after_deploy = False
+        frontend_started_after_deploy = False
         
         self.append_deploy_log(f"{'='*50}")
         self.append_deploy_log(f"开始一键部署 (模式: {'Git 拉取' if mode == 'git' else 'ZIP 发布包'})")
         self.append_deploy_log(f"{'='*50}")
+
+        def abort_deploy(reason: str) -> None:
+            restore_messages: List[str] = []
+
+            if frontend_started_after_deploy and not frontend_was_running and self.frontend.is_running():
+                ok, msg = self.frontend.stop()
+                restore_messages.append(f"清理本次启动前端：{msg}")
+            if backend_started_after_deploy and not backend_was_running and self.backend.is_running():
+                ok, msg = self.backend.stop()
+                restore_messages.append(f"清理本次启动后端：{msg}")
+
+            if services_stopped:
+                if backend_was_running and not self.backend.is_running():
+                    ok, msg = self.backend.start(config)
+                    restore_messages.append(f"恢复后端：{msg}")
+                if frontend_was_running and not self.frontend.is_running():
+                    ok, msg = self.frontend.start(config)
+                    restore_messages.append(f"恢复前端：{msg}")
+
+            self.last_backend_health_state = "unknown"
+            self.last_frontend_health_state = "unknown"
+            self.refresh_status()
+
+            detail = reason
+            if restore_messages:
+                detail += "\n\n恢复结果：\n" + "\n".join(restore_messages)
+            self.append_deploy_log(f"[FAIL] {reason}")
+            messagebox.showerror("一键部署失败", detail)
+            raise RuntimeError(reason)
         
         # Step 1: 环境检查与自动完善
         self.append_deploy_log(f"[1/{total_steps}] 环境检查...")
@@ -3586,43 +4371,45 @@ class FinFlowManagerApp:
         except Exception:
             self.append_deploy_log("  [WARN] sqlcmd 不可用，数据库相关操作将跳过")
             sqlcmd = ""
-        
-        steps_passed += 1
-        
-        # Step 2: 数据库连通性
-        self.append_deploy_log(f"[2/{total_steps}] 数据库连通性检测...")
-        if sqlcmd:
-            db_ok, db_msg = check_database_connectivity(config, sqlcmd)
-            if db_ok:
-                self.append_deploy_log(f"  [OK] {db_msg}")
+
+        try:
+            node_result = subprocess.run(
+                ["node", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if node_result.returncode == 0:
+                self.append_deploy_log(f"  [OK] Node.js 已安装: {node_result.stdout.strip()}")
             else:
-                self.append_deploy_log(f"  [FAIL] {db_msg}")
+                self.append_deploy_log("  [FAIL] Node.js 不可用")
+                messagebox.showerror("环境缺失", "请先安装 Node.js 18+ 后再执行一键部署")
                 return
-        else:
-            self.append_deploy_log("  [SKIP] sqlcmd 不可用")
+        except Exception:
+            self.append_deploy_log("  [FAIL] Node.js 未安装")
+            messagebox.showerror("环境缺失", "请先安装 Node.js 18+ 后再执行一键部署")
+            return
+        
         steps_passed += 1
         
-        # Step 3: 数据库备份
-        self.append_deploy_log(f"[3/{total_steps}] 数据库备份...")
-        if sqlcmd:
-            backup_dir = Path(self.ops_vars["backup_dir"].get().strip() or str(BACKUP_DIR))
-            retention_days = int(self.ops_vars["backup_retention_days"].get().strip() or 30)
-            retention_count = int(self.ops_vars["backup_retention_count"].get().strip() or 10)
-            bak_ok, bak_msg = run_database_backup_with_cleanup(config, backup_dir, sqlcmd, retention_days, retention_count)
-            if bak_ok:
-                self.append_deploy_log(f"  [OK] {bak_msg}")
-            else:
-                self.append_deploy_log(f"  [WARN] 备份失败: {bak_msg} (继续部署)")
+        # Step 2: 停止前后端服务
+        self.append_deploy_log(f"[2/{total_steps}] 停止前后端服务...")
+        if frontend_was_running:
+            ok, message = self.frontend.stop()
+            self.append_deploy_log(f"  [{'OK' if ok else 'WARN'}] 前端: {message}")
         else:
-            self.append_deploy_log("  [SKIP] sqlcmd 不可用")
+            self.append_deploy_log("  [SKIP] 前端未运行")
+        if backend_was_running:
+            ok, message = self.backend.stop()
+            self.append_deploy_log(f"  [{'OK' if ok else 'WARN'}] 后端: {message}")
+        else:
+            self.append_deploy_log("  [SKIP] 后端未运行")
+        services_stopped = True
         steps_passed += 1
         
-        # Step 4: 代码部署
-        self.append_deploy_log(f"[4/{total_steps}] 代码部署...")
-        was_running = self.backend.is_running()
-        if was_running:
-            self.backend.stop()
-            self.append_deploy_log("  已停止后端服务")
+        # Step 3: 代码部署
+        self.append_deploy_log(f"[3/{total_steps}] 代码部署...")
         
         if mode == "git":
             if not (ROOT_DIR / ".git").exists():
@@ -3635,8 +4422,7 @@ class FinFlowManagerApp:
                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                     )
                     if result.returncode != 0:
-                        self.append_deploy_log(f"  [FAIL] 克隆失败: {result.stderr.strip()}")
-                        return
+                        abort_deploy(f"Git 克隆失败: {result.stderr.strip()}")
                     
                     backup_root = UPGRADE_BACKUP_DIR / datetime.now().strftime("%Y%m%d_%H%M%S_oneclick")
                     for item_name in ("backend", "frontend", "tools", "deploy"):
@@ -3665,16 +4451,14 @@ class FinFlowManagerApp:
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
                 if fetch_result.returncode != 0:
-                    self.append_deploy_log(f"  [FAIL] fetch 失败: {fetch_result.stderr.strip()}")
-                    return
+                    abort_deploy(f"Git fetch 失败: {fetch_result.stderr.strip()}")
                 
                 pull_result = subprocess.run(
                     ["git", "pull", "origin", branch], cwd=ROOT_DIR, capture_output=True, text=True, timeout=300,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
                 if pull_result.returncode != 0:
-                    self.append_deploy_log(f"  [FAIL] pull 失败: {pull_result.stderr.strip()}")
-                    return
+                    abort_deploy(f"Git pull 失败: {pull_result.stderr.strip()}")
                 
                 if "Already up to date" in pull_result.stdout:
                     self.append_deploy_log("  [OK] 代码已是最新")
@@ -3704,48 +4488,141 @@ class FinFlowManagerApp:
         
         steps_passed += 1
         
-        # Step 5: 依赖同步
-        self.append_deploy_log(f"[5/{total_steps}] 依赖同步...")
-        dep_ok, dep_msg = sync_backend_dependencies()
-        if dep_ok:
-            self.append_deploy_log(f"  [OK] {dep_msg}")
+        # Step 4: 依赖同步
+        self.append_deploy_log(f"[4/{total_steps}] 依赖同步...")
+        backend_dep_ok, backend_dep_msg = sync_backend_dependencies()
+        if backend_dep_ok:
+            self.append_deploy_log(f"  [OK] 后端依赖: {backend_dep_msg}")
         else:
-            self.append_deploy_log(f"  [WARN] {dep_msg}")
+            self.append_deploy_log(f"  [WARN] 后端依赖: {backend_dep_msg}")
+
+        frontend_dep_ok, frontend_dep_msg = sync_frontend_dependencies()
+        if frontend_dep_ok:
+            self.append_deploy_log(f"  [OK] 前端依赖: {frontend_dep_msg}")
+        else:
+            abort_deploy(f"前端依赖同步失败: {frontend_dep_msg}")
         steps_passed += 1
         
-        # Step 6: 服务启动
-        self.append_deploy_log(f"[6/{total_steps}] 服务启动...")
+        # Step 5: 运行配置写入、前端构建与运行配置同步
+        self.append_deploy_log(f"[5/{total_steps}] 运行配置写入、前端构建与运行配置同步...")
+        try:
+            self.save_config_values()
+            config = self.get_effective_config()
+            self.append_deploy_log("  [OK] 后端运行配置已写入 backend/.env")
+        except Exception as exc:
+            abort_deploy(f"运行配置写入失败: {exc}")
+        fe_ok, fe_msg = build_frontend()
+        if fe_ok:
+            self.append_deploy_log(f"  [OK] {fe_msg}")
+        else:
+            self.append_deploy_log(f"  [WARN] {fe_msg}")
+        key_ok, key_msg = sync_keys_to_frontend(config)
+        if key_ok:
+            self.append_deploy_log(f"  [OK] 前端运行配置: {key_msg}")
+        else:
+            abort_deploy(f"前端运行配置同步失败: {key_msg}")
+        steps_passed += 1
+        
+        # Step 6: 启动后端服务
+        self.append_deploy_log(f"[6/{total_steps}] 启动后端服务...")
         ok, msg = self.backend.start(config)
-        if ok:
+        if ok or self.backend.is_running():
+            backend_started_after_deploy = True
             self.append_deploy_log(f"  [OK] {msg}")
         else:
-            self.append_deploy_log(f"  [FAIL] {msg}")
-            return
+            abort_deploy(f"后端启动失败: {msg}")
         steps_passed += 1
         
-        # Wait for backend to start
-        self.append_deploy_log("  等待服务启动...")
+        self.append_deploy_log("  等待后端服务启动...")
         time.sleep(3)
+
+        # Step 7: 启动前端服务
+        self.append_deploy_log(f"[7/{total_steps}] 启动前端服务...")
+        ok, msg = self.frontend.start(config)
+        if ok or self.frontend.is_running():
+            frontend_started_after_deploy = True
+            self.append_deploy_log(f"  [OK] {msg}")
+        else:
+            abort_deploy(f"前端启动失败: {msg}")
+        steps_passed += 1
+        self.append_deploy_log("  等待前端服务启动...")
+        time.sleep(2)
         
-        # Step 7: 健康检查
-        self.append_deploy_log(f"[7/{total_steps}] 健康检查...")
+        # Step 8: 健康检查
+        self.append_deploy_log(f"[8/{total_steps}] 健康检查...")
         host = resolve_browser_host(config.get("APP_HOST", "127.0.0.1"))
         port = config.get("APP_PORT", "8100")
-        base_url = f"http://{host}:{port}"
-        h_ok, h_detail = probe_backend_health(base_url)
-        if h_ok:
-            self.append_deploy_log(f"  [OK] {h_detail}")
+        backend_url = f"http://{host}:{port}"
+        frontend_url = resolve_frontend_service_settings(config)["frontend_url"]
+        backend_health_ok, backend_health_detail = probe_backend_health(backend_url)
+        if backend_health_ok:
+            self.append_deploy_log(f"  [OK] 后端健康检查: {backend_health_detail}")
         else:
-            self.append_deploy_log(f"  [WARN] {h_detail}")
+            self.append_deploy_log(f"  [WARN] 后端健康检查: {backend_health_detail}")
+        frontend_health_ok, frontend_health_detail = probe_http(frontend_url)
+        if frontend_health_ok:
+            self.append_deploy_log(f"  [OK] 前端健康检查: {frontend_health_detail}")
+        else:
+            self.append_deploy_log(f"  [WARN] 前端健康检查: {frontend_health_detail}")
+        steps_passed += 1
+
+        # Step 9: 数据库后置配置检查
+        self.append_deploy_log(f"[9/{total_steps}] 数据库后置配置检查...")
+        db_state, db_detail = self.refresh_database_status(
+            force_check=True,
+            show_dialog=False,
+            sqlcmd_override=sqlcmd,
+            schedule_next=False,
+        )
+        if db_state == "ok":
+            self.append_deploy_log(f"  [OK] {db_detail}")
+        elif db_state in {"missing_env", "missing_config", "missing_sqlcmd", "missing_runtime"}:
+            self.append_deploy_log(f"  [SKIP] {db_detail}")
+        else:
+            self.append_deploy_log(f"  [WARN] {db_detail}")
+        steps_passed += 1
         
         self.append_deploy_log(f"{'='*50}")
         self.append_deploy_log(f"一键部署完成! 通过 {steps_passed}/{total_steps} 个检查点")
-        self.append_deploy_log(f"访问地址: {base_url}")
+        self.append_deploy_log(f"后端地址: {backend_url}")
+        self.append_deploy_log(f"前端地址: {frontend_url}")
         self.append_deploy_log(f"{'='*50}")
         
+        self.last_backend_health_state = "unknown"
+        self.last_frontend_health_state = "unknown"
         self.refresh_status()
-        self.notify_tray("一键部署完成", f"通过 {steps_passed}/{total_steps} 个检查点")
-        messagebox.showinfo("一键部署完成", f"部署成功！通过 {steps_passed}/{total_steps} 个检查点。\n访问地址：{base_url}")
+        deploy_title = "一键部署完成"
+        deploy_notice = f"通过 {steps_passed}/{total_steps} 个检查点"
+        deploy_lines = [
+            f"部署成功！通过 {steps_passed}/{total_steps} 个检查点。",
+            f"后端地址：{backend_url}",
+            f"前端地址：{frontend_url}",
+        ]
+        if not backend_health_ok or not frontend_health_ok:
+            deploy_title = "一键部署完成（需关注）"
+            deploy_notice = "服务已启动，但健康检查存在告警"
+            if not backend_health_ok:
+                deploy_lines.append(f"后端健康检查：异常，{backend_health_detail}")
+            if not frontend_health_ok:
+                deploy_lines.append(f"前端健康检查：异常，{frontend_health_detail}")
+
+        if db_state == "ok":
+            deploy_lines.append(f"数据库后置检查：正常，{db_detail}")
+        elif db_state in {"missing_env", "missing_config", "missing_sqlcmd", "missing_runtime"}:
+            if deploy_title == "一键部署完成":
+                deploy_title = "一键部署完成（待补配置）"
+                deploy_notice = "服务已部署完成，数据库仍需后置配置"
+            deploy_lines.append(f"数据库后置检查：待处理，{db_detail}")
+        else:
+            deploy_title = "一键部署完成（数据库检查告警）"
+            deploy_notice = "服务已部署完成，但数据库后置检查失败"
+            deploy_lines.append(f"数据库后置检查：异常，{db_detail}")
+
+        self.notify_tray(deploy_title, deploy_notice)
+        if deploy_title == "一键部署完成":
+            messagebox.showinfo(deploy_title, "\n".join(deploy_lines))
+        else:
+            messagebox.showwarning(deploy_title, "\n".join(deploy_lines))
 
     def manual_cleanup_backups(self) -> None:
         self.save_manager_state()
@@ -3786,6 +4663,19 @@ class FinFlowManagerApp:
         if ok:
             messagebox.showinfo("同步成功", detail)
             self.notify_tray("依赖同步成功", "后端 Python 依赖已更新")
+        else:
+            messagebox.showerror("同步失败", detail)
+
+    def sync_frontend_deps(self) -> None:
+        proceed = messagebox.askyesno("确认同步", "将使用 npm install 安装 frontend/package.json 中的所有依赖。\n这可能需要几分钟，是否继续？")
+        if not proceed:
+            return
+
+        self.log_status_var.set("当前显示：正在同步前端依赖...")
+        ok, detail = sync_frontend_dependencies()
+        if ok:
+            messagebox.showinfo("同步成功", detail)
+            self.notify_tray("依赖同步成功", "前端 Node 依赖已更新")
         else:
             messagebox.showerror("同步失败", detail)
 
@@ -3848,7 +4738,7 @@ class FinFlowManagerApp:
         if self.exiting:
             return
         self.exiting = True
-        for job_name in ("status_job", "log_job", "health_job"):
+        for job_name in ("status_job", "log_job", "health_job", "db_job"):
             job = getattr(self, job_name)
             if job:
                 try:
@@ -3856,6 +4746,8 @@ class FinFlowManagerApp:
                 except Exception:
                     pass
                 setattr(self, job_name, None)
+        if self.frontend.is_running():
+            self.frontend.stop()
         if self.backend.is_running():
             self.backend.stop()
         if self.tray_icon:
@@ -3867,21 +4759,36 @@ class FinFlowManagerApp:
 
     def refresh_status(self) -> None:
         backend_status = self.backend.poll_status()
+        frontend_status = self.frontend.poll_status()
         config = self.get_effective_config()
-        port = (config.get("APP_PORT") or "8100").strip() or "8100"
-        owner_text = "未占用"
-        if port.isdigit():
-            owner = get_port_owner_info(int(port))
+        backend_port = (config.get("APP_PORT") or "8100").strip() or "8100"
+        frontend_settings = resolve_frontend_service_settings(config)
+        frontend_port = frontend_settings["frontend_port"]
+        backend_owner_text = "未占用"
+        frontend_owner_text = "未占用"
+        if backend_port.isdigit():
+            owner = get_port_owner_info(int(backend_port))
             if owner:
                 manager_pid = self.backend.process.pid if self.backend.is_running() and self.backend.process else None
-                owner_text = build_port_owner_label(owner, manager_pid)
+                backend_owner_text = build_port_owner_label(owner, manager_pid)
+        if frontend_port.isdigit():
+            owner = get_port_owner_info(int(frontend_port))
+            if owner:
+                manager_pid = int(getattr(self.frontend.process, "pid", 0) or 0) if self.frontend.is_running() else None
+                frontend_owner_text = build_port_owner_label(owner, manager_pid)
         self.status_vars["env_file"].set("已存在" if ENV_PATH.exists() else "缺失")
         self.status_vars["key_file"].set("已存在" if KEY_PATH.exists() else "缺失")
         self.status_vars["dist_dir"].set("已存在" if (DIST_DIR / "index.html").exists() else "缺失")
         self.status_vars["backend_status"].set(backend_status)
-        self.status_vars["port_owner"].set(owner_text)
+        self.status_vars["backend_port_owner"].set(backend_owner_text)
+        self.status_vars["backend_url"].set(self.get_backend_url())
+        self.status_vars["frontend_status"].set(frontend_status)
+        self.status_vars["frontend_port_owner"].set(frontend_owner_text)
+        self.status_vars["frontend_url"].set(self.get_frontend_url())
         self.status_vars["startup_status"].set(self.get_startup_status_text())
         self.status_vars["app_url"].set(self.get_app_url())
+        db_config_state, db_config_detail = describe_database_configuration_from_disk()
+        self.status_vars["db_config_status"].set(format_database_config_status(db_config_state, db_config_detail))
 
         if (
             self.backend.last_exit_at > self.last_notified_exit_at
@@ -3925,6 +4832,50 @@ class FinFlowManagerApp:
         if self.backend.is_running():
             self.backend.consecutive_failed_starts = 0
 
+        if (
+            self.frontend.last_exit_at > self.last_notified_frontend_exit_at
+            and not self.frontend.user_stopped
+            and self.frontend.last_exit_code is not None
+        ):
+            self.last_notified_frontend_exit_at = self.frontend.last_exit_at
+            fast_failed = self.frontend.register_failed_start_if_needed()
+            self.notify_tray("前端异常退出", f"退出码：{self.frontend.last_exit_code}")
+            webhook_url = self.manager_state.get("webhook_url", "")
+            send_webhook_notification(webhook_url, "前端异常退出", f"退出码：{self.frontend.last_exit_code}")
+            if self.frontend.auto_restart_suppressed:
+                self.status_vars["frontend_status"].set(
+                    f"启动失败过多，已暂停自动拉起 (最近退出码 {self.frontend.last_exit_code})"
+                )
+                self.notify_tray("前端已暂停自动拉起", "前端连续快速失败 3 次，请先修复依赖或配置后再手动启动")
+                send_webhook_notification(webhook_url, "前端已暂停自动拉起", "前端连续快速失败 3 次")
+            elif fast_failed:
+                self.status_vars["frontend_status"].set(
+                    f"启动后快速退出，等待自动重试 ({self.frontend.consecutive_failed_starts}/3)"
+                )
+
+        if (
+            self.manager_state.get("auto_restart_frontend", True)
+            and not self.frontend.is_running()
+            and not self.frontend.user_stopped
+            and not self.frontend.auto_restart_suppressed
+            and time.time() - self.frontend.last_start_attempt > 8
+            and self.frontend.last_start_attempt > 0
+        ):
+            ok, message = self.frontend.start(self.get_effective_config())
+            if ok:
+                self.notify_tray("前端已自动拉起", message)
+                self.status_vars["frontend_status"].set(self.frontend.poll_status())
+            else:
+                if "端口" in message and "占用" in message:
+                    self.frontend.auto_restart_suppressed = True
+                    self.frontend._sync_runtime_state(frontend_auto_restart_suppressed=True)
+                    self.status_vars["frontend_status"].set(message)
+                    self.notify_tray("前端自动拉起已暂停", message)
+
+        if self.frontend.is_running():
+            self.frontend.consecutive_failed_starts = 0
+            self.frontend._sync_runtime_state(frontend_consecutive_failed_starts=0)
+
         self.update_tray_title()
 
         self.schedule_status_refresh()
@@ -3934,38 +4885,128 @@ class FinFlowManagerApp:
             return
 
         if not self.manager_state.get("enable_health_check", True):
-            self.status_vars["health_status"].set("已关闭")
-            self.last_health_state = "unknown"
+            self.status_vars["backend_health_status"].set("已关闭")
+            self.status_vars["frontend_health_status"].set("已关闭")
+            self.last_backend_health_state = "unknown"
+            self.last_frontend_health_state = "unknown"
             self.update_tray_title()
             self.schedule_health_refresh()
             return
 
-        if not self.backend.is_running():
-            self.status_vars["health_status"].set("未运行")
-            self.last_health_state = "unknown"
-            self.update_tray_title()
-            self.schedule_health_refresh()
-            return
+        backend_ok = False
+        backend_detail = "未运行"
+        backend_state = "unknown"
+        if self.backend.is_running():
+            backend_ok, backend_detail = probe_backend_health(self.get_backend_url())
+            backend_state = "healthy" if backend_ok else "unhealthy"
+        self.status_vars["backend_health_status"].set(f"正常 ({backend_detail})" if backend_ok else f"异常 ({backend_detail})" if backend_state == "unhealthy" else "未运行")
 
-        ok, detail = probe_backend_health(self.get_app_url())
-        new_state = "healthy" if ok else "unhealthy"
-        self.status_vars["health_status"].set(f"正常 ({detail})" if ok else f"异常 ({detail})")
-        if self.last_health_state not in {"unknown", new_state}:
+        if self.backend.is_running() and self.last_backend_health_state not in {"unknown", backend_state}:
             webhook_url = self.manager_state.get("webhook_url", "")
-            if ok:
-                self.notify_tray("健康检查恢复", f"{self.get_app_url()} 已恢复可访问")
-                send_webhook_notification(webhook_url, "健康检查恢复", f"{self.get_app_url()} 已恢复可访问")
+            if backend_ok:
+                self.notify_tray("后端健康检查恢复", f"{self.get_backend_url()} 已恢复可访问")
+                send_webhook_notification(webhook_url, "后端健康检查恢复", f"{self.get_backend_url()} 已恢复可访问")
             else:
-                self.notify_tray("健康检查异常", f"{self.get_app_url()} 当前不可访问：{detail}")
-                send_webhook_notification(webhook_url, "健康检查异常", f"{self.get_app_url()} 当前不可访问：{detail}")
-        self.last_health_state = new_state
+                self.notify_tray("后端健康检查异常", f"{self.get_backend_url()} 当前不可访问：{backend_detail}")
+                send_webhook_notification(webhook_url, "后端健康检查异常", f"{self.get_backend_url()} 当前不可访问：{backend_detail}")
+        self.last_backend_health_state = backend_state
+
+        frontend_ok = False
+        frontend_detail = "未运行"
+        frontend_state = "unknown"
+        if self.frontend.is_running():
+            frontend_ok, frontend_detail = probe_http(self.get_frontend_url())
+            frontend_state = "healthy" if frontend_ok else "unhealthy"
+        self.status_vars["frontend_health_status"].set(
+            f"正常 ({frontend_detail})" if frontend_ok else f"异常 ({frontend_detail})" if frontend_state == "unhealthy" else "未运行"
+        )
+
+        if self.frontend.is_running() and self.last_frontend_health_state not in {"unknown", frontend_state}:
+            webhook_url = self.manager_state.get("webhook_url", "")
+            if frontend_ok:
+                self.notify_tray("前端健康检查恢复", f"{self.get_frontend_url()} 已恢复可访问")
+                send_webhook_notification(webhook_url, "前端健康检查恢复", f"{self.get_frontend_url()} 已恢复可访问")
+            else:
+                self.notify_tray("前端健康检查异常", f"{self.get_frontend_url()} 当前不可访问：{frontend_detail}")
+                send_webhook_notification(webhook_url, "前端健康检查异常", f"{self.get_frontend_url()} 当前不可访问：{frontend_detail}")
+        self.last_frontend_health_state = frontend_state
         self.update_tray_title()
         self.schedule_health_refresh()
+
+    def refresh_database_status(
+        self,
+        force_check: bool = False,
+        show_dialog: bool = False,
+        sqlcmd_override: str | None = None,
+        schedule_next: bool = True,
+    ) -> Tuple[str, str]:
+        if self.exiting:
+            return "unknown", "应用正在退出"
+
+        monitor_enabled = self.manager_state.get("enable_db_monitor", True)
+        if not force_check and not monitor_enabled:
+            self.status_vars["db_monitor_status"].set("已关闭")
+            self.status_vars["db_connection_status"].set("未检查 (数据库监控已关闭)")
+            if schedule_next:
+                self.schedule_db_refresh()
+            self.last_database_status_state = "unknown"
+            return "disabled", "数据库监控已关闭"
+
+        sqlcmd = (sqlcmd_override if sqlcmd_override is not None else self.ops_vars["sqlcmd_path"].get().strip() or "sqlcmd").strip()
+        state, detail = evaluate_database_runtime_status(sqlcmd)
+        checked_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        self.status_vars["db_connection_status"].set(format_database_connection_status(state, detail))
+        self.status_vars["db_monitor_status"].set("手动检查" if force_check and not monitor_enabled else "监控中" if monitor_enabled else "已关闭")
+        self.status_vars["db_last_check_at"].set(checked_at)
+
+        previous_state = self.last_database_status_state
+        if (
+            monitor_enabled
+            and not force_check
+            and previous_state not in {"unknown", state}
+        ):
+            webhook_url = self.manager_state.get("webhook_url", "")
+            if state == "ok":
+                self.notify_tray("数据库连接已恢复", detail)
+                send_webhook_notification(webhook_url, "数据库连接已恢复", detail)
+            else:
+                self.notify_tray("数据库连接状态变化", detail)
+                send_webhook_notification(webhook_url, "数据库连接状态变化", detail)
+        self.last_database_status_state = state
+
+        if show_dialog:
+            if state == "ok":
+                messagebox.showinfo("数据库连接检查", detail)
+            elif state == "error":
+                messagebox.showerror("数据库连接检查失败", detail)
+            elif state == "missing_env":
+                messagebox.showwarning("数据库待配置", detail)
+            elif state == "missing_config":
+                messagebox.showwarning("数据库配置不完整", detail)
+            elif state == "missing_sqlcmd":
+                messagebox.showwarning("数据库检查工具不可用", detail)
+            elif state == "missing_runtime":
+                messagebox.showwarning("数据库检查环境未就绪", detail)
+            else:
+                messagebox.showwarning("数据库连接检查", detail)
+
+        if schedule_next:
+            self.schedule_db_refresh()
+        return state, detail
+
+    def check_database_connection(self) -> None:
+        self.save_manager_state()
+        self.refresh_database_status(force_check=True, show_dialog=True, schedule_next=False)
 
     def resolve_log_path(self) -> Path:
         choice = self.log_choice.get()
         if choice == "后端错误输出":
             return STDERR_LOG
+        if choice == "前端标准输出":
+            return FRONTEND_STDOUT_LOG
+        if choice == "前端错误输出":
+            return FRONTEND_STDERR_LOG
         if choice == "项目同步日志":
             return PROJECT_SYNC_LOG
         return STDOUT_LOG
@@ -3993,11 +5034,16 @@ class FinFlowManagerApp:
         if path == PROJECT_SYNC_LOG:
             return "当前显示：项目同步日志（历史累计）", "\n".join(lines[-300:])
 
-        marker = self.backend.last_session_marker
+        if path in (FRONTEND_STDOUT_LOG, FRONTEND_STDERR_LOG):
+            marker = self.frontend.last_session_marker
+            started_label = self.frontend.last_session_started_label
+        else:
+            marker = self.backend.last_session_marker
+            started_label = self.backend.last_session_started_label
         if marker and marker in lines:
             marker_index = len(lines) - 1 - lines[::-1].index(marker)
             session_lines = lines[marker_index:]
-            label = f"当前显示：本次启动日志（自 {self.backend.last_session_started_label} 起）"
+            label = f"当前显示：本次启动日志（自 {started_label} 起）"
             return label, "\n".join(session_lines[-300:])
 
         label = "当前显示：历史日志（尚未找到本次启动分界线）"
