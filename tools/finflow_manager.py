@@ -21,7 +21,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -850,6 +850,179 @@ def decode_console_output(data: bytes) -> str:
         except Exception:
             continue
     return data.decode("utf-8", errors="ignore")
+
+
+def _read_process_stream(stream: Any, stream_name: str, sink: queue.Queue[tuple[str, bytes | None]]) -> None:
+    try:
+        while True:
+            chunk = stream.readline()
+            if not chunk:
+                break
+            sink.put((stream_name, chunk))
+    finally:
+        try:
+            stream.close()
+        except Exception:
+            pass
+        sink.put((stream_name, None))
+
+
+def safe_process_pid(process: Any) -> int:
+    try:
+        return int(getattr(process, "pid", 0) or 0)
+    except Exception:
+        return 0
+
+
+def safe_popen_poll(process: subprocess.Popen | None) -> int | None:
+    if process is None:
+        return None
+    try:
+        return process.poll()
+    except OSError:
+        pid = safe_process_pid(process)
+        if pid > 0 and is_process_alive(pid):
+            return None
+        return getattr(process, "returncode", None) if getattr(process, "returncode", None) is not None else 1
+    except Exception:
+        pid = safe_process_pid(process)
+        if pid > 0 and is_process_alive(pid):
+            return None
+        return getattr(process, "returncode", None)
+
+
+def safe_process_is_running(process: Any) -> bool:
+    if process is None:
+        return False
+    if isinstance(process, subprocess.Popen):
+        return safe_popen_poll(process) is None
+    return is_process_alive(safe_process_pid(process))
+
+
+def safe_terminate_process(process: Any, timeout_seconds: float = 10.0) -> None:
+    pid = safe_process_pid(process)
+    if process is None:
+        return
+    if isinstance(process, subprocess.Popen):
+        try:
+            process.terminate()
+        except Exception:
+            if pid > 0:
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except Exception:
+                    pass
+        deadline = time.time() + timeout_seconds
+        while time.time() < deadline:
+            if not safe_process_is_running(process):
+                return
+            time.sleep(0.2)
+        try:
+            process.kill()
+        except Exception:
+            if pid > 0:
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except Exception:
+                    pass
+        kill_deadline = time.time() + 2
+        while time.time() < kill_deadline:
+            if not safe_process_is_running(process):
+                return
+            time.sleep(0.2)
+        return
+    if pid > 0:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except Exception:
+            pass
+
+
+def run_command_with_live_output(
+    cmd: List[str],
+    cwd: Path,
+    timeout_seconds: int,
+    log_callback: Callable[[str], None] | None = None,
+    heartbeat_label: str = "",
+) -> Tuple[int, str, str]:
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    process = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=False,
+        creationflags=creationflags,
+    )
+
+    event_queue: queue.Queue[tuple[str, bytes | None]] = queue.Queue()
+    stdout_chunks: List[bytes] = []
+    stderr_chunks: List[bytes] = []
+    stdout_done = process.stdout is None
+    stderr_done = process.stderr is None
+
+    if process.stdout is not None:
+        threading.Thread(
+            target=_read_process_stream,
+            args=(process.stdout, "stdout", event_queue),
+            daemon=True,
+        ).start()
+    if process.stderr is not None:
+        threading.Thread(
+            target=_read_process_stream,
+            args=(process.stderr, "stderr", event_queue),
+            daemon=True,
+        ).start()
+
+    started_at = time.monotonic()
+    last_feedback_at = started_at
+    heartbeat_seconds = 15
+
+    while True:
+        if timeout_seconds and time.monotonic() - started_at > timeout_seconds:
+            safe_terminate_process(process, timeout_seconds=2)
+            raise TimeoutError(f"命令执行超时（>{timeout_seconds} 秒）：{' '.join(cmd)}")
+
+        try:
+            stream_name, payload = event_queue.get(timeout=1)
+        except queue.Empty:
+            if log_callback and heartbeat_label and time.monotonic() - last_feedback_at >= heartbeat_seconds:
+                elapsed = int(time.monotonic() - started_at)
+                log_callback(f"    [RUN] {heartbeat_label}，已等待 {elapsed} 秒...")
+                last_feedback_at = time.monotonic()
+            if safe_popen_poll(process) is not None and stdout_done and stderr_done:
+                break
+            continue
+
+        if payload is None:
+            if stream_name == "stdout":
+                stdout_done = True
+            else:
+                stderr_done = True
+            if safe_popen_poll(process) is not None and stdout_done and stderr_done:
+                break
+            continue
+
+        if stream_name == "stdout":
+            stdout_chunks.append(payload)
+        else:
+            stderr_chunks.append(payload)
+
+        if log_callback:
+            text = decode_console_output(payload).replace("\r\n", "\n").replace("\r", "\n")
+            for line in text.split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                log_callback(f"    {line}")
+            last_feedback_at = time.monotonic()
+
+    return (
+        safe_popen_poll(process) if safe_popen_poll(process) is not None else process.wait(),
+        decode_console_output(b"".join(stdout_chunks)).strip(),
+        decode_console_output(b"".join(stderr_chunks)).strip(),
+    )
 
 
 def run_python_json(python_exe: Path, code: str) -> Dict[str, Any]:
@@ -1715,12 +1888,12 @@ class BackendProcessController:
         self.stderr_handle = None
 
     def is_running(self) -> bool:
-        return self.process is not None and self.process.poll() is None
+        return safe_process_is_running(self.process)
 
     def capture_exit(self) -> int | None:
         if self.process is None:
             return None
-        code = self.process.poll()
+        code = safe_popen_poll(self.process)
         if code is None:
             return None
         self.last_exit_code = code
@@ -1794,6 +1967,7 @@ class BackendProcessController:
                 [str(python_exe), "-m", "uvicorn", "main:app", "--host", host, "--port", port],
                 cwd=BACKEND_DIR,
                 env=env,
+                stdin=subprocess.DEVNULL,
                 stdout=self.stdout_handle,
                 stderr=self.stderr_handle,
                 creationflags=creationflags,
@@ -1818,13 +1992,12 @@ class BackendProcessController:
         self.user_stopped = True
         write_runtime_state(user_stopped=True)
         try:
-            assert self.process is not None
-            self.process.terminate()
-            self.process.wait(timeout=10)
+            safe_terminate_process(self.process, timeout_seconds=10)
         except Exception:
             try:
-                assert self.process is not None
-                self.process.kill()
+                pid = safe_process_pid(self.process)
+                if pid > 0:
+                    os.kill(pid, signal.SIGTERM)
             except Exception:
                 pass
         finally:
@@ -1893,7 +2066,7 @@ class FrontendProcessController:
 
     def _sync_runtime_state(self, **updates: Any) -> None:
         write_runtime_state(
-            frontend_pid=int(getattr(self.process, "pid", 0) or 0),
+            frontend_pid=safe_process_pid(self.process),
             frontend_user_stopped=self.user_stopped,
             frontend_last_start_attempt=self.last_start_attempt,
             frontend_last_exit_code=self.last_exit_code,
@@ -1907,21 +2080,17 @@ class FrontendProcessController:
         )
 
     def is_running(self) -> bool:
-        if self.process is None:
-            return False
-        if isinstance(self.process, subprocess.Popen):
-            return self.process.poll() is None
-        return is_process_alive(int(getattr(self.process, "pid", 0) or 0))
+        return safe_process_is_running(self.process)
 
     def capture_exit(self) -> int | None:
         if self.process is None:
             return None
         if isinstance(self.process, subprocess.Popen):
-            code = self.process.poll()
+            code = safe_popen_poll(self.process)
             if code is None:
                 return None
         else:
-            pid = int(getattr(self.process, "pid", 0) or 0)
+            pid = safe_process_pid(self.process)
             if is_process_alive(pid):
                 return None
             code = self.last_exit_code
@@ -2001,6 +2170,7 @@ class FrontendProcessController:
                 [node_exe, str(vite_cli), "--host", "0.0.0.0", "--port", frontend_port],
                 cwd=FRONTEND_DIR,
                 env=env,
+                stdin=subprocess.DEVNULL,
                 stdout=self.stdout_handle,
                 stderr=self.stderr_handle,
                 creationflags=creationflags,
@@ -2027,15 +2197,14 @@ class FrontendProcessController:
         self._sync_runtime_state(frontend_user_stopped=True)
         try:
             if isinstance(self.process, subprocess.Popen):
-                self.process.terminate()
-                self.process.wait(timeout=10)
+                safe_terminate_process(self.process, timeout_seconds=10)
             else:
-                pid = int(getattr(self.process, "pid", 0) or 0)
+                pid = safe_process_pid(self.process)
                 if pid > 0:
                     os.kill(pid, signal.SIGTERM)
         except Exception:
             try:
-                pid = int(getattr(self.process, "pid", 0) or 0)
+                pid = safe_process_pid(self.process)
                 if pid > 0:
                     os.kill(pid, signal.SIGTERM)
             except Exception:
@@ -2199,6 +2368,7 @@ class ManagedBackendController:
             process = subprocess.Popen(
                 launcher,
                 cwd=ROOT_DIR,
+                stdin=subprocess.DEVNULL,
                 stdout=service_log,
                 stderr=service_log,
                 creationflags=creationflags,
@@ -2259,7 +2429,7 @@ class BackendServiceHost:
         self.stop_event.set()
 
     def _sync_runtime_state(self) -> None:
-        backend_pid = self.backend.process.pid if self.backend.is_running() and self.backend.process else 0
+        backend_pid = safe_process_pid(self.backend.process) if self.backend.is_running() else 0
         write_runtime_state(
             service_host_pid=os.getpid(),
             backend_pid=backend_pid,
@@ -3795,14 +3965,14 @@ class FinFlowManagerApp:
 
         self.append_deploy_log(f"[4/{total_steps}] \u4f9d\u8d56\u540c\u6b65...")
         self.append_deploy_log("  [RUN] \u5f00\u59cb\u540c\u6b65\u540e\u7aef Python \u4f9d\u8d56...")
-        backend_dep_ok, backend_dep_msg = sync_backend_dependencies()
+        backend_dep_ok, backend_dep_msg = sync_backend_dependencies(log_callback=self.append_deploy_log)
         if backend_dep_ok:
             self.append_deploy_log(f"  [OK] \u540e\u7aef\u4f9d\u8d56: {backend_dep_msg}")
         else:
             self.append_deploy_log(f"  [WARN] \u540e\u7aef\u4f9d\u8d56: {backend_dep_msg}")
 
         self.append_deploy_log("  [RUN] \u5f00\u59cb\u540c\u6b65\u524d\u7aef Node.js \u4f9d\u8d56...")
-        frontend_dep_ok, frontend_dep_msg = sync_frontend_dependencies()
+        frontend_dep_ok, frontend_dep_msg = sync_frontend_dependencies(log_callback=self.append_deploy_log)
         if frontend_dep_ok:
             self.append_deploy_log(f"  [OK] \u524d\u7aef\u4f9d\u8d56: {frontend_dep_msg}")
         else:
@@ -3817,7 +3987,7 @@ class FinFlowManagerApp:
         except Exception as exc:
             abort_deploy(f"\u8fd0\u884c\u914d\u7f6e\u5199\u5165\u5931\u8d25: {exc}")
         self.append_deploy_log("  [RUN] \u5f00\u59cb\u6267\u884c\u524d\u7aef\u6784\u5efa...")
-        fe_ok, fe_msg = build_frontend()
+        fe_ok, fe_msg = build_frontend(log_callback=self.append_deploy_log)
         if fe_ok:
             self.append_deploy_log(f"  [OK] {fe_msg}")
         else:
@@ -3831,6 +4001,7 @@ class FinFlowManagerApp:
         steps_passed += 1
 
         self.append_deploy_log(f"[6/{total_steps}] \u542f\u52a8\u540e\u7aef\u670d\u52a1...")
+        self.append_deploy_log("  [RUN] \u6b63\u5728\u5524\u8d77\u540e\u7aef\u5b88\u62a4\u5bbf\u4e3b...")
         ok, msg = self.backend.start(config)
         if ok or self.backend.is_running():
             backend_started_after_deploy = True
@@ -5620,6 +5791,148 @@ def _ff_restore_database(self: Any) -> None:
             messagebox.showerror("\u6062\u590d\u5931\u8d25", detail)
 
     ttk.Button(choice_window, text="\u786e\u8ba4\u6062\u590d", command=do_restore).pack(pady=10)
+
+
+def sync_backend_dependencies(
+    timeout_seconds: int = 900,
+    log_callback: Callable[[str], None] | None = None,
+) -> Tuple[bool, str]:
+    python_exe = BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
+    requirements_path = BACKEND_DIR / "requirements.txt"
+    if not python_exe.exists():
+        return False, f"\u672a\u627e\u5230\u540e\u7aef\u865a\u62df\u73af\u5883\uff1a{python_exe}"
+    if not requirements_path.exists():
+        return False, f"\u672a\u627e\u5230\u4f9d\u8d56\u6e05\u5355\uff1a{requirements_path}"
+
+    try:
+        upgrade_code, upgrade_stdout, upgrade_stderr = run_command_with_live_output(
+            [str(python_exe), "-m", "pip", "install", "--upgrade", "pip"],
+            cwd=BACKEND_DIR,
+            timeout_seconds=120,
+            log_callback=log_callback,
+            heartbeat_label="\u540e\u7aef pip \u5347\u7ea7\u8fdb\u884c\u4e2d",
+        )
+        if upgrade_code != 0:
+            return False, upgrade_stderr or upgrade_stdout or "\u5347\u7ea7 pip \u5931\u8d25"
+
+        result_code, stdout_text, stderr_text = run_command_with_live_output(
+            [str(python_exe), "-m", "pip", "install", "-r", str(requirements_path)],
+            cwd=BACKEND_DIR,
+            timeout_seconds=timeout_seconds,
+            log_callback=log_callback,
+            heartbeat_label="\u540e\u7aef\u4f9d\u8d56\u540c\u6b65\u8fdb\u884c\u4e2d",
+        )
+    except Exception as exc:
+        return False, f"\u5b89\u88c5\u4f9d\u8d56\u5931\u8d25\uff1a{exc}"
+
+    if result_code != 0:
+        return False, stderr_text or stdout_text or "\u672a\u77e5\u9519\u8bef"
+    return True, stdout_text or "\u4f9d\u8d56\u5df2\u540c\u6b65"
+
+
+def sync_frontend_dependencies(
+    timeout_seconds: int = 900,
+    log_callback: Callable[[str], None] | None = None,
+) -> Tuple[bool, str]:
+    package_json = FRONTEND_DIR / "package.json"
+    if not package_json.exists():
+        return False, f"\u672a\u627e\u5230 package.json: {package_json}"
+
+    npm_exe = "npm.cmd" if os.name == "nt" else "npm"
+    node_exe = "node.exe" if os.name == "nt" else "node"
+
+    try:
+        subprocess.run(
+            [node_exe, "--version"],
+            capture_output=True,
+            timeout=5,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except FileNotFoundError:
+        return False, "Node.js \u672a\u5b89\u88c5\uff0c\u65e0\u6cd5\u540c\u6b65\u524d\u7aef\u4f9d\u8d56"
+    except Exception as exc:
+        return False, f"\u68c0\u67e5 Node.js \u5931\u8d25: {exc}"
+
+    try:
+        result_code, stdout_text, stderr_text = run_command_with_live_output(
+            [npm_exe, "install", "--verbose"],
+            cwd=FRONTEND_DIR,
+            timeout_seconds=timeout_seconds,
+            log_callback=log_callback,
+            heartbeat_label="\u524d\u7aef\u4f9d\u8d56\u540c\u6b65\u8fdb\u884c\u4e2d",
+        )
+    except FileNotFoundError:
+        return False, f"\u672a\u627e\u5230 npm: {npm_exe}"
+    except Exception as exc:
+        return False, f"\u5b89\u88c5\u524d\u7aef\u4f9d\u8d56\u5931\u8d25\uff1a{exc}"
+
+    if result_code != 0:
+        return False, (stderr_text or stdout_text or "\u672a\u77e5\u9519\u8bef").strip()
+    return True, "\u524d\u7aef\u4f9d\u8d56\u5df2\u540c\u6b65"
+
+
+def build_frontend(
+    timeout_seconds: int = 600,
+    log_callback: Callable[[str], None] | None = None,
+) -> Tuple[bool, str]:
+    frontend_dir = ROOT_DIR / "frontend"
+    package_json = frontend_dir / "package.json"
+    dist_dir = frontend_dir / "dist"
+    node_modules = frontend_dir / "node_modules"
+
+    if not package_json.exists():
+        return False, "frontend/package.json \u4e0d\u5b58\u5728\uff0c\u8df3\u8fc7\u524d\u7aef\u6784\u5efa"
+
+    npm_exe = "npm.cmd" if os.name == "nt" else "npm"
+    node_exe = "node.exe" if os.name == "nt" else "node"
+
+    try:
+        subprocess.run(
+            [node_exe, "--version"],
+            capture_output=True,
+            timeout=5,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except FileNotFoundError:
+        return False, "Node.js \u672a\u5b89\u88c5\uff0c\u8df3\u8fc7\u524d\u7aef\u6784\u5efa"
+    except Exception as exc:
+        return False, f"Node.js \u68c0\u67e5\u6267\u884c\u5f02\u5e38\uff1a{exc}"
+
+    if not node_modules.exists():
+        try:
+            install_code, install_stdout, install_stderr = run_command_with_live_output(
+                [npm_exe, "install", "--verbose"],
+                cwd=frontend_dir,
+                timeout_seconds=300,
+                log_callback=log_callback,
+                heartbeat_label="\u524d\u7aef\u4f9d\u8d56\u8865\u9f50\u8fdb\u884c\u4e2d",
+            )
+        except FileNotFoundError:
+            return False, f"\u672a\u627e\u5230 npm\uff1a{npm_exe}"
+        except Exception as exc:
+            return False, f"npm install \u6267\u884c\u5f02\u5e38\uff1a{exc}"
+        if install_code != 0:
+            return False, f"npm install \u5931\u8d25\uff1a{install_stderr or install_stdout}"
+
+    try:
+        build_code, build_stdout, build_stderr = run_command_with_live_output(
+            [npm_exe, "run", "build"],
+            cwd=frontend_dir,
+            timeout_seconds=timeout_seconds,
+            log_callback=log_callback,
+            heartbeat_label="\u524d\u7aef\u6784\u5efa\u8fdb\u884c\u4e2d",
+        )
+    except FileNotFoundError:
+        return False, f"\u672a\u627e\u5230 npm\uff1a{npm_exe}"
+    except Exception as exc:
+        return False, f"npm run build \u6267\u884c\u5f02\u5e38\uff1a{exc}"
+    if build_code != 0:
+        return False, f"npm run build \u5931\u8d25\uff1a{build_stderr or build_stdout}"
+
+    if not dist_dir.exists():
+        return False, "\u6784\u5efa\u5b8c\u6210\u4f46 dist \u76ee\u5f55\u4e0d\u5b58\u5728"
+
+    return True, f"\u524d\u7aef\u6784\u5efa\u6210\u529f\uff1a{dist_dir}"
 
 
 if __name__ == "__main__":
