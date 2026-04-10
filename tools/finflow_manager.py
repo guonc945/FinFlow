@@ -902,7 +902,10 @@ def check_database_connectivity_via_backend_runtime(config: Dict[str, str]) -> T
     if result.returncode == 0:
         conn = extract_db_connection(config)
         return True, stdout_text or f"数据库 {conn.get('dbname') or ''} 连接正常".strip()
-    return False, stderr_text or stdout_text or "数据库连接失败"
+    combined_text = stderr_text or stdout_text or "数据库连接失败"
+    if "ModuleNotFoundError" in combined_text or "No module named" in combined_text:
+        return False, f"后端虚拟环境缺少数据库检查依赖：{combined_text}"
+    return False, combined_text
 
 
 def evaluate_database_runtime_status(sqlcmd: str = "sqlcmd") -> Tuple[str, str]:
@@ -911,10 +914,26 @@ def evaluate_database_runtime_status(sqlcmd: str = "sqlcmd") -> Tuple[str, str]:
         return config_state, config_detail
 
     config = load_effective_config_from_disk()
+    backend_host = resolve_browser_host(config.get("APP_HOST", "127.0.0.1"))
+    backend_port = (config.get("APP_PORT") or "8100").strip() or "8100"
+    if backend_port.isdigit():
+        backend_ok, payload, _ = fetch_backend_health_payload(f"http://{backend_host}:{backend_port}")
+        if payload:
+            database_status = payload.get("database")
+            if backend_ok and database_status == "ok":
+                conn = extract_db_connection(config)
+                return "ok", f"数据库 {conn.get('dbname') or ''} 连接正常（来自后端健康检查）".strip()
+            if database_status and database_status != "ok":
+                return "error", str(database_status)
+
     runtime_python = BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
     if runtime_python.exists():
         ok, detail = check_database_connectivity_via_backend_runtime(config)
-        return ("ok" if ok else "error"), detail
+        if ok:
+            return "ok", detail
+        if "缺少数据库检查依赖" in detail:
+            return "missing_runtime", detail
+        return "error", detail
 
     sqlcmd = (sqlcmd or "").strip()
     sqlcmd_available = False
@@ -1400,6 +1419,27 @@ def probe_backend_health(base_url: str) -> Tuple[bool, str]:
         return False, reason or "连接失败"
     except Exception as exc:
         return False, str(exc)
+
+
+def fetch_backend_health_payload(base_url: str) -> Tuple[bool, Dict[str, Any], str]:
+    health_url = base_url.rstrip("/") + "/api/health"
+    request = Request(health_url, headers={"User-Agent": "FinFlowManager/1.0", "Accept": "application/json"})
+    try:
+        with urlopen(request, timeout=HEALTH_CHECK_TIMEOUT) as response:
+            code = int(getattr(response, "status", response.getcode()))
+            payload = json.loads(decode_console_output(response.read() or b"{}"))
+            return 200 <= code < 400, payload, f"HTTP {code}"
+    except HTTPError as exc:
+        try:
+            payload = json.loads(decode_console_output(exc.read() or b"{}"))
+        except Exception:
+            payload = {}
+        return False, payload, f"HTTP {exc.code}"
+    except URLError as exc:
+        reason = exc.reason.strerror if hasattr(exc.reason, "strerror") else str(exc.reason)
+        return False, {}, reason or "连接失败"
+    except Exception as exc:
+        return False, {}, str(exc)
 
 
 def execute_sql_script_via_sqlcmd(sql_content: str, config: Dict[str, str], sqlcmd: str) -> Tuple[bool, str]:
@@ -2376,18 +2416,21 @@ class FinFlowManagerApp:
         notebook.pack(fill="both", expand=True, padx=10, pady=10)
 
         status_frame = ttk.Frame(notebook)
+        manager_frame = ttk.Frame(notebook)
         config_frame = ttk.Frame(notebook)
         ops_frame = ttk.Frame(notebook)
         env_frame = ttk.Frame(notebook)
         logs_frame = ttk.Frame(notebook)
 
         notebook.add(status_frame, text="服务状态")
+        notebook.add(manager_frame, text="管理器设置")
         notebook.add(config_frame, text="配置管理")
         notebook.add(ops_frame, text="运维工具")
         notebook.add(env_frame, text="环境检查")
         notebook.add(logs_frame, text="日志查看")
 
         self.build_status_tab(status_frame)
+        self.build_manager_tab(manager_frame)
         self.build_config_tab(config_frame)
         self.build_ops_tab(ops_frame)
         self.build_env_tab(env_frame)
@@ -2395,23 +2438,8 @@ class FinFlowManagerApp:
 
     def build_status_tab(self, parent: ttk.Frame) -> None:
         db_config_state, db_config_detail = describe_database_configuration_from_disk()
-        canvas = tk.Canvas(parent, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
-        scrollable_frame = ttk.Frame(canvas)
-
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-
-        summary = ttk.LabelFrame(scrollable_frame, text="当前状态", padding=16)
-        summary.pack(fill="x", padx=10, pady=10)
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(1, weight=1)
 
         status_items = {
             "project_root": str(ROOT_DIR),
@@ -2433,55 +2461,123 @@ class FinFlowManagerApp:
             "startup_status": self.get_startup_status_text(),
             "app_url": self.get_app_url(),
         }
-
-        row = 0
         for key, value in status_items.items():
-            label_text = {
-                "project_root": "项目目录",
-                "env_file": "配置文件",
-                "key_file": "加密密钥",
-                "dist_dir": "前端构建",
-                "backend_status": "后端状态",
-                "backend_port_owner": "后端端口占用",
-                "backend_health_status": "后端健康检查",
-                "backend_url": "后端入口",
-                "frontend_status": "前端状态",
-                "frontend_port_owner": "前端端口占用",
-                "frontend_health_status": "前端健康检查",
-                "frontend_url": "前端入口",
-                "db_config_status": "数据库配置",
-                "db_connection_status": "数据库连接",
-                "db_monitor_status": "数据库监控",
-                "db_last_check_at": "最后检查",
-                "startup_status": "开机自启",
-                "app_url": "默认访问地址",
-            }[key]
-            ttk.Label(summary, text=f"{label_text}：").grid(row=row, column=0, sticky="w", pady=4)
-            var = tk.StringVar(value=value)
-            ttk.Label(summary, textvariable=var).grid(row=row, column=1, sticky="w", pady=4)
-            self.status_vars[key] = var
-            row += 1
+            self.status_vars[key] = tk.StringVar(value=value)
 
-        actions = ttk.LabelFrame(scrollable_frame, text="服务操作", padding=16)
-        actions.pack(fill="x", padx=10, pady=10)
+        overview = ttk.LabelFrame(parent, text="总览", padding=12)
+        overview.grid(row=0, column=0, sticky="nsew", padx=10, pady=(10, 6))
+        for col in (1, 3):
+            overview.columnconfigure(col, weight=1)
 
-        ttk.Button(actions, text="启动全部", command=self.handle_start_all).grid(row=0, column=0, padx=6, pady=6)
-        ttk.Button(actions, text="停止全部", command=self.handle_stop_all).grid(row=0, column=1, padx=6, pady=6)
-        ttk.Button(actions, text="重启全部", command=self.handle_restart_all).grid(row=0, column=2, padx=6, pady=6)
-        ttk.Button(actions, text="打开前端", command=self.open_frontend).grid(row=0, column=3, padx=6, pady=6)
-        ttk.Button(actions, text="打开日志目录", command=self.open_logs_folder).grid(row=0, column=4, padx=6, pady=6)
-        ttk.Button(actions, text="隐藏到托盘", command=self.hide_to_tray).grid(row=0, column=5, padx=6, pady=6)
-        ttk.Button(actions, text="启动后端", command=self.handle_start_backend).grid(row=1, column=0, padx=6, pady=6)
-        ttk.Button(actions, text="停止后端", command=self.handle_stop_backend).grid(row=1, column=1, padx=6, pady=6)
-        ttk.Button(actions, text="重启后端", command=self.handle_restart_backend).grid(row=1, column=2, padx=6, pady=6)
-        ttk.Button(actions, text="接管现有后端", command=self.handle_takeover_backend).grid(row=1, column=3, padx=6, pady=6)
-        ttk.Button(actions, text="释放后端端口", command=self.handle_force_release_port).grid(row=1, column=4, padx=6, pady=6)
-        ttk.Button(actions, text="启动前端", command=self.handle_start_frontend).grid(row=2, column=0, padx=6, pady=6)
-        ttk.Button(actions, text="停止前端", command=self.handle_stop_frontend).grid(row=2, column=1, padx=6, pady=6)
-        ttk.Button(actions, text="重启前端", command=self.handle_restart_frontend).grid(row=2, column=2, padx=6, pady=6)
-        ttk.Button(actions, text="检查数据库连接", command=self.check_database_connection).grid(row=2, column=3, padx=6, pady=6)
+        overview_fields = [
+            ("项目目录", "project_root", 0, 0, True),
+            ("默认访问地址", "app_url", 0, 2, True),
+            ("配置文件", "env_file", 1, 0, False),
+            ("加密密钥", "key_file", 1, 2, False),
+            ("前端构建", "dist_dir", 2, 0, False),
+            ("开机自启", "startup_status", 2, 2, False),
+        ]
+        for label_text, key, row, col, readonly in overview_fields:
+            ttk.Label(overview, text=f"{label_text}：").grid(row=row, column=col, sticky="w", padx=(0, 6), pady=4)
+            if readonly:
+                entry = ttk.Entry(overview, textvariable=self.status_vars[key], state="readonly")
+                entry.grid(row=row, column=col + 1, sticky="ew", padx=(0, 16), pady=4)
+            else:
+                ttk.Label(overview, textvariable=self.status_vars[key]).grid(row=row, column=col + 1, sticky="w", padx=(0, 16), pady=4)
 
-        options = ttk.LabelFrame(scrollable_frame, text="管理器选项", padding=16)
+        dashboard = ttk.Frame(parent)
+        dashboard.grid(row=1, column=0, sticky="nsew", padx=10, pady=6)
+        dashboard.columnconfigure(0, weight=1)
+        dashboard.columnconfigure(1, weight=1)
+        dashboard.rowconfigure(0, weight=1)
+        dashboard.rowconfigure(1, weight=1)
+
+        sections = [
+            (
+                "后端服务",
+                [
+                    ("状态", "backend_status"),
+                    ("端口占用", "backend_port_owner"),
+                    ("健康检查", "backend_health_status"),
+                    ("访问地址", "backend_url"),
+                ],
+                0,
+                0,
+            ),
+            (
+                "前端服务",
+                [
+                    ("状态", "frontend_status"),
+                    ("端口占用", "frontend_port_owner"),
+                    ("健康检查", "frontend_health_status"),
+                    ("访问地址", "frontend_url"),
+                ],
+                0,
+                1,
+            ),
+            (
+                "数据库状态",
+                [
+                    ("配置", "db_config_status"),
+                    ("连接", "db_connection_status"),
+                    ("监控", "db_monitor_status"),
+                    ("最后检查", "db_last_check_at"),
+                ],
+                1,
+                0,
+            ),
+            (
+                "快捷操作",
+                [],
+                1,
+                1,
+            ),
+        ]
+
+        for title, fields, row, column in sections:
+            frame = ttk.LabelFrame(dashboard, text=title, padding=12)
+            frame.grid(row=row, column=column, sticky="nsew", padx=6, pady=6)
+            frame.columnconfigure(1, weight=1)
+            if fields:
+                for field_row, (label_text, key) in enumerate(fields):
+                    ttk.Label(frame, text=f"{label_text}：").grid(row=field_row, column=0, sticky="nw", padx=(0, 8), pady=4)
+                    wrap_length = 320 if key in {"backend_status", "frontend_status", "db_config_status", "db_connection_status"} else 260
+                    ttk.Label(frame, textvariable=self.status_vars[key], justify="left", wraplength=wrap_length).grid(
+                        row=field_row, column=1, sticky="w", pady=4
+                    )
+            else:
+                action_specs = [
+                    ("启动全部", self.handle_start_all),
+                    ("停止全部", self.handle_stop_all),
+                    ("重启全部", self.handle_restart_all),
+                    ("打开前端", self.open_frontend),
+                    ("启动后端", self.handle_start_backend),
+                    ("停止后端", self.handle_stop_backend),
+                    ("重启后端", self.handle_restart_backend),
+                    ("接管后端", self.handle_takeover_backend),
+                    ("启动前端", self.handle_start_frontend),
+                    ("停止前端", self.handle_stop_frontend),
+                    ("重启前端", self.handle_restart_frontend),
+                    ("检查数据库", self.check_database_connection),
+                    ("释放后端端口", self.handle_force_release_port),
+                    ("日志目录", self.open_logs_folder),
+                    ("隐藏到托盘", self.hide_to_tray),
+                ]
+                for action_col in range(3):
+                    frame.columnconfigure(action_col, weight=1)
+                for idx, (button_text, command) in enumerate(action_specs):
+                    ttk.Button(frame, text=button_text, command=command).grid(
+                        row=idx // 3,
+                        column=idx % 3,
+                        sticky="ew",
+                        padx=4,
+                        pady=4,
+                    )
+
+    def build_manager_tab(self, parent: ttk.Frame) -> None:
+        parent.columnconfigure(0, weight=1)
+
+        options = ttk.LabelFrame(parent, text="管理器选项", padding=16)
         options.pack(fill="x", padx=10, pady=10)
 
         option_items = [
@@ -2498,19 +2594,21 @@ class FinFlowManagerApp:
             var = tk.BooleanVar(value=self.manager_state.get(key, False))
             self.manager_option_vars[key] = var
             ttk.Checkbutton(options, text=label, variable=var, command=self.save_manager_state).grid(
-                row=idx // 3, column=idx % 3, padx=10, pady=4, sticky="w"
+                row=idx // 2, column=idx % 2, padx=10, pady=6, sticky="w"
             )
 
-        tips = ttk.LabelFrame(scrollable_frame, text="说明", padding=16)
-        tips.pack(fill="both", expand=True, padx=10, pady=10)
+        tips = ttk.LabelFrame(parent, text="运行说明", padding=16)
+        tips.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         ttk.Label(
             tips,
             text=(
                 "当前模式下不依赖 IIS、NSSM 或 Windows 服务。\n"
                 "管理器负责配置 backend/.env、backend/.encryption.key，并统一管理后端 API 与前端服务的启动、停止、监控和自动拉起。\n"
-                "如果前端服务未启动，而 frontend/dist 已构建完成，仍然可以通过后端入口访问内置静态页面。"
+                "如果前端服务未启动，而 frontend/dist 已构建完成，仍然可以通过后端入口访问内置静态页面。\n"
+                "更细的部署、数据库、备份与告警能力已拆分到“运维工具”页。"
             ),
             justify="left",
+            wraplength=880,
         ).pack(anchor="w")
 
     def create_side_nav(
