@@ -6,6 +6,7 @@ import json
 import os
 import platform
 import queue
+import re
 import secrets
 import signal
 import shutil
@@ -852,6 +853,30 @@ def decode_console_output(data: bytes) -> str:
     return data.decode("utf-8", errors="ignore")
 
 
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
+def sanitize_console_text(text: str) -> str:
+    if not text:
+        return ""
+    text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\x00", "")
+    text = ANSI_ESCAPE_RE.sub("", text)
+    return text
+
+
+def build_node_process_env(base_env: Dict[str, str] | None = None) -> Dict[str, str]:
+    env = dict(base_env or os.environ.copy())
+    env["FORCE_COLOR"] = "0"
+    env["NO_COLOR"] = "1"
+    env["npm_config_color"] = "false"
+    env["npm_config_loglevel"] = env.get("npm_config_loglevel", "verbose")
+    env["CI"] = "1"
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["NODE_DISABLE_COLORS"] = "1"
+    return env
+
+
 def _read_process_stream(stream: Any, stream_name: str, sink: queue.Queue[tuple[str, bytes | None]]) -> None:
     try:
         while True:
@@ -944,11 +969,13 @@ def run_command_with_live_output(
     timeout_seconds: int,
     log_callback: Callable[[str], None] | None = None,
     heartbeat_label: str = "",
+    env: Dict[str, str] | None = None,
 ) -> Tuple[int, str, str]:
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     process = subprocess.Popen(
         cmd,
         cwd=cwd,
+        env=env,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -1010,7 +1037,7 @@ def run_command_with_live_output(
             stderr_chunks.append(payload)
 
         if log_callback:
-            text = decode_console_output(payload).replace("\r\n", "\n").replace("\r", "\n")
+            text = sanitize_console_text(decode_console_output(payload))
             for line in text.split("\n"):
                 line = line.strip()
                 if not line:
@@ -1020,8 +1047,8 @@ def run_command_with_live_output(
 
     return (
         safe_popen_poll(process) if safe_popen_poll(process) is not None else process.wait(),
-        decode_console_output(b"".join(stdout_chunks)).strip(),
-        decode_console_output(b"".join(stderr_chunks)).strip(),
+        sanitize_console_text(decode_console_output(b"".join(stdout_chunks))).strip(),
+        sanitize_console_text(decode_console_output(b"".join(stderr_chunks))).strip(),
     )
 
 
@@ -4814,8 +4841,21 @@ FF_LOG_CHOICES = [
 
 
 def _ff_build_ui(self: Any) -> None:
-    notebook = ttk.Notebook(self.root)
+    # 配置 Notebook 样式，设置合适的 TAB 标签按钮尺寸并靠左排列
+    style = ttk.Style()
+    style.configure('TNotebook.Tab', padding=[12, 4], font=('Microsoft YaHei UI', 10))
+    style.configure('TNotebook', tabposition='nw')
+    style.configure('TNotebook.Tab', anchor='w')
+    
+    notebook = ttk.Notebook(self.root, style='TNotebook')
     notebook.pack(fill="both", expand=True, padx=10, pady=10)
+    
+    # 绑定 TAB 切换事件，优化切换体验
+    def on_tab_changed(event):
+        # 确保切换后立即刷新 UI
+        self.root.update_idletasks()
+    
+    notebook.bind('<<NotebookTabChanged>>', on_tab_changed)
 
     status_frame = ttk.Frame(notebook)
     manager_frame = ttk.Frame(notebook)
@@ -5840,6 +5880,7 @@ def sync_frontend_dependencies(
 
     npm_exe = "npm.cmd" if os.name == "nt" else "npm"
     node_exe = "node.exe" if os.name == "nt" else "node"
+    node_env = build_node_process_env()
 
     try:
         subprocess.run(
@@ -5860,6 +5901,7 @@ def sync_frontend_dependencies(
             timeout_seconds=timeout_seconds,
             log_callback=log_callback,
             heartbeat_label="\u524d\u7aef\u4f9d\u8d56\u540c\u6b65\u8fdb\u884c\u4e2d",
+            env=node_env,
         )
     except FileNotFoundError:
         return False, f"\u672a\u627e\u5230 npm: {npm_exe}"
@@ -5885,6 +5927,7 @@ def build_frontend(
 
     npm_exe = "npm.cmd" if os.name == "nt" else "npm"
     node_exe = "node.exe" if os.name == "nt" else "node"
+    node_env = build_node_process_env()
 
     try:
         subprocess.run(
@@ -5906,6 +5949,7 @@ def build_frontend(
                 timeout_seconds=300,
                 log_callback=log_callback,
                 heartbeat_label="\u524d\u7aef\u4f9d\u8d56\u8865\u9f50\u8fdb\u884c\u4e2d",
+                env=node_env,
             )
         except FileNotFoundError:
             return False, f"\u672a\u627e\u5230 npm\uff1a{npm_exe}"
@@ -5921,6 +5965,7 @@ def build_frontend(
             timeout_seconds=timeout_seconds,
             log_callback=log_callback,
             heartbeat_label="\u524d\u7aef\u6784\u5efa\u8fdb\u884c\u4e2d",
+            env=node_env,
         )
     except FileNotFoundError:
         return False, f"\u672a\u627e\u5230 npm\uff1a{npm_exe}"
@@ -5933,6 +5978,273 @@ def build_frontend(
         return False, "\u6784\u5efa\u5b8c\u6210\u4f46 dist \u76ee\u5f55\u4e0d\u5b58\u5728"
 
     return True, f"\u524d\u7aef\u6784\u5efa\u6210\u529f\uff1a{dist_dir}"
+
+
+def _backend_process_start_override(self: BackendProcessController, config: Dict[str, str]) -> Tuple[bool, str]:
+    if self.is_running():
+        return False, "后端已在运行"
+
+    python_exe = BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
+    if not python_exe.exists():
+        return False, "未找到后端虚拟环境，请先在 backend/.venv 安装 Python 依赖"
+    if not ENV_PATH.exists():
+        return False, "未找到 backend/.env，请先在配置页保存配置"
+    if not KEY_PATH.exists():
+        return False, "未找到 backend/.encryption.key，请先生成或放入正确密钥"
+
+    ensure_log_dir()
+    max_size = 20.0
+    try:
+        state = read_state_file(STATE_PATH)
+        max_size = float(state.get("log_max_size_mb", 20))
+    except Exception:
+        pass
+    for log_path in (STDOUT_LOG, STDERR_LOG):
+        rotate_log_file(log_path, max_size)
+
+    env = os.environ.copy()
+    env.update(config)
+    env["PYTHONUNBUFFERED"] = "1"
+    env["APP_RELOAD"] = "false"
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+
+    host = (config.get("APP_HOST") or "127.0.0.1").strip() or "127.0.0.1"
+    port = (config.get("APP_PORT") or "8100").strip() or "8100"
+    browser_host = resolve_browser_host(host)
+
+    if port.isdigit():
+        port_num = int(port)
+        if is_port_open(browser_host, port_num) or (host == "0.0.0.0" and is_port_open("127.0.0.1", port_num)):
+            if can_connect_http(browser_host, port_num):
+                return False, f"端口 {port} 已被现有服务占用，且页面可访问，请先停止旧实例后再启动"
+            return False, f"端口 {port} 已被其他进程占用，请先释放端口后再启动"
+
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    session_label = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    self.last_session_started_label = session_label
+    self.last_session_marker = f"===== FinFlowManager Session Start {session_label} ====="
+    for log_path in (STDOUT_LOG, STDERR_LOG):
+        with open(log_path, "a", encoding="utf-8", errors="ignore") as marker_handle:
+            marker_handle.write(f"\n{self.last_session_marker}\n")
+    self.stdout_handle = open(STDOUT_LOG, "a", encoding="utf-8", errors="ignore")
+    self.stderr_handle = open(STDERR_LOG, "a", encoding="utf-8", errors="ignore")
+
+    try:
+        self.process = subprocess.Popen(
+            [str(python_exe), "-m", "uvicorn", "main:app", "--host", host, "--port", port],
+            cwd=BACKEND_DIR,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=self.stdout_handle,
+            stderr=self.stderr_handle,
+            creationflags=creationflags,
+        )
+    except Exception as exc:
+        self._close_handles()
+        self.process = None
+        return False, f"启动失败：{exc}"
+
+    self.user_stopped = False
+    self.last_start_attempt = time.time()
+    self.last_started_at = self.last_start_attempt
+    self.last_exit_code = None
+    self.auto_restart_suppressed = False
+    return True, f"已发送启动命令，PID={safe_process_pid(self.process)}"
+
+
+def _frontend_process_start_override(self: FrontendProcessController, config: Dict[str, str]) -> Tuple[bool, str]:
+    if self.is_running():
+        return False, "前端已在运行"
+
+    package_json = FRONTEND_DIR / "package.json"
+    vite_cli = FRONTEND_DIR / "node_modules" / "vite" / "bin" / "vite.js"
+    node_exe = "node.exe" if os.name == "nt" else "node"
+    if not package_json.exists():
+        return False, "未找到 frontend/package.json，请确认前端工程目录完整"
+    if not vite_cli.exists():
+        return False, "未找到前端运行依赖，请先执行“同步前端依赖”"
+    try:
+        subprocess.run(
+            [node_exe, "--version"],
+            capture_output=True,
+            timeout=5,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except FileNotFoundError:
+        return False, "未找到 Node.js，请先安装 Node.js 后再启动前端"
+    except Exception as exc:
+        return False, f"检查 Node.js 失败: {exc}"
+
+    ok, detail = sync_frontend_runtime_env(config)
+    if not ok:
+        return False, detail
+
+    ensure_log_dir()
+    max_size = 20.0
+    try:
+        state = read_state_file(STATE_PATH)
+        max_size = float(state.get("log_max_size_mb", 20))
+    except Exception:
+        pass
+    for log_path in (FRONTEND_STDOUT_LOG, FRONTEND_STDERR_LOG):
+        rotate_log_file(log_path, max_size)
+
+    settings = resolve_frontend_service_settings(config)
+    frontend_host = settings["frontend_host"]
+    frontend_port = settings["frontend_port"]
+    if frontend_port.isdigit():
+        port_num = int(frontend_port)
+        if is_port_open(frontend_host, port_num):
+            if can_connect_http(frontend_host, port_num):
+                return False, f"前端端口 {frontend_port} 已被现有服务占用，请先停止旧实例后再启动"
+            return False, f"前端端口 {frontend_port} 已被其他进程占用，请先释放端口后再启动"
+
+    env = build_node_process_env()
+    env.update(read_env_file(FRONTEND_ENV_EXAMPLE_PATH))
+    env.update(read_env_file(FRONTEND_ENV_PATH))
+    env["BROWSER"] = "none"
+
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    session_label = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    self.last_session_started_label = session_label
+    self.last_session_marker = f"===== FinFlowManager Frontend Session Start {session_label} ====="
+    for log_path in (FRONTEND_STDOUT_LOG, FRONTEND_STDERR_LOG):
+        with open(log_path, "a", encoding="utf-8", errors="ignore") as marker_handle:
+            marker_handle.write(f"\n{self.last_session_marker}\n")
+    self.stdout_handle = open(FRONTEND_STDOUT_LOG, "a", encoding="utf-8", errors="ignore")
+    self.stderr_handle = open(FRONTEND_STDERR_LOG, "a", encoding="utf-8", errors="ignore")
+
+    try:
+        self.process = subprocess.Popen(
+            [node_exe, str(vite_cli), "--host", "0.0.0.0", "--port", frontend_port],
+            cwd=FRONTEND_DIR,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=self.stdout_handle,
+            stderr=self.stderr_handle,
+            creationflags=creationflags,
+        )
+    except Exception as exc:
+        self._close_handles()
+        self.process = None
+        return False, f"启动前端失败: {exc}"
+
+    self.user_stopped = False
+    self.last_start_attempt = time.time()
+    self.last_started_at = self.last_start_attempt
+    self.last_exit_code = None
+    self.auto_restart_suppressed = False
+    self._sync_runtime_state()
+    return True, f"前端已启动，PID={safe_process_pid(self.process)}，访问地址 {settings['frontend_url']}"
+
+
+def _managed_backend_start_override(self: ManagedBackendController, _config: Dict[str, str] | None = None) -> Tuple[bool, str]:
+    state = self._state()
+    if state.get("service_host_alive"):
+        host_pid = int(state.get("service_host_pid") or 0)
+        return False, f"服务宿主已在运行，PID={host_pid}"
+
+    ensure_runtime_dir()
+    clear_stop_request()
+    ensure_log_dir()
+    creationflags = 0
+    for flag_name in ("CREATE_NO_WINDOW", "DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP"):
+        creationflags |= getattr(subprocess, flag_name, 0)
+
+    launcher = resolve_service_host_launcher()
+    with open(SERVICE_HOST_LOG, "a", encoding="utf-8", errors="ignore") as service_log:
+        process = subprocess.Popen(
+            launcher,
+            cwd=ROOT_DIR,
+            stdin=subprocess.DEVNULL,
+            stdout=service_log,
+            stderr=service_log,
+            creationflags=creationflags,
+        )
+
+    deadline = time.time() + 8
+    while time.time() < deadline:
+        current = self._state()
+        if current.get("service_host_alive"):
+            return True, f"服务宿主已启动，PID={int(current.get('service_host_pid') or safe_process_pid(process))}"
+        time.sleep(0.25)
+    return True, f"已发送服务宿主启动命令，PID={safe_process_pid(process)}"
+
+
+def _ff_refresh_status_override(self: Any) -> None:
+    backend_status = self.backend.poll_status()
+    frontend_status = self.frontend.poll_status()
+    config = self.get_effective_config()
+    backend_port = (config.get("APP_PORT") or "8100").strip() or "8100"
+    frontend_settings = resolve_frontend_service_settings(config)
+    frontend_port = frontend_settings["frontend_port"]
+    backend_owner_text = "未检测"
+    frontend_owner_text = "未检测"
+
+    if backend_port.isdigit():
+        owner = get_port_owner_info(int(backend_port))
+        if owner:
+            manager_pid = safe_process_pid(self.backend.process) if self.backend.is_running() else None
+            backend_owner_text = build_port_owner_label(owner, manager_pid)
+    if frontend_port.isdigit():
+        owner = get_port_owner_info(int(frontend_port))
+        if owner:
+            manager_pid = safe_process_pid(self.frontend.process) if self.frontend.is_running() else None
+            frontend_owner_text = build_port_owner_label(owner, manager_pid)
+
+    self.status_vars["env_file"].set("已存在" if ENV_PATH.exists() else "不存在")
+    self.status_vars["key_file"].set("已存在" if KEY_PATH.exists() else "不存在")
+    self.status_vars["dist_dir"].set("已存在" if (DIST_DIR / "index.html").exists() else "不存在")
+    self.status_vars["backend_status"].set(backend_status)
+    self.status_vars["backend_port_owner"].set(backend_owner_text)
+    self.status_vars["backend_url"].set(self.get_backend_url())
+    self.status_vars["frontend_status"].set(frontend_status)
+    self.status_vars["frontend_port_owner"].set(frontend_owner_text)
+    self.status_vars["frontend_url"].set(frontend_settings["frontend_url"])
+
+
+def _handle_takeover_backend_override(self: Any) -> None:
+    config = self.get_effective_config()
+    port = (config.get("APP_PORT") or "8100").strip() or "8100"
+    if not port.isdigit():
+        messagebox.showerror("无法接管", "APP_PORT 不是有效数字")
+        return
+
+    owner = get_port_owner_info(int(port))
+    if not owner:
+        messagebox.showinfo("无需接管", f"端口 {port} 当前未被占用，可以直接使用“启动后端”")
+        return
+
+    owner_pid = int(owner.get("pid", "0") or "0")
+    if self.backend.is_running() and self.backend.process and owner_pid == safe_process_pid(self.backend.process):
+        messagebox.showinfo("已由管理器接管", "当前后端实例已经是由管理器启动的")
+        return
+
+    confirm = messagebox.askyesno(
+        "确认接管",
+        f"检测到端口 {port} 当前由 PID {owner_pid} 占用。\n\n如继续接管，管理器会记录该实例状态并按当前配置进行统一管理。\n是否继续？",
+    )
+    if not confirm:
+        return
+
+    self.backend.process = SimpleNamespace(pid=owner_pid)
+    write_runtime_state(
+        service_host_pid=0,
+        backend_pid=owner_pid,
+        user_stopped=False,
+        last_start_attempt=time.time(),
+        last_started_at=time.time(),
+    )
+    self.refresh_status()
+    messagebox.showinfo("接管完成", f"已将 PID {owner_pid} 记录为当前后端实例")
+
+
+BackendProcessController.start = _backend_process_start_override
+FrontendProcessController.start = _frontend_process_start_override
+ManagedBackendController.start = _managed_backend_start_override
+FinFlowManagerApp.handle_takeover_backend = _handle_takeover_backend_override
+_ff_refresh_status = _ff_refresh_status_override
 
 
 if __name__ == "__main__":
