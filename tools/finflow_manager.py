@@ -357,6 +357,8 @@ DEFAULT_STATE = {
     "enable_health_check": True,
     "enable_db_monitor": True,
     "git_auto_build_frontend": True,
+    "deploy_auto_start_services": False,
+    "deploy_restart_running_services": False,
     "frontend_deploy_source": "",
     "release_package_path": "",
     "backup_dir": str(BACKUP_DIR),
@@ -3562,6 +3564,8 @@ class FinFlowManagerApp:
         sqlcmd = self.ops_vars["sqlcmd_path"].get().strip() or "sqlcmd"
         release_package_path = self.ops_vars["release_package_path"].get().strip()
         config = self.get_effective_config()
+        auto_start_services = bool(self.manager_option_vars.get("deploy_auto_start_services").get()) if "deploy_auto_start_services" in self.manager_option_vars else False
+        restart_running_services = bool(self.manager_option_vars.get("deploy_restart_running_services").get()) if "deploy_restart_running_services" in self.manager_option_vars else False
 
         if mode == "git" and not repo_url:
             messagebox.showerror("\u9519\u8bef", "Git \u90e8\u7f72\u6a21\u5f0f\u9700\u8981\u5148\u914d\u7f6e\u4ed3\u5e93\u5730\u5740")
@@ -3580,10 +3584,8 @@ class FinFlowManagerApp:
             "3. \u4ee3\u7801\u90e8\u7f72\uff08Git \u62c9\u53d6 \u6216 ZIP \u5347\u7ea7\uff09\n"
             "4. \u4f9d\u8d56\u540c\u6b65\uff08\u540e\u7aef + \u524d\u7aef\uff09\n"
             "5. \u8fd0\u884c\u914d\u7f6e\u5199\u5165\u3001\u524d\u7aef\u6784\u5efa\u4e0e\u8fd0\u884c\u914d\u7f6e\u540c\u6b65\n"
-            "6. \u542f\u52a8\u540e\u7aef\u670d\u52a1\n"
-            "7. \u542f\u52a8\u524d\u7aef\u670d\u52a1\n"
-            "8. \u524d\u540e\u7aef\u5065\u5eb7\u68c0\u67e5\n"
-            "9. \u6570\u636e\u5e93\u540e\u7f6e\u914d\u7f6e\u68c0\u67e5\uff08\u5982\u672a\u914d\u7f6e\u5219\u63d0\u793a\u5f85\u5904\u7406\uff09\n\n"
+            "6. \u90e8\u7f72\u540e\u5065\u5eb7\u4e0e\u540e\u7f6e\u68c0\u67e5\n"
+            f"\n\u5f53\u524d\u9009\u9879\uff1a\u90e8\u7f72\u540e{' \u81ea\u52a8\u542f\u52a8\u524d\u540e\u7aef' if auto_start_services else ' \u4e0d\u81ea\u52a8\u542f\u52a8\u670d\u52a1'}\uff1b{' \u5c06\u81ea\u52a8\u91cd\u542f\u90e8\u7f72\u524d\u5df2\u8fd0\u884c\u7684\u670d\u52a1' if restart_running_services else ' \u4e0d\u81ea\u52a8\u91cd\u542f\u5df2\u8fd0\u884c\u670d\u52a1'}\n\n"
             "\u662f\u5426\u7ee7\u7eed\uff1f"
         )
         if not proceed:
@@ -3593,7 +3595,7 @@ class FinFlowManagerApp:
         self.deploy_running = True
         self.deploy_thread = threading.Thread(
             target=self._run_one_click_deploy_worker,
-            args=(mode, repo_url, branch, sqlcmd, config, release_package_path),
+            args=(mode, repo_url, branch, sqlcmd, config, release_package_path, auto_start_services, restart_running_services),
             daemon=True,
         )
         self.deploy_thread.start()
@@ -3607,6 +3609,8 @@ class FinFlowManagerApp:
         sqlcmd: str,
         config: Dict[str, str],
         release_package_path: str,
+        auto_start_services: bool,
+        restart_running_services: bool,
     ) -> None:
         original_showerror = messagebox.showerror
         original_showinfo = messagebox.showinfo
@@ -3649,7 +3653,7 @@ class FinFlowManagerApp:
         self.refresh_database_status = _safe_refresh_database_status
 
         try:
-            self._run_one_click_deploy(mode, repo_url, branch, sqlcmd, config, release_package_path)
+            self._run_one_click_deploy(mode, repo_url, branch, sqlcmd, config, release_package_path, auto_start_services, restart_running_services)
         except RuntimeError:
             pass
         except Exception as exc:
@@ -3679,9 +3683,11 @@ class FinFlowManagerApp:
         sqlcmd: str,
         config: Dict[str, str],
         release_package_path: str,
+        auto_start_services: bool,
+        restart_running_services: bool,
     ) -> None:
         steps_passed = 0
-        total_steps = 9
+        total_steps = 6
         backend_was_running = self.backend.is_running()
         frontend_was_running = self.frontend.is_running()
         services_stopped = False
@@ -4027,49 +4033,81 @@ class FinFlowManagerApp:
             abort_deploy(f"\u524d\u7aef\u8fd0\u884c\u914d\u7f6e\u540c\u6b65\u5931\u8d25: {key_msg}")
         steps_passed += 1
 
-        self.append_deploy_log(f"[6/{total_steps}] \u542f\u52a8\u540e\u7aef\u670d\u52a1...")
-        self.append_deploy_log("  [RUN] \u6b63\u5728\u5524\u8d77\u540e\u7aef\u5b88\u62a4\u5bbf\u4e3b...")
-        ok, msg = self.backend.start(config)
-        if ok or self.backend.is_running():
-            backend_started_after_deploy = True
-            self.append_deploy_log(f"  [OK] {msg}")
-        else:
-            abort_deploy(f"\u540e\u7aef\u542f\u52a8\u5931\u8d25: {msg}")
-        steps_passed += 1
-
-        self.append_deploy_log("  \u7b49\u5f85\u540e\u7aef\u670d\u52a1\u542f\u52a8...")
-        time.sleep(3)
-
-        self.append_deploy_log(f"[7/{total_steps}] \u542f\u52a8\u524d\u7aef\u670d\u52a1...")
-        ok, msg = self.frontend.start(config)
-        if ok or self.frontend.is_running():
-            frontend_started_after_deploy = True
-            self.append_deploy_log(f"  [OK] {msg}")
-        else:
-            abort_deploy(f"\u524d\u7aef\u542f\u52a8\u5931\u8d25: {msg}")
-        steps_passed += 1
-
-        self.append_deploy_log("  \u7b49\u5f85\u524d\u7aef\u670d\u52a1\u542f\u52a8...")
-        time.sleep(2)
-
-        self.append_deploy_log(f"[8/{total_steps}] \u5065\u5eb7\u68c0\u67e5...")
+        self.append_deploy_log(f"[6/{total_steps}] \u90e8\u7f72\u540e\u68c0\u67e5...")
         host = resolve_browser_host(config.get("APP_HOST", "127.0.0.1"))
         port = config.get("APP_PORT", "8100")
         backend_url = f"http://{host}:{port}"
         frontend_url = resolve_frontend_service_settings(config)["frontend_url"]
-        backend_health_ok, backend_health_detail = probe_backend_health(backend_url)
-        if backend_health_ok:
-            self.append_deploy_log(f"  [OK] \u540e\u7aef\u5065\u5eb7\u68c0\u67e5: {backend_health_detail}")
-        else:
-            self.append_deploy_log(f"  [WARN] \u540e\u7aef\u5065\u5eb7\u68c0\u67e5: {backend_health_detail}")
-        frontend_health_ok, frontend_health_detail = probe_http(frontend_url)
-        if frontend_health_ok:
-            self.append_deploy_log(f"  [OK] \u524d\u7aef\u5065\u5eb7\u68c0\u67e5: {frontend_health_detail}")
-        else:
-            self.append_deploy_log(f"  [WARN] \u524d\u7aef\u5065\u5eb7\u68c0\u67e5: {frontend_health_detail}")
-        steps_passed += 1
+        should_restart_existing = restart_running_services
+        should_auto_start_all = auto_start_services
 
-        self.append_deploy_log(f"[9/{total_steps}] \u6570\u636e\u5e93\u540e\u7f6e\u914d\u7f6e\u68c0\u67e5...")
+        if should_auto_start_all:
+            self.append_deploy_log("  [RUN] \u6309\u9009\u9879\u81ea\u52a8\u542f\u52a8\u524d\u540e\u7aef\u670d\u52a1...")
+            ok, msg = self.backend.start(config)
+            if ok or self.backend.is_running():
+                backend_started_after_deploy = True
+                self.append_deploy_log(f"  [OK] \u540e\u7aef: {msg}")
+            else:
+                abort_deploy(f"\u540e\u7aef\u542f\u52a8\u5931\u8d25: {msg}")
+
+            ok, msg = self.frontend.start(config)
+            if ok or self.frontend.is_running():
+                frontend_started_after_deploy = True
+                self.append_deploy_log(f"  [OK] \u524d\u7aef: {msg}")
+            else:
+                abort_deploy(f"\u524d\u7aef\u542f\u52a8\u5931\u8d25: {msg}")
+        elif should_restart_existing:
+            self.append_deploy_log("  [RUN] \u6309\u9009\u9879\u6062\u590d\u90e8\u7f72\u524d\u5df2\u5728\u8fd0\u884c\u7684\u670d\u52a1...")
+            if backend_was_running:
+                ok, msg = self.backend.start(config)
+                if ok or self.backend.is_running():
+                    backend_started_after_deploy = True
+                    self.append_deploy_log(f"  [OK] \u540e\u7aef: {msg}")
+                else:
+                    abort_deploy(f"\u540e\u7aef\u6062\u590d\u5931\u8d25: {msg}")
+            else:
+                self.append_deploy_log("  [SKIP] \u540e\u7aef\u5728\u90e8\u7f72\u524d\u672a\u8fd0\u884c")
+
+            if frontend_was_running:
+                ok, msg = self.frontend.start(config)
+                if ok or self.frontend.is_running():
+                    frontend_started_after_deploy = True
+                    self.append_deploy_log(f"  [OK] \u524d\u7aef: {msg}")
+                else:
+                    abort_deploy(f"\u524d\u7aef\u6062\u590d\u5931\u8d25: {msg}")
+            else:
+                self.append_deploy_log("  [SKIP] \u524d\u7aef\u5728\u90e8\u7f72\u524d\u672a\u8fd0\u884c")
+        else:
+            self.append_deploy_log("  [SKIP] \u6839\u636e\u5f53\u524d\u9009\u9879\uff0c\u90e8\u7f72\u9636\u6bb5\u4e0d\u81ea\u52a8\u542f\u52a8\u6216\u91cd\u542f\u670d\u52a1")
+
+        backend_health_ok = False
+        backend_health_detail = "\u672a\u6267\u884c"
+        frontend_health_ok = False
+        frontend_health_detail = "\u672a\u6267\u884c"
+        if self.backend.is_running():
+            self.append_deploy_log("  [RUN] \u68c0\u67e5\u540e\u7aef\u5065\u5eb7\u72b6\u6001...")
+            time.sleep(3)
+            backend_health_ok, backend_health_detail = probe_backend_health(backend_url)
+            if backend_health_ok:
+                self.append_deploy_log(f"  [OK] \u540e\u7aef\u5065\u5eb7\u68c0\u67e5: {backend_health_detail}")
+            else:
+                self.append_deploy_log(f"  [WARN] \u540e\u7aef\u5065\u5eb7\u68c0\u67e5: {backend_health_detail}")
+        else:
+            backend_health_detail = "\u672a\u542f\u52a8\u540e\u7aef\uff0c\u5df2\u8df3\u8fc7\u5065\u5eb7\u68c0\u67e5"
+            self.append_deploy_log(f"  [SKIP] {backend_health_detail}")
+
+        if self.frontend.is_running():
+            self.append_deploy_log("  [RUN] \u68c0\u67e5\u524d\u7aef\u5065\u5eb7\u72b6\u6001...")
+            time.sleep(2)
+            frontend_health_ok, frontend_health_detail = probe_http(frontend_url)
+            if frontend_health_ok:
+                self.append_deploy_log(f"  [OK] \u524d\u7aef\u5065\u5eb7\u68c0\u67e5: {frontend_health_detail}")
+            else:
+                self.append_deploy_log(f"  [WARN] \u524d\u7aef\u5065\u5eb7\u68c0\u67e5: {frontend_health_detail}")
+        else:
+            frontend_health_detail = "\u672a\u542f\u52a8\u524d\u7aef\uff0c\u5df2\u8df3\u8fc7\u5065\u5eb7\u68c0\u67e5"
+            self.append_deploy_log(f"  [SKIP] {frontend_health_detail}")
+
         db_state, db_detail = self.refresh_database_status(
             force_check=True,
             show_dialog=False,
@@ -4100,13 +4138,16 @@ class FinFlowManagerApp:
             f"\u540e\u7aef\u5730\u5740\uff1a{backend_url}",
             f"\u524d\u7aef\u5730\u5740\uff1a{frontend_url}",
         ]
-        if not backend_health_ok or not frontend_health_ok:
-            deploy_title = "\u4e00\u952e\u90e8\u7f72\u5b8c\u6210\uff08\u9700\u5173\u6ce8\uff09"
-            deploy_notice = "\u670d\u52a1\u5df2\u542f\u52a8\uff0c\u4f46\u5065\u5eb7\u68c0\u67e5\u5b58\u5728\u544a\u8b66"
-            if not backend_health_ok:
-                deploy_lines.append(f"\u540e\u7aef\u5065\u5eb7\u68c0\u67e5\uff1a\u5f02\u5e38\uff0c{backend_health_detail}")
-            if not frontend_health_ok:
-                deploy_lines.append(f"\u524d\u7aef\u5065\u5eb7\u68c0\u67e5\uff1a\u5f02\u5e38\uff0c{frontend_health_detail}")
+        if self.backend.is_running() or self.frontend.is_running():
+            if not backend_health_ok or not frontend_health_ok:
+                deploy_title = "\u4e00\u952e\u90e8\u7f72\u5b8c\u6210\uff08\u9700\u5173\u6ce8\uff09"
+                deploy_notice = "\u670d\u52a1\u5df2\u542f\u52a8\uff0c\u4f46\u5065\u5eb7\u68c0\u67e5\u5b58\u5728\u544a\u8b66"
+                if self.backend.is_running() and not backend_health_ok:
+                    deploy_lines.append(f"\u540e\u7aef\u5065\u5eb7\u68c0\u67e5\uff1a\u5f02\u5e38\uff0c{backend_health_detail}")
+                if self.frontend.is_running() and not frontend_health_ok:
+                    deploy_lines.append(f"\u524d\u7aef\u5065\u5eb7\u68c0\u67e5\uff1a\u5f02\u5e38\uff0c{frontend_health_detail}")
+        else:
+            deploy_lines.append("\u670d\u52a1\u542f\u52a8\u7b56\u7565\uff1a\u672c\u6b21\u90e8\u7f72\u4ec5\u5b8c\u6210\u6587\u4ef6\u3001\u4f9d\u8d56\u4e0e\u914d\u7f6e\u540c\u6b65\uff0c\u672a\u81ea\u52a8\u542f\u52a8\u670d\u52a1")
 
         if db_state == "ok":
             deploy_lines.append(f"\u6570\u636e\u5e93\u540e\u7f6e\u68c0\u67e5\uff1a\u6b63\u5e38\uff0c{db_detail}")
@@ -5057,6 +5098,24 @@ def _ff_build_ops_tab(self: Any, parent: ttk.Frame) -> None:
     self.deploy_mode = tk.StringVar(value="git")
     ttk.Radiobutton(deploy_type_frame, text="Git \u66f4\u65b0\u90e8\u7f72", variable=self.deploy_mode, value="git").pack(side="left", padx=20)
     ttk.Radiobutton(deploy_type_frame, text="ZIP \u53d1\u5e03\u5305\u90e8\u7f72", variable=self.deploy_mode, value="zip").pack(side="left", padx=20)
+    deploy_option_frame = ttk.Frame(one_click_frame)
+    deploy_option_frame.pack(fill="x", pady=(0, 10))
+    if "deploy_auto_start_services" not in self.manager_option_vars:
+        self.manager_option_vars["deploy_auto_start_services"] = tk.BooleanVar(value=self.manager_state.get("deploy_auto_start_services", False))
+    if "deploy_restart_running_services" not in self.manager_option_vars:
+        self.manager_option_vars["deploy_restart_running_services"] = tk.BooleanVar(value=self.manager_state.get("deploy_restart_running_services", False))
+    ttk.Checkbutton(
+        deploy_option_frame,
+        text="\u90e8\u7f72\u5b8c\u6210\u540e\u81ea\u52a8\u542f\u52a8\u524d\u540e\u7aef",
+        variable=self.manager_option_vars["deploy_auto_start_services"],
+        command=self.save_manager_state,
+    ).pack(anchor="w", pady=(0, 4))
+    ttk.Checkbutton(
+        deploy_option_frame,
+        text="\u90e8\u7f72\u5b8c\u6210\u540e\u81ea\u52a8\u91cd\u542f\u90e8\u7f72\u524d\u5df2\u5728\u8fd0\u884c\u7684\u670d\u52a1",
+        variable=self.manager_option_vars["deploy_restart_running_services"],
+        command=self.save_manager_state,
+    ).pack(anchor="w")
     deploy_log_frame = ttk.LabelFrame(one_click_frame, text="\u90e8\u7f72\u65e5\u5fd7", padding=10)
     deploy_log_frame.pack(fill="both", expand=True, pady=(0, 10))
     self.deploy_log_text = scrolledtext.ScrolledText(deploy_log_frame, wrap="word", font=("Consolas", 9), height=14)
@@ -6140,8 +6199,11 @@ def _frontend_process_start_override(self: FrontendProcessController, config: Di
 
 
 def _managed_backend_start_override(self: ManagedBackendController, _config: Dict[str, str] | None = None) -> Tuple[bool, str]:
-    state = self._state()
-    if state.get("service_host_alive"):
+    try:
+        state = self._state()
+    except Exception:
+        state = {"service_host_alive": False, "service_host_pid": 0}
+    if bool(state.get("service_host_alive")):
         host_pid = int(state.get("service_host_pid") or 0)
         return False, f"服务宿主已在运行，PID={host_pid}"
 
@@ -6163,13 +6225,34 @@ def _managed_backend_start_override(self: ManagedBackendController, _config: Dic
             creationflags=creationflags,
         )
 
-    deadline = time.time() + 8
+    process_pid = safe_process_pid(process)
+    deadline = time.time() + 3
     while time.time() < deadline:
-        current = self._state()
-        if current.get("service_host_alive"):
-            return True, f"服务宿主已启动，PID={int(current.get('service_host_pid') or safe_process_pid(process))}"
+        try:
+            current = self._state()
+            if bool(current.get("service_host_alive")):
+                host_pid = int(current.get("service_host_pid") or process_pid)
+                return True, f"服务宿主已启动，PID={host_pid}"
+        except Exception:
+            break
         time.sleep(0.25)
-    return True, f"已发送服务宿主启动命令，PID={safe_process_pid(process)}"
+    return True, f"已发送服务宿主启动命令，PID={process_pid}"
+
+
+def _managed_backend_state_override(self: ManagedBackendController) -> Dict[str, Any]:
+    try:
+        state = read_managed_runtime_state()
+    except Exception:
+        state = dict(DEFAULT_RUNTIME_STATE)
+        state["service_host_alive"] = False
+        state["backend_alive"] = False
+        state["frontend_alive"] = False
+    try:
+        backend_pid = int(state.get("backend_pid") or 0)
+    except Exception:
+        backend_pid = 0
+    self.process = SimpleNamespace(pid=backend_pid) if backend_pid > 0 else None
+    return state
 
 
 def _ff_refresh_status_override(self: Any) -> None:
@@ -6242,6 +6325,7 @@ def _handle_takeover_backend_override(self: Any) -> None:
 
 BackendProcessController.start = _backend_process_start_override
 FrontendProcessController.start = _frontend_process_start_override
+ManagedBackendController._state = _managed_backend_state_override
 ManagedBackendController.start = _managed_backend_start_override
 FinFlowManagerApp.handle_takeover_backend = _handle_takeover_backend_override
 _ff_refresh_status = _ff_refresh_status_override
