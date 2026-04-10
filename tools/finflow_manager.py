@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import platform
+import queue
 import secrets
 import signal
 import shutil
@@ -14,6 +15,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 import webbrowser
 import zipfile
 from datetime import datetime
@@ -239,6 +241,9 @@ ENV_EXAMPLE_PATH = BACKEND_DIR / ".env.example"
 FRONTEND_ENV_PATH = FRONTEND_DIR / ".env"
 FRONTEND_ENV_EXAMPLE_PATH = FRONTEND_DIR / ".env.example"
 KEY_PATH = BACKEND_DIR / ".encryption.key"
+TOOLS_DIR = Path(__file__).resolve().parent
+MANAGER_ICON_PNG = TOOLS_DIR / "finflow_manager_icon.png"
+MANAGER_ICON_ICO = TOOLS_DIR / "finflow_manager_icon.ico"
 STATE_PATH = ROOT_DIR / "deploy" / "windows" / "manager_state.json"
 STDOUT_LOG = LOG_DIR / "backend.stdout.log"
 STDERR_LOG = LOG_DIR / "backend.stderr.log"
@@ -350,6 +355,7 @@ DEFAULT_STATE = {
     "launch_manager_on_startup": False,
     "enable_health_check": True,
     "enable_db_monitor": True,
+    "git_auto_build_frontend": True,
     "frontend_deploy_source": "",
     "release_package_path": "",
     "backup_dir": str(BACKUP_DIR),
@@ -557,8 +563,23 @@ def load_effective_config_from_disk() -> Dict[str, str]:
     return values
 
 
+def load_manager_icon_image() -> Image.Image | None:
+    ensure_gui_dependencies()
+    for path in (MANAGER_ICON_PNG, MANAGER_ICON_ICO):
+        if not path.exists():
+            continue
+        try:
+            return Image.open(path).convert("RGBA")
+        except Exception:
+            continue
+    return None
+
+
 def create_tray_image() -> Image.Image:
     ensure_gui_dependencies()
+    icon_image = load_manager_icon_image()
+    if icon_image is not None:
+        return icon_image.resize((64, 64), Image.LANCZOS)
     image = Image.new("RGBA", (64, 64), (27, 84, 157, 255))
     draw = ImageDraw.Draw(image)
     draw.rounded_rectangle((8, 8, 56, 56), radius=12, fill=(39, 125, 161, 255))
@@ -570,23 +591,89 @@ def create_tray_image() -> Image.Image:
 
 def create_window_icon() -> Image.Image:
     ensure_gui_dependencies()
-    image = Image.new("RGBA", (256, 256), (27, 84, 157, 255))
+    icon_image = load_manager_icon_image()
+    if icon_image is not None:
+        return icon_image.resize((256, 256), Image.LANCZOS)
+    image = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle((32, 32, 224, 224), radius=48, fill=(39, 125, 161, 255))
-    draw.rectangle((80, 64, 176, 96), fill=(255, 255, 255, 255))
-    draw.rectangle((80, 112, 176, 144), fill=(255, 255, 255, 255))
-    draw.rectangle((80, 160, 144, 192), fill=(255, 255, 255, 255))
+    
+    # 背景渐变圆形（深蓝到浅蓝）
+    for y in range(256):
+        ratio = y / 256.0
+        r = int(20 + (52 - 20) * ratio)
+        g = int(100 + (170 - 100) * ratio)
+        b = int(180 + (220 - 180) * ratio)
+        draw.line([(0, y), (256, y)], fill=(r, g, b, 255))
+    
+    # 外圆边框
+    draw.ellipse([(16, 16), (240, 240)], outline=(255, 255, 255, 200), width=3)
+    
+    # 金融图表元素 - 上升的折线图
+    # 主折线
+    points = [(60, 180), (90, 160), (120, 170), (150, 130), (180, 140), (210, 90), (230, 70)]
+    draw.line(points, fill=(255, 255, 255), width=5)
+    
+    # 折线节点
+    for px, py in points:
+        draw.ellipse([(px-6, py-6), (px+6, py+6)], fill=(255, 220, 100, 255), outline=(255, 255, 255), width=2)
+    
+    # 数据柱状图
+    draw.rectangle([(50, 150), (70, 200)], fill=(100, 200, 255, 180), outline=(255, 255, 255, 150))
+    draw.rectangle([(85, 130), (105, 200)], fill=(100, 200, 255, 180), outline=(255, 255, 255, 150))
+    draw.rectangle([(120, 140), (140, 200)], fill=(100, 200, 255, 180), outline=(255, 255, 255, 150))
+    draw.rectangle([(155, 110), (175, 200)], fill=(100, 200, 255, 180), outline=(255, 255, 255, 150))
+    draw.rectangle([(190, 90), (210, 200)], fill=(100, 200, 255, 180), outline=(255, 255, 255, 150))
+    
+    # 货币符号装饰
+    draw.text((115, 175), "¥", fill=(255, 255, 255, 220), font_size=24)
+    
+    # 高光效果
+    draw.ellipse([(40, 40), (100, 100)], fill=(255, 255, 255, 60))
+    
     return image
 
 
 def create_high_res_icon() -> Image.Image:
     ensure_gui_dependencies()
-    image = Image.new("RGBA", (512, 512), (27, 84, 157, 255))
+    icon_image = load_manager_icon_image()
+    if icon_image is not None:
+        return icon_image.resize((512, 512), Image.LANCZOS)
+    image = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle((64, 64, 448, 448), radius=96, fill=(39, 125, 161, 255))
-    draw.rectangle((160, 128, 352, 192), fill=(255, 255, 255, 255))
-    draw.rectangle((160, 224, 352, 288), fill=(255, 255, 255, 255))
-    draw.rectangle((160, 320, 320, 384), fill=(255, 255, 255, 255))
+    
+    # 背景渐变圆形（深蓝到浅蓝）
+    for y in range(512):
+        ratio = y / 512.0
+        r = int(20 + (52 - 20) * ratio)
+        g = int(100 + (170 - 100) * ratio)
+        b = int(180 + (220 - 180) * ratio)
+        draw.line([(0, y), (512, y)], fill=(r, g, b, 255))
+    
+    # 外圆边框
+    draw.ellipse([(32, 32), (480, 480)], outline=(255, 255, 255, 200), width=6)
+    
+    # 金融图表元素 - 上升的折线图
+    # 主折线
+    points = [(120, 360), (180, 320), (240, 340), (300, 260), (360, 280), (420, 180), (460, 140)]
+    draw.line(points, fill=(255, 255, 255), width=10)
+    
+    # 折线节点
+    for px, py in points:
+        draw.ellipse([(px-12, py-12), (px+12, py+12)], fill=(255, 220, 100, 255), outline=(255, 255, 255), width=4)
+    
+    # 数据柱状图
+    draw.rectangle([(100, 300), (140, 400)], fill=(100, 200, 255, 180), outline=(255, 255, 255, 150))
+    draw.rectangle([(170, 260), (210, 400)], fill=(100, 200, 255, 180), outline=(255, 255, 255, 150))
+    draw.rectangle([(240, 280), (280, 400)], fill=(100, 200, 255, 180), outline=(255, 255, 255, 150))
+    draw.rectangle([(310, 220), (350, 400)], fill=(100, 200, 255, 180), outline=(255, 255, 255, 150))
+    draw.rectangle([(380, 180), (420, 400)], fill=(100, 200, 255, 180), outline=(255, 255, 255, 150))
+    
+    # 货币符号装饰
+    draw.text((230, 350), "¥", fill=(255, 255, 255, 220), font_size=48)
+    
+    # 高光效果
+    draw.ellipse([(80, 80), (200, 200)], fill=(255, 255, 255, 60))
+    
     return image
 
 
@@ -1106,47 +1193,63 @@ def build_frontend(timeout_seconds: int = 600) -> Tuple[bool, str]:
     node_modules = frontend_dir / "node_modules"
 
     if not package_json.exists():
-        return False, "frontend/package.json 不存在，跳过前端构建"
+        return False, "frontend/package.json \u4e0d\u5b58\u5728\uff0c\u8df3\u8fc7\u524d\u7aef\u6784\u5efa"
 
     if dist_dir.exists() and node_modules.exists():
-        return True, "前端构建产物已存在，跳过构建"
+        return True, "\u524d\u7aef\u6784\u5efa\u4ea7\u7269\u5df2\u5b58\u5728\uff0c\u8df3\u8fc7\u6784\u5efa"
 
-    node_exe = "node"
-    npm_exe = "npm"
+    node_exe = "node.exe" if os.name == "nt" else "node"
+    npm_exe = "npm.cmd" if os.name == "nt" else "npm"
 
     try:
-        subprocess.run([node_exe, "--version"], capture_output=True, timeout=5, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        subprocess.run(
+            [node_exe, "--version"],
+            capture_output=True,
+            timeout=5,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
     except FileNotFoundError:
-        return False, "Node.js 未安装，跳过前端构建"
+        return False, "Node.js \u672a\u5b89\u88c5\uff0c\u8df3\u8fc7\u524d\u7aef\u6784\u5efa"
+    except Exception as exc:
+        return False, f"Node.js \u68c0\u67e5\u6267\u884c\u5f02\u5e38\uff1a{exc}"
 
     if not node_modules.exists():
+        try:
+            result = subprocess.run(
+                [npm_exe, "install"],
+                cwd=frontend_dir,
+                capture_output=True,
+                text=True,
+                timeout=300,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except FileNotFoundError:
+            return False, f"\u672a\u627e\u5230 npm\uff1a{npm_exe}"
+        except Exception as exc:
+            return False, f"npm install \u6267\u884c\u5f02\u5e38\uff1a{exc}"
+        if result.returncode != 0:
+            return False, f"npm install \u5931\u8d25\uff1a{result.stderr or result.stdout}"
+
+    try:
         result = subprocess.run(
-            [npm_exe, "install"],
+            [npm_exe, "run", "build"],
             cwd=frontend_dir,
             capture_output=True,
             text=True,
-            timeout=300,
+            timeout=timeout_seconds,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
-        if result.returncode != 0:
-            return False, f"npm install 失败: {result.stderr or result.stdout}"
-
-    result = subprocess.run(
-        [npm_exe, "run", "build"],
-        cwd=frontend_dir,
-        capture_output=True,
-        text=True,
-        timeout=timeout_seconds,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
+    except FileNotFoundError:
+        return False, f"\u672a\u627e\u5230 npm\uff1a{npm_exe}"
+    except Exception as exc:
+        return False, f"npm run build \u6267\u884c\u5f02\u5e38\uff1a{exc}"
     if result.returncode != 0:
-        return False, f"npm run build 失败: {result.stderr or result.stdout}"
+        return False, f"npm run build \u5931\u8d25\uff1a{result.stderr or result.stdout}"
 
     if not dist_dir.exists():
-        return False, "构建完成但 dist 目录不存在"
+        return False, "\u6784\u5efa\u5b8c\u6210\u4f46 dist \u76ee\u5f55\u4e0d\u5b58\u5728"
 
-    return True, f"前端构建成功: {dist_dir}"
-
+    return True, f"\u524d\u7aef\u6784\u5efa\u6210\u529f\uff1a{dist_dir}"
 
 def sync_keys_to_frontend(config: Dict[str, str]) -> Tuple[bool, str]:
     return sync_frontend_runtime_env(config)
@@ -1735,13 +1838,7 @@ class BackendProcessController:
         return self.start(config)
 
     def poll_status(self) -> str:
-        if self.is_running():
-            assert self.process is not None
-            return f"运行中 (PID {self.process.pid})"
-        exit_code = self.capture_exit()
-        if exit_code is not None:
-            return f"已退出 (code {exit_code})"
-        return "未运行"
+        return _clean_poll_status(self)
 
     def register_failed_start_if_needed(self, fast_fail_window_seconds: int = 15, max_failures: int = 3) -> bool:
         if self.last_exit_at <= 0 or self.last_started_at <= 0:
@@ -1954,12 +2051,7 @@ class FrontendProcessController:
         return self.start(config)
 
     def poll_status(self) -> str:
-        if self.is_running():
-            return f"运行中 (PID {int(getattr(self.process, 'pid', 0) or 0)})"
-        exit_code = self.capture_exit()
-        if exit_code is not None:
-            return f"已退出 (code {exit_code})"
-        return "未运行"
+        return _clean_poll_status(self)
 
     def register_failed_start_if_needed(self, fast_fail_window_seconds: int = 15, max_failures: int = 3) -> bool:
         if self.last_exit_at <= 0 or self.last_started_at <= 0:
@@ -2155,18 +2247,7 @@ class ManagedBackendController:
         return self.start(config)
 
     def poll_status(self) -> str:
-        state = self._state()
-        host_pid = int(state.get("service_host_pid") or 0)
-        backend_pid = int(state.get("backend_pid") or 0)
-        if state.get("service_host_alive") and state.get("backend_alive"):
-            return f"运行中 (宿主 PID {host_pid}, 后端 PID {backend_pid})"
-        if state.get("service_host_alive"):
-            return f"宿主运行中 (PID {host_pid})，后端启动中或异常退出"
-        if state.get("backend_alive"):
-            return f"后端运行中 (PID {backend_pid})，但未由服务宿主管理"
-        if state.get("last_exit_code") is not None:
-            return f"未运行 (最近退出码 {state['last_exit_code']})"
-        return "未运行"
+        return _managed_backend_poll_status(self)
 
 
 class BackendServiceHost:
@@ -2334,11 +2415,14 @@ class FinFlowManagerApp:
         self.root.minsize(900, 680)
         
         try:
-            high_res_icon = create_high_res_icon()
-            window_icon_path = ROOT_DIR / "deploy" / "windows" / "finflow_icon_temp.ico"
-            high_res_icon.save(window_icon_path, format="ICO", sizes=[(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (16, 16)])
-            self.root.iconbitmap(window_icon_path)
-            window_icon_path.unlink(missing_ok=True)
+            if MANAGER_ICON_ICO.exists():
+                self.root.iconbitmap(MANAGER_ICON_ICO)
+            else:
+                high_res_icon = create_high_res_icon()
+                window_icon_path = ROOT_DIR / "deploy" / "windows" / "finflow_icon_temp.ico"
+                high_res_icon.save(window_icon_path, format="ICO", sizes=[(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (16, 16)])
+                self.root.iconbitmap(window_icon_path)
+                window_icon_path.unlink(missing_ok=True)
         except Exception:
             pass
 
@@ -2348,12 +2432,13 @@ class FinFlowManagerApp:
         self.config_values, self.extra_env_values = self.load_config_values()
         self.form_vars: Dict[str, tk.StringVar] = {}
         self.status_vars: Dict[str, tk.StringVar] = {}
+        self.status_badges: Dict[str, tk.Label] = {}
         self.manager_option_vars: Dict[str, tk.BooleanVar] = {}
         self.ops_vars: Dict[str, tk.StringVar] = {}
         self.init_ops_vars()
-        self.log_choice = tk.StringVar(value="后端标准输出")
+        self.log_choice = tk.StringVar(value=FF_LOG_CHOICES[0])
         self.log_auto_refresh = tk.BooleanVar(value=True)
-        self.log_status_var = tk.StringVar(value="当前显示：历史日志")
+        self.log_status_var = tk.StringVar(value="\u5f53\u524d\u663e\u793a\uff1a\u5386\u53f2\u65e5\u5fd7")
         self.tray_icon: Icon | None = None
         self.tray_thread: threading.Thread | None = None
         self.exiting = False
@@ -2363,10 +2448,15 @@ class FinFlowManagerApp:
         self.last_frontend_health_state = "unknown"
         self.last_health_state = "unknown"
         self.last_database_status_state = "unknown"
+        self.deploy_running = False
+        self.deploy_thread: threading.Thread | None = None
+        self.deploy_log_queue: queue.Queue[str] = queue.Queue()
+        self.ui_callback_queue: queue.Queue[tuple[Any, Any, Any]] = queue.Queue()
         self.status_job: str | None = None
         self.log_job: str | None = None
         self.health_job: str | None = None
         self.db_job: str | None = None
+        self.ui_queue_job: str | None = None
         self.config_nav_items: Dict[str, Dict[str, Any]] = {}
         self.ops_nav_items: Dict[str, Dict[str, Any]] = {}
         self.env_nav_items: Dict[str, Dict[str, Any]] = {}
@@ -2382,6 +2472,7 @@ class FinFlowManagerApp:
         self.schedule_log_refresh(1200)
         self.schedule_health_refresh(1800)
         self.schedule_db_refresh(2200)
+        self.schedule_ui_queue_refresh(150)
         self.root.after(1500, self.maybe_start_services_on_launch)
 
     def init_ops_vars(self) -> None:
@@ -2403,213 +2494,35 @@ class FinFlowManagerApp:
 
         port = data.get("APP_PORT", "")
         if not port.isdigit():
-            raise ValueError("APP_PORT 必须是数字")
+            raise ValueError("APP_PORT \u5fc5\u987b\u662f\u6570\u5b57")
         token_minutes = data.get("ACCESS_TOKEN_EXPIRE_MINUTES", "")
         if token_minutes and not token_minutes.isdigit():
-            raise ValueError("ACCESS_TOKEN_EXPIRE_MINUTES 必须是数字")
+            raise ValueError("ACCESS_TOKEN_EXPIRE_MINUTES \u5fc5\u987b\u662f\u6570\u5b57")
 
         write_env_file(ENV_PATH, data, self.extra_env_values)
         self.config_values = data
 
     def build_ui(self) -> None:
-        notebook = ttk.Notebook(self.root)
-        notebook.pack(fill="both", expand=True, padx=10, pady=10)
-
-        status_frame = ttk.Frame(notebook)
-        manager_frame = ttk.Frame(notebook)
-        config_frame = ttk.Frame(notebook)
-        ops_frame = ttk.Frame(notebook)
-        env_frame = ttk.Frame(notebook)
-        logs_frame = ttk.Frame(notebook)
-
-        notebook.add(status_frame, text="服务状态")
-        notebook.add(manager_frame, text="管理器设置")
-        notebook.add(config_frame, text="配置管理")
-        notebook.add(ops_frame, text="运维工具")
-        notebook.add(env_frame, text="环境检查")
-        notebook.add(logs_frame, text="日志查看")
-
-        self.build_status_tab(status_frame)
-        self.build_manager_tab(manager_frame)
-        self.build_config_tab(config_frame)
-        self.build_ops_tab(ops_frame)
-        self.build_env_tab(env_frame)
-        self.build_logs_tab(logs_frame)
+        _ff_build_ui(self)
 
     def build_status_tab(self, parent: ttk.Frame) -> None:
-        db_config_state, db_config_detail = describe_database_configuration_from_disk()
-        parent.columnconfigure(0, weight=1)
-        parent.rowconfigure(1, weight=1)
+        _ff_build_status_tab(self, parent)
 
-        status_items = {
-            "project_root": str(ROOT_DIR),
-            "env_file": "已存在" if ENV_PATH.exists() else "缺失",
-            "key_file": "已存在" if KEY_PATH.exists() else "缺失",
-            "dist_dir": "已存在" if (DIST_DIR / "index.html").exists() else "缺失",
-            "backend_status": "未运行",
-            "backend_port_owner": "未占用",
-            "backend_health_status": "未检查",
-            "backend_url": self.get_backend_url(),
-            "frontend_status": self.frontend.poll_status(),
-            "frontend_port_owner": "未占用",
-            "frontend_health_status": "未检查",
-            "frontend_url": self.get_frontend_url(),
-            "db_config_status": format_database_config_status(db_config_state, db_config_detail),
-            "db_connection_status": "未检查",
-            "db_monitor_status": "监控中" if self.manager_state.get("enable_db_monitor", True) else "已关闭",
-            "db_last_check_at": "未检查",
-            "startup_status": self.get_startup_status_text(),
-            "app_url": self.get_app_url(),
-        }
-        for key, value in status_items.items():
-            self.status_vars[key] = tk.StringVar(value=value)
+    def get_status_badge_palette(self, key: str, value: str) -> Tuple[str, str]:
+        return _ff_get_status_badge_palette(self, key, value)
 
-        overview = ttk.LabelFrame(parent, text="总览", padding=12)
-        overview.grid(row=0, column=0, sticky="nsew", padx=10, pady=(10, 6))
-        for col in (1, 3):
-            overview.columnconfigure(col, weight=1)
-
-        overview_fields = [
-            ("项目目录", "project_root", 0, 0, True),
-            ("默认访问地址", "app_url", 0, 2, True),
-            ("配置文件", "env_file", 1, 0, False),
-            ("加密密钥", "key_file", 1, 2, False),
-            ("前端构建", "dist_dir", 2, 0, False),
-            ("开机自启", "startup_status", 2, 2, False),
-        ]
-        for label_text, key, row, col, readonly in overview_fields:
-            ttk.Label(overview, text=f"{label_text}：").grid(row=row, column=col, sticky="w", padx=(0, 6), pady=4)
-            if readonly:
-                entry = ttk.Entry(overview, textvariable=self.status_vars[key], state="readonly")
-                entry.grid(row=row, column=col + 1, sticky="ew", padx=(0, 16), pady=4)
-            else:
-                ttk.Label(overview, textvariable=self.status_vars[key]).grid(row=row, column=col + 1, sticky="w", padx=(0, 16), pady=4)
-
-        dashboard = ttk.Frame(parent)
-        dashboard.grid(row=1, column=0, sticky="nsew", padx=10, pady=6)
-        dashboard.columnconfigure(0, weight=1)
-        dashboard.columnconfigure(1, weight=1)
-        dashboard.rowconfigure(0, weight=1)
-        dashboard.rowconfigure(1, weight=1)
-
-        sections = [
-            (
-                "后端服务",
-                [
-                    ("状态", "backend_status"),
-                    ("端口占用", "backend_port_owner"),
-                    ("健康检查", "backend_health_status"),
-                    ("访问地址", "backend_url"),
-                ],
-                0,
-                0,
-            ),
-            (
-                "前端服务",
-                [
-                    ("状态", "frontend_status"),
-                    ("端口占用", "frontend_port_owner"),
-                    ("健康检查", "frontend_health_status"),
-                    ("访问地址", "frontend_url"),
-                ],
-                0,
-                1,
-            ),
-            (
-                "数据库状态",
-                [
-                    ("配置", "db_config_status"),
-                    ("连接", "db_connection_status"),
-                    ("监控", "db_monitor_status"),
-                    ("最后检查", "db_last_check_at"),
-                ],
-                1,
-                0,
-            ),
-            (
-                "快捷操作",
-                [],
-                1,
-                1,
-            ),
-        ]
-
-        for title, fields, row, column in sections:
-            frame = ttk.LabelFrame(dashboard, text=title, padding=12)
-            frame.grid(row=row, column=column, sticky="nsew", padx=6, pady=6)
-            frame.columnconfigure(1, weight=1)
-            if fields:
-                for field_row, (label_text, key) in enumerate(fields):
-                    ttk.Label(frame, text=f"{label_text}：").grid(row=field_row, column=0, sticky="nw", padx=(0, 8), pady=4)
-                    wrap_length = 320 if key in {"backend_status", "frontend_status", "db_config_status", "db_connection_status"} else 260
-                    ttk.Label(frame, textvariable=self.status_vars[key], justify="left", wraplength=wrap_length).grid(
-                        row=field_row, column=1, sticky="w", pady=4
-                    )
-            else:
-                action_specs = [
-                    ("启动全部", self.handle_start_all),
-                    ("停止全部", self.handle_stop_all),
-                    ("重启全部", self.handle_restart_all),
-                    ("打开前端", self.open_frontend),
-                    ("启动后端", self.handle_start_backend),
-                    ("停止后端", self.handle_stop_backend),
-                    ("重启后端", self.handle_restart_backend),
-                    ("接管后端", self.handle_takeover_backend),
-                    ("启动前端", self.handle_start_frontend),
-                    ("停止前端", self.handle_stop_frontend),
-                    ("重启前端", self.handle_restart_frontend),
-                    ("检查数据库", self.check_database_connection),
-                    ("释放后端端口", self.handle_force_release_port),
-                    ("日志目录", self.open_logs_folder),
-                    ("隐藏到托盘", self.hide_to_tray),
-                ]
-                for action_col in range(3):
-                    frame.columnconfigure(action_col, weight=1)
-                for idx, (button_text, command) in enumerate(action_specs):
-                    ttk.Button(frame, text=button_text, command=command).grid(
-                        row=idx // 3,
-                        column=idx % 3,
-                        sticky="ew",
-                        padx=4,
-                        pady=4,
-                    )
+    def refresh_status_badges(self) -> None:
+        for key, widget in self.status_badges.items():
+            if key not in self.status_vars:
+                continue
+            bg, fg = self.get_status_badge_palette(key, self.status_vars[key].get())
+            try:
+                widget.configure(bg=bg, fg=fg)
+            except Exception:
+                pass
 
     def build_manager_tab(self, parent: ttk.Frame) -> None:
-        parent.columnconfigure(0, weight=1)
-
-        options = ttk.LabelFrame(parent, text="管理器选项", padding=16)
-        options.pack(fill="x", padx=10, pady=10)
-
-        option_items = [
-            ("auto_restart_backend", "后端异常退出后自动拉起"),
-            ("auto_restart_frontend", "前端异常退出后自动拉起"),
-            ("start_backend_on_launch", "打开管理器后自动启动后端"),
-            ("start_frontend_on_launch", "打开管理器后自动启动前端"),
-            ("hide_to_tray_on_close", "关闭窗口时最小化到托盘"),
-            ("launch_manager_on_startup", "Windows 登录后自动启动管理器"),
-            ("enable_health_check", "启用健康检查与托盘状态提示"),
-            ("enable_db_monitor", "启用数据库连接监控与告警"),
-        ]
-        for idx, (key, label) in enumerate(option_items):
-            var = tk.BooleanVar(value=self.manager_state.get(key, False))
-            self.manager_option_vars[key] = var
-            ttk.Checkbutton(options, text=label, variable=var, command=self.save_manager_state).grid(
-                row=idx // 2, column=idx % 2, padx=10, pady=6, sticky="w"
-            )
-
-        tips = ttk.LabelFrame(parent, text="运行说明", padding=16)
-        tips.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-        ttk.Label(
-            tips,
-            text=(
-                "当前模式下不依赖 IIS、NSSM 或 Windows 服务。\n"
-                "管理器负责配置 backend/.env、backend/.encryption.key，并统一管理后端 API 与前端服务的启动、停止、监控和自动拉起。\n"
-                "如果前端服务未启动，而 frontend/dist 已构建完成，仍然可以通过后端入口访问内置静态页面。\n"
-                "更细的部署、数据库、备份与告警能力已拆分到“运维工具”页。"
-            ),
-            justify="left",
-            wraplength=880,
-        ).pack(anchor="w")
+        _ff_build_manager_tab(self, parent)
 
     def create_side_nav(
         self,
@@ -2672,500 +2585,28 @@ class FinFlowManagerApp:
                     widget.configure(bg=card_bg, fg=desc_fg)
 
     def build_config_tab(self, parent: ttk.Frame) -> None:
-        toolbar = ttk.Frame(parent)
-        toolbar.pack(fill="x", padx=10, pady=10)
-
-        ttk.Button(toolbar, text="保存配置", command=self.handle_save_config).pack(side="left", padx=4)
-        ttk.Button(toolbar, text="重新加载", command=self.reload_form_from_disk).pack(side="left", padx=4)
-        ttk.Button(toolbar, text="生成 JWT 密钥", command=self.generate_secret_key).pack(side="left", padx=4)
-        ttk.Button(toolbar, text="生成加密密钥", command=self.generate_encryption_key).pack(side="left", padx=4)
-        ttk.Button(toolbar, text="打开 backend 目录", command=self.open_backend_folder).pack(side="left", padx=4)
-
-        container = ttk.Frame(parent)
-        container.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-
-        nav_frame = tk.Frame(
-            container,
-            bg="#f0f0f0",
-            bd=1,
-            relief="flat",
-        )
-        nav_frame.pack(side="left", fill="y", padx=(0, 10))
-
-        nav_title = tk.Label(
-            nav_frame,
-            text="配置导航",
-            bg="#f0f0f0",
-            fg="#333333",
-            font=("Microsoft YaHei UI", 10, "bold"),
-            anchor="w",
-        )
-        nav_title.pack(fill="x", padx=8, pady=(8, 12))
-
-        content_frame = ttk.Frame(container)
-        content_frame.pack(side="left", fill="both", expand=True)
-
-        self.config_section_var = tk.StringVar(value=ENV_SECTIONS[0][0])
-        self.config_section_frames: Dict[str, ttk.Frame] = {}
-
-        summary_group = ttk.LabelFrame(content_frame, text="配置说明", padding=16)
-        summary_group.pack(fill="x", pady=(0, 10))
-        ttk.Label(
-            summary_group,
-            text=(
-                "左侧选择配置分组，右侧只显示当前分组字段。\n"
-                "保存时会统一写入 backend/.env，未展示的其他分组内容也会一并保留。"
-            ),
-            justify="left",
-        ).pack(anchor="w")
-
-        self.config_content_host = ttk.Frame(content_frame)
-        self.config_content_host.pack(fill="both", expand=True)
-
-        config_nav_items = [
-            ("应用配置", "应用配置", "设置监听地址、端口和跨域来源"),
-            ("数据库配置", "数据库配置", "维护数据库连接串和账号参数"),
-            ("认证配置", "认证配置", "管理 JWT 密钥和 token 生命周期"),
-            ("外部系统配置", "外部系统配置", "配置 Marki 等外部系统接入信息"),
-        ]
-        config_nav_items.append(("git_repo", "Git 仓库配置", "统一维护仓库地址与分支，供运维和一键部署复用"))
-        self.create_side_nav(
-            nav_frame,
-            config_nav_items,
-            self.config_section_var,
-            self.show_config_section,
-            self.config_nav_items,
-        )
-
-        for section_title, fields in ENV_SECTIONS:
-            section_frame = ttk.LabelFrame(self.config_content_host, text=section_title, padding=16)
-            for row, (key, label, secret) in enumerate(fields):
-                ttk.Label(section_frame, text=f"{label}：", width=18).grid(row=row, column=0, sticky="w", padx=6, pady=6)
-                var = tk.StringVar(value=self.config_values.get(key, ""))
-                ttk.Entry(section_frame, textvariable=var, width=88, show="*" if secret else "").grid(
-                    row=row, column=1, sticky="ew", padx=6, pady=6
-                )
-                section_frame.columnconfigure(1, weight=1)
-                self.form_vars[key] = var
-            self.config_section_frames[section_title] = section_frame
-
-        git_section = ttk.LabelFrame(self.config_content_host, text="Git 仓库配置", padding=16)
-        ttk.Label(
-            git_section,
-            text="运维工具中的 Git 拉取更新和一键部署（Git 模式）统一使用此处配置。",
-            justify="left",
-        ).grid(row=0, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 8))
-        ttk.Label(git_section, text="仓库地址：", width=18).grid(row=1, column=0, sticky="w", padx=6, pady=6)
-        ttk.Entry(git_section, textvariable=self.ops_vars["git_repo_url"], width=88).grid(
-            row=1, column=1, sticky="ew", padx=6, pady=6
-        )
-        ttk.Label(git_section, text="分支名称：", width=18).grid(row=2, column=0, sticky="w", padx=6, pady=6)
-        ttk.Entry(git_section, textvariable=self.ops_vars["git_branch"], width=30).grid(
-            row=2, column=1, sticky="w", padx=6, pady=6
-        )
-        ttk.Button(git_section, text="保存 Git 配置", command=self.save_manager_state).grid(
-            row=3, column=1, sticky="w", padx=6, pady=(8, 0)
-        )
-        git_section.columnconfigure(1, weight=1)
-        self.config_section_frames["git_repo"] = git_section
-
-        self.show_config_section()
+        _ff_build_config_tab(self, parent)
 
     def build_ops_tab(self, parent: ttk.Frame) -> None:
-        container = ttk.Frame(parent)
-        container.pack(fill="both", expand=True, padx=10, pady=10)
-
-        nav_frame = tk.Frame(
-            container,
-            bg="#f0f0f0",
-            bd=1,
-            relief="flat",
-        )
-        nav_frame.pack(side="left", fill="y", padx=(0, 10))
-
-        nav_title = tk.Label(
-            nav_frame,
-            text="运维导航",
-            bg="#f0f0f0",
-            fg="#333333",
-            font=("Microsoft YaHei UI", 10, "bold"),
-            anchor="w",
-        )
-        nav_title.pack(fill="x", padx=8, pady=(8, 12))
-
-        content_frame = ttk.Frame(container)
-        content_frame.pack(side="left", fill="both", expand=True)
-
-        self.ops_section_var = tk.StringVar(value="one_click_deploy")
-        ops_nav_items = [
-            ("one_click_deploy", "一键部署", "全流程编排：检查、部署、启动、后置配置检查"),
-            ("frontend", "前端部署", "覆盖发布 dist，更新页面静态资源"),
-            ("release", "发布包升级", "导入 ZIP 发布包并执行一键升级"),
-            ("git_update", "Git 拉取更新", "从远程 Git 仓库拉取最新代码"),
-            ("migration", "数据库迁移", "执行 SQL 脚本更新数据库结构"),
-            ("db_monitor", "数据库监控", "检查数据库连接状态并开启持续监控"),
-            ("backup", "数据库备份", "调用 sqlcmd 执行数据库备份"),
-            ("maintenance", "日志与备份维护", "清理过期日志和备份文件"),
-            ("alert", "告警通知", "配置 Webhook 告警接收地址"),
-            ("notes", "使用说明", "查看当前运维方式和操作建议"),
-        ]
-
-        for key in ("frontend_deploy_source", "release_package_path", "backup_dir", "sqlcmd_path", "git_repo_url", "git_branch", "backup_retention_days", "backup_retention_count", "log_max_size_mb", "log_archive_retention_days", "webhook_url"):
-            if key not in self.ops_vars:
-                self.ops_vars[key] = tk.StringVar(value=str(self.manager_state.get(key, DEFAULT_STATE.get(key, ""))))
-
-        self.create_side_nav(
-            nav_frame,
-            ops_nav_items,
-            self.ops_section_var,
-            self.show_ops_section,
-            self.ops_nav_items,
-        )
-
-        self.ops_content_host = ttk.Frame(content_frame)
-        self.ops_content_host.pack(fill="both", expand=True)
-        self.ops_section_frames: Dict[str, ttk.Frame] = {}
-
-        one_click_frame = ttk.LabelFrame(self.ops_content_host, text="一键部署", padding=16)
-        ttk.Label(
-            one_click_frame,
-            text="自动执行环境检查、代码部署、运行配置写入、依赖同步、服务启动、健康检查与数据库后置配置检查。",
-            justify="left",
-            wraplength=760,
-        ).pack(anchor="w", pady=(0, 12))
-
-        deploy_type_frame = ttk.Frame(one_click_frame)
-        deploy_type_frame.pack(fill="x", pady=(0, 10))
-        self.deploy_mode = tk.StringVar(value="git")
-        ttk.Radiobutton(deploy_type_frame, text="Git 拉取部署", variable=self.deploy_mode, value="git").pack(side="left", padx=20)
-        ttk.Radiobutton(deploy_type_frame, text="ZIP 发布包部署", variable=self.deploy_mode, value="zip").pack(side="left", padx=20)
-
-        deploy_log_frame = ttk.LabelFrame(one_click_frame, text="部署日志", padding=10)
-        deploy_log_frame.pack(fill="both", expand=True, pady=(0, 10))
-        self.deploy_log_text = scrolledtext.ScrolledText(deploy_log_frame, wrap="word", font=("Consolas", 9), height=14)
-        self.deploy_log_text.pack(fill="both", expand=True)
-        self.deploy_log_text.configure(state="disabled")
-
-        deploy_actions = ttk.Frame(one_click_frame)
-        deploy_actions.pack(fill="x")
-        ttk.Button(deploy_actions, text="开始一键部署", command=self.start_one_click_deploy).pack(side="left", padx=4)
-        ttk.Button(deploy_actions, text="清空日志", command=self.clear_deploy_log).pack(side="left", padx=4)
-        self.ops_section_frames["one_click_deploy"] = one_click_frame
-
-        frontend_frame = ttk.LabelFrame(self.ops_content_host, text="前端部署", padding=16)
-        frontend_top = ttk.Frame(frontend_frame)
-        frontend_top.pack(fill="x", pady=(0, 10))
-        
-        self.ops_common_group = ttk.LabelFrame(frontend_top, text="基础路径设置", padding=16)
-        self.ops_common_group.pack(fill="x", pady=(0, 10))
-
-        path_fields = [
-            ("frontend_deploy_source", "前端 dist 来源目录", "directory"),
-            ("release_package_path", "发布包 ZIP 文件", "zip"),
-            ("backup_dir", "数据库备份输出目录", "directory"),
-            ("sqlcmd_path", "sqlcmd 可执行文件", "file"),
-        ]
-
-        for row, (key, label, select_mode) in enumerate(path_fields):
-            ttk.Label(self.ops_common_group, text=f"{label}：", width=18).grid(row=row, column=0, sticky="w", padx=6, pady=6)
-            ttk.Entry(self.ops_common_group, textvariable=self.ops_vars[key], width=82).grid(
-                row=row, column=1, sticky="ew", padx=6, pady=6
-            )
-            ttk.Button(
-                self.ops_common_group,
-                text="选择",
-                command=lambda target_key=key, mode=select_mode: self.select_path_for_var(target_key, mode),
-            ).grid(row=row, column=2, padx=6, pady=6)
-        self.ops_common_group.columnconfigure(1, weight=1)
-
-        ttk.Button(self.ops_common_group, text="保存运维设置", command=self.save_manager_state).grid(
-            row=len(path_fields), column=1, sticky="w", padx=6, pady=(10, 0)
-        )
-
-        ttk.Label(
-            frontend_frame,
-            text="将选定目录中的前端构建产物覆盖到 frontend/dist，部署后后端重启即可生效。",
-            justify="left",
-        ).pack(anchor="w", pady=(0, 8))
-        frontend_actions = ttk.Frame(frontend_frame)
-        frontend_actions.pack(fill="x")
-        ttk.Button(frontend_actions, text="部署前端 dist", command=self.deploy_frontend_dist).pack(side="left", padx=4)
-        ttk.Button(frontend_actions, text="打开 dist 目录", command=self.open_dist_folder).pack(side="left", padx=4)
-        self.ops_section_frames["frontend"] = frontend_frame
-
-        release_frame = ttk.LabelFrame(self.ops_content_host, text="发布包升级", padding=16)
-        ttk.Label(
-            release_frame,
-            text=(
-                "支持导入 ZIP 发布包并一键升级。管理器会自动停止后端，覆盖发布包中的 backend、frontend/dist、tools、deploy 等内容，"
-                "同时保留本机 backend/.env、.encryption.key、虚拟环境、日志和 manager_state。"
-            ),
-            justify="left",
-            wraplength=760,
-        ).pack(anchor="w", pady=(0, 8))
-        release_actions = ttk.Frame(release_frame)
-        release_actions.pack(fill="x")
-        ttk.Button(release_actions, text="选择发布包", command=lambda: self.select_path_for_var("release_package_path", "zip")).pack(
-            side="left", padx=4
-        )
-        ttk.Button(release_actions, text="一键升级发布包", command=self.apply_release_package).pack(side="left", padx=4)
-        ttk.Button(release_actions, text="打开项目目录", command=self.open_project_root).pack(side="left", padx=4)
-        self.ops_section_frames["release"] = release_frame
-
-        db_monitor_frame = ttk.LabelFrame(self.ops_content_host, text="数据库连接状态与监控", padding=16)
-        ttk.Label(
-            db_monitor_frame,
-            text="数据库检查以当前 backend/.env 为准；一键部署阶段不再前置校验数据库，而是在部署完成后执行后置配置检查。",
-            justify="left",
-            wraplength=760,
-        ).pack(anchor="w", pady=(0, 8))
-        db_monitor_grid = ttk.Frame(db_monitor_frame)
-        db_monitor_grid.pack(fill="x", pady=(0, 10))
-        ttk.Label(db_monitor_grid, text="数据库配置：", width=14).grid(row=0, column=0, sticky="w", padx=6, pady=4)
-        ttk.Label(db_monitor_grid, textvariable=self.status_vars["db_config_status"]).grid(row=0, column=1, sticky="w", padx=6, pady=4)
-        ttk.Label(db_monitor_grid, text="连接状态：", width=14).grid(row=1, column=0, sticky="w", padx=6, pady=4)
-        ttk.Label(db_monitor_grid, textvariable=self.status_vars["db_connection_status"]).grid(row=1, column=1, sticky="w", padx=6, pady=4)
-        ttk.Label(db_monitor_grid, text="监控状态：", width=14).grid(row=2, column=0, sticky="w", padx=6, pady=4)
-        ttk.Label(db_monitor_grid, textvariable=self.status_vars["db_monitor_status"]).grid(row=2, column=1, sticky="w", padx=6, pady=4)
-        ttk.Label(db_monitor_grid, text="最后检查：", width=14).grid(row=3, column=0, sticky="w", padx=6, pady=4)
-        ttk.Label(db_monitor_grid, textvariable=self.status_vars["db_last_check_at"]).grid(row=3, column=1, sticky="w", padx=6, pady=4)
-        ttk.Label(db_monitor_grid, text="说明：", width=14).grid(row=4, column=0, sticky="nw", padx=6, pady=4)
-        ttk.Label(
-            db_monitor_grid,
-            text="启用后每 15 秒自动检查一次数据库连接；优先使用后端虚拟环境中的数据库驱动直连，若运行环境未就绪则再回退到 sqlcmd。",
-            justify="left",
-            wraplength=620,
-        ).grid(row=4, column=1, sticky="w", padx=6, pady=4)
-        db_monitor_actions = ttk.Frame(db_monitor_frame)
-        db_monitor_actions.pack(fill="x")
-        ttk.Button(db_monitor_actions, text="立即检查数据库连接", command=self.check_database_connection).pack(side="left", padx=4)
-        ttk.Checkbutton(
-            db_monitor_actions,
-            text="启用数据库连接监控",
-            variable=self.manager_option_vars["enable_db_monitor"],
-            command=self.save_manager_state,
-        ).pack(side="left", padx=12)
-        self.ops_section_frames["db_monitor"] = db_monitor_frame
-
-        backup_frame = ttk.LabelFrame(self.ops_content_host, text="数据库备份", padding=16)
-        ttk.Label(
-            backup_frame,
-            text="使用 sqlcmd 对 SQL Server 数据库执行备份，连接信息来自当前 backend/.env。",
-            justify="left",
-        ).pack(anchor="w", pady=(0, 8))
-        backup_actions = ttk.Frame(backup_frame)
-        backup_actions.pack(fill="x")
-        ttk.Button(backup_actions, text="立即备份数据库", command=self.backup_database).pack(side="left", padx=4)
-        ttk.Button(backup_actions, text="从备份恢复", command=self.restore_database).pack(side="left", padx=4)
-        ttk.Button(backup_actions, text="打开备份目录", command=self.open_backup_folder).pack(side="left", padx=4)
-        self.ops_section_frames["backup"] = backup_frame
-
-        git_frame = ttk.LabelFrame(self.ops_content_host, text="Git 拉取更新", padding=16)
-        ttk.Label(
-            git_frame,
-            text="从远程 Git 仓库拉取最新代码并自动部署，支持增量更新。",
-            justify="left",
-        ).pack(anchor="w", pady=(0, 8))
-        
-        git_config = ttk.LabelFrame(git_frame, text="仓库配置", padding=12)
-        git_config.pack(fill="x", pady=(0, 10))
-        
-        ttk.Label(git_config, text="仓库地址：", width=12).grid(row=0, column=0, sticky="w", padx=6, pady=6)
-        ttk.Label(git_config, textvariable=self.ops_vars["git_repo_url"]).grid(
-            row=0, column=1, sticky="ew", padx=6, pady=6
-        )
-        
-        ttk.Label(git_config, text="分支名称：", width=12).grid(row=1, column=0, sticky="w", padx=6, pady=6)
-        ttk.Label(git_config, textvariable=self.ops_vars["git_branch"]).grid(
-            row=1, column=1, sticky="w", padx=6, pady=6
-        )
-        ttk.Label(git_config, text="如需修改仓库配置，请到“配置管理”页操作。", foreground="#666666").grid(
-            row=2, column=0, columnspan=2, sticky="w", padx=6, pady=(4, 0)
-        )
-        git_config.columnconfigure(1, weight=1)
-        
-        git_actions = ttk.Frame(git_frame)
-        git_actions.pack(fill="x")
-        ttk.Button(git_actions, text="检查更新", command=self.check_git_update).pack(side="left", padx=4)
-        ttk.Button(git_actions, text="拉取并部署", command=self.git_pull_update).pack(side="left", padx=4)
-        ttk.Button(git_actions, text="查看提交历史", command=self.git_show_history).pack(side="left", padx=4)
-        ttk.Button(git_actions, text="回滚版本", command=self.git_rollback).pack(side="left", padx=4)
-        self.ops_section_frames["git_update"] = git_frame
-
-        migration_frame = ttk.LabelFrame(self.ops_content_host, text="数据库迁移", padding=16)
-        ttk.Label(
-            migration_frame,
-            text="选择或粘贴 SQL 脚本，通过 sqlcmd 在目标数据库上执行。适用于 SQL Server 2016 结构变更。",
-            justify="left",
-        ).pack(anchor="w", pady=(0, 8))
-        
-        migration_config = ttk.Frame(migration_frame)
-        migration_config.pack(fill="x", pady=(0, 8))
-        ttk.Button(migration_config, text="选择 SQL 文件", command=self.select_migration_file).pack(side="left", padx=4)
-        ttk.Button(migration_config, text="清空脚本", command=self.clear_migration_script).pack(side="left", padx=4)
-        
-        self.migration_script_text = scrolledtext.ScrolledText(migration_frame, wrap="word", font=("Consolas", 9), height=12)
-        self.migration_script_text.pack(fill="both", expand=True, pady=(0, 8))
-        
-        migration_actions = ttk.Frame(migration_frame)
-        migration_actions.pack(fill="x")
-        ttk.Button(migration_actions, text="执行迁移", command=self.execute_migration).pack(side="left", padx=4)
-        self.ops_section_frames["migration"] = migration_frame
-
-        maintenance_frame = ttk.LabelFrame(self.ops_content_host, text="日志与备份维护", padding=16)
-        maint_grid = ttk.Frame(maintenance_frame)
-        maint_grid.pack(fill="x", pady=(0, 10))
-        
-        maint_fields = [
-            ("backup_retention_days", "备份保留天数", "保留最近 N 天的备份"),
-            ("backup_retention_count", "备份保留数量", "最多保留 N 个备份文件"),
-            ("log_max_size_mb", "日志轮转阈值(MB)", "单日志文件超过此大小自动归档"),
-            ("log_archive_retention_days", "归档日志保留天数", "自动清理超过 N 天的归档文件"),
-        ]
-        for idx, (key, label, desc) in enumerate(maint_fields):
-            ttk.Label(maint_grid, text=f"{label}：", width=18).grid(row=idx, column=0, sticky="w", padx=6, pady=4)
-            ttk.Entry(maint_grid, textvariable=self.ops_vars[key], width=20).grid(row=idx, column=1, sticky="w", padx=6, pady=4)
-            ttk.Label(maint_grid, text=desc, foreground="#666666").grid(row=idx, column=2, sticky="w", padx=6, pady=4)
-            
-        maint_actions = ttk.Frame(maintenance_frame)
-        maint_actions.pack(fill="x")
-        ttk.Button(maint_actions, text="立即清理过期备份", command=self.manual_cleanup_backups).pack(side="left", padx=4)
-        ttk.Button(maint_actions, text="立即清理过期归档", command=self.manual_cleanup_logs).pack(side="left", padx=4)
-        ttk.Button(maint_actions, text="同步后端依赖", command=self.sync_backend_deps).pack(side="left", padx=4)
-        ttk.Button(maint_actions, text="同步前端依赖", command=self.sync_frontend_deps).pack(side="left", padx=4)
-        self.ops_section_frames["maintenance"] = maintenance_frame
-
-        alert_frame = ttk.LabelFrame(self.ops_content_host, text="告警通知", padding=16)
-        ttk.Label(
-            alert_frame,
-            text="配置 Webhook 地址，在后端异常退出或健康检查失败时发送告警。支持企业微信/钉钉/飞书等标准格式。",
-            justify="left",
-        ).pack(anchor="w", pady=(0, 8))
-        alert_grid = ttk.Frame(alert_frame)
-        alert_grid.pack(fill="x", pady=(0, 8))
-        ttk.Label(alert_grid, text="Webhook URL：", width=12).grid(row=0, column=0, sticky="w", padx=6, pady=6)
-        ttk.Entry(alert_grid, textvariable=self.ops_vars["webhook_url"], width=80).grid(row=0, column=1, sticky="ew", padx=6, pady=6)
-        alert_grid.columnconfigure(1, weight=1)
-        ttk.Button(alert_frame, text="发送测试告警", command=self.send_test_alert).pack(side="left", padx=4)
-        self.ops_section_frames["alert"] = alert_frame
-
-        notes_frame = ttk.LabelFrame(self.ops_content_host, text="使用说明", padding=16)
-        ttk.Label(
-            notes_frame,
-            text=(
-                "1. 前端建议先在构建机完成 npm run build，再把 dist 目录复制到服务器。\n"
-                "2. 一键升级建议使用标准 ZIP 发布包，包内至少包含 backend 或 frontend/dist。\n"
-                "3. 一键部署不再前置检查数据库连接，部署完成后会执行后置配置检查；数据库备份请在配置完成后单独执行。\n"
-                "4. 数据库连接监控优先使用后端运行环境中的数据库驱动；sqlcmd 主要用于数据库备份、恢复和手工 SQL 执行。\n"
-                "5. Git 拉取更新需要服务器已安装 Git，且仓库可访问。"
-            ),
-            justify="left",
-        ).pack(anchor="w")
-        self.ops_section_frames["notes"] = notes_frame
-
-        self.show_ops_section()
+        _ff_build_ops_tab(self, parent)
 
     def build_env_tab(self, parent: ttk.Frame) -> None:
-        toolbar = ttk.Frame(parent)
-        toolbar.pack(fill="x", padx=10, pady=10)
-        ttk.Button(toolbar, text="刷新环境检查", command=self.refresh_environment_info).pack(side="left", padx=4)
-        ttk.Button(toolbar, text="打开 backend 目录", command=self.open_backend_folder).pack(side="left", padx=4)
-        ttk.Button(toolbar, text="打开日志目录", command=self.open_logs_folder).pack(side="left", padx=4)
-
-        container = ttk.Frame(parent)
-        container.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-
-        nav_frame = tk.Frame(
-            container,
-            bg="#f0f0f0",
-            bd=1,
-            relief="flat",
-        )
-        nav_frame.pack(side="left", fill="y", padx=(0, 10))
-
-        nav_title = tk.Label(
-            nav_frame,
-            text="检查导航",
-            bg="#f0f0f0",
-            fg="#333333",
-            font=("Microsoft YaHei UI", 10, "bold"),
-            anchor="w",
-        )
-        nav_title.pack(fill="x", padx=8, pady=(8, 12))
-
-        content_frame = ttk.Frame(container)
-        content_frame.pack(side="left", fill="both", expand=True)
-
-        summary = ttk.LabelFrame(content_frame, text="自检说明", padding=16)
-        summary.pack(fill="x", pady=(0, 10))
-        ttk.Label(
-            summary,
-            text=(
-                "这里集中展示部署机当前状态、运行环境、关键依赖和端口占用情况。\n"
-                "建议部署前先刷新一遍，确认没有缺包、缺文件或端口冲突。"
-            ),
-            justify="left",
-        ).pack(anchor="w")
-
-        self.env_section_var = tk.StringVar(value="overview")
-        env_nav_items = [
-            ("overview", "概览", "查看项目状态、当前地址和关键文件情况"),
-            ("runtime", "运行环境", "检查管理器与后端 Python 环境信息"),
-            ("deps", "依赖检查", "核对关键 Python 包是否完整可导入"),
-            ("paths", "路径与端口", "检查虚拟环境、前端构建和端口占用"),
-        ]
-        self.create_side_nav(
-            nav_frame,
-            env_nav_items,
-            self.env_section_var,
-            self.show_env_section,
-            self.env_nav_items,
-        )
-
-        self.env_content_host = ttk.Frame(content_frame)
-        self.env_content_host.pack(fill="both", expand=True)
-
-        section_titles = {
-            "overview": "概览",
-            "runtime": "运行环境",
-            "deps": "依赖检查",
-            "paths": "路径与端口",
-        }
-        for key, title in section_titles.items():
-            frame = ttk.LabelFrame(self.env_content_host, text=title, padding=12)
-            text_widget = scrolledtext.ScrolledText(frame, wrap="word", font=("Consolas", 10), height=24)
-            text_widget.pack(fill="both", expand=True)
-            text_widget.configure(state="disabled")
-            self.env_text_widgets[key] = text_widget
-            self.env_section_frames[key] = frame
-
-        self.show_env_section()
-        self.refresh_environment_info()
+        _ff_build_env_tab(self, parent)
 
     def build_logs_tab(self, parent: ttk.Frame) -> None:
-        toolbar = ttk.Frame(parent)
-        toolbar.pack(fill="x", padx=10, pady=10)
+        _ff_build_logs_tab(self, parent)
 
-        ttk.Label(toolbar, text="日志文件：").pack(side="left")
-        choices = ["后端标准输出", "后端错误输出", "前端标准输出", "前端错误输出", "项目同步日志"]
-        ttk.Combobox(toolbar, state="readonly", values=choices, textvariable=self.log_choice, width=20).pack(
-            side="left", padx=6
-        )
-        ttk.Button(toolbar, text="刷新", command=lambda: self.refresh_log_view(force=True)).pack(side="left", padx=6)
-        ttk.Checkbutton(toolbar, text="自动刷新", variable=self.log_auto_refresh).pack(side="left", padx=6)
-        ttk.Button(toolbar, text="清空当前日志", command=self.clear_current_log).pack(side="left", padx=6)
-        ttk.Button(toolbar, text="打开归档目录", command=self.open_log_archive_folder).pack(side="left", padx=6)
-
-        status_bar = ttk.Frame(parent)
-        status_bar.pack(fill="x", padx=10, pady=(0, 8))
-        ttk.Label(status_bar, textvariable=self.log_status_var, foreground="#4b5f73").pack(side="left")
-
-        self.log_text = scrolledtext.ScrolledText(parent, wrap="none", font=("Consolas", 10))
-        self.log_text.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-        self.log_text.configure(state="disabled")
+    def show_env_section(self) -> None:
+        active_key = getattr(self, "env_section_var", tk.StringVar(value="overview")).get()
+        for section_key, frame in self.env_section_frames.items():
+            if section_key == active_key:
+                frame.pack(fill="both", expand=True)
+            else:
+                frame.pack_forget()
+        self.refresh_side_nav_styles(self.env_nav_items, active_key)
 
     def show_config_section(self) -> None:
-        active_key = getattr(self, "config_section_var", tk.StringVar(value=ENV_SECTIONS[0][0])).get()
+        active_key = getattr(self, "config_section_var", tk.StringVar(value="应用配置")).get()
         for section_key, frame in self.config_section_frames.items():
             if section_key == active_key:
                 frame.pack(fill="both", expand=True)
@@ -3180,22 +2621,7 @@ class FinFlowManagerApp:
                 frame.pack(fill="both", expand=True)
             else:
                 frame.pack_forget()
-        
-        if active_key in ("frontend", "release", "one_click_deploy"):
-            self.ops_common_group.pack(fill="x", pady=(0, 10))
-        else:
-            self.ops_common_group.pack_forget()
-        
         self.refresh_side_nav_styles(self.ops_nav_items, active_key)
-
-    def show_env_section(self) -> None:
-        active_key = getattr(self, "env_section_var", tk.StringVar(value="overview")).get()
-        for section_key, frame in self.env_section_frames.items():
-            if section_key == active_key:
-                frame.pack(fill="both", expand=True)
-            else:
-                frame.pack_forget()
-        self.refresh_side_nav_styles(self.env_nav_items, active_key)
 
     def set_readonly_text(self, widget: scrolledtext.ScrolledText, content: str) -> None:
         widget.configure(state="normal")
@@ -3205,141 +2631,10 @@ class FinFlowManagerApp:
         widget.see("1.0")
 
     def refresh_environment_info(self) -> None:
-        config = self.get_effective_config()
-        host = (config.get("APP_HOST") or "127.0.0.1").strip() or "127.0.0.1"
-        browser_host = resolve_browser_host(host)
-        port = (config.get("APP_PORT") or "8100").strip() or "8100"
-        backend_python = BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
-        owner = get_port_owner_info(int(port)) if port.isdigit() else {}
-
-        manager_modules = ["tkinter", "pystray", "PIL", "cryptography"]
-        manager_module_lines = []
-        for name in manager_modules:
-            try:
-                __import__(name)
-                manager_module_lines.append(f"[OK] {name}")
-            except Exception as exc:
-                manager_module_lines.append(f"[MISSING] {name}: {exc}")
-
-        backend_probe = {"ok": False, "error": "未找到 backend/.venv/Scripts/python.exe"}
-        if backend_python.exists():
-            probe_code = (
-                "import importlib.util, json, sys;"
-                "mods=['fastapi','uvicorn','sqlalchemy','psycopg2','cryptography','Crypto'];"
-                "result={m:(importlib.util.find_spec(m) is not None) for m in mods};"
-                "print(json.dumps({'ok': True, 'python': sys.executable, 'version': sys.version, 'modules': result}, ensure_ascii=False))"
-            )
-            backend_probe = run_python_json(backend_python, probe_code)
-
-        overview_text = "\n".join(
-            [
-                "FinFlow 部署机概览",
-                "",
-                f"项目目录: {ROOT_DIR}",
-                f"访问地址: {self.get_app_url()}",
-                f"后端状态: {self.backend.poll_status()}",
-                f"后端端口占用: {self.status_vars.get('backend_port_owner').get() if self.status_vars.get('backend_port_owner') else '未知'}",
-                f"前端状态: {self.frontend.poll_status()}",
-                f"前端端口占用: {self.status_vars.get('frontend_port_owner').get() if self.status_vars.get('frontend_port_owner') else '未知'}",
-                f"配置文件: {'存在' if ENV_PATH.exists() else '缺失'}",
-                f"加密密钥: {'存在' if KEY_PATH.exists() else '缺失'}",
-                f"前端构建: {'存在' if (DIST_DIR / 'index.html').exists() else '缺失'}",
-                f"日志目录: {'存在' if LOG_DIR.exists() else '缺失'}",
-                f"后端健康检查: {self.status_vars.get('backend_health_status').get() if self.status_vars.get('backend_health_status') else '未检查'}",
-                f"前端健康检查: {self.status_vars.get('frontend_health_status').get() if self.status_vars.get('frontend_health_status') else '未检查'}",
-            ]
-        )
-
-        runtime_lines = [
-            "管理器运行环境",
-            "",
-            f"管理器 Python: {sys.executable}",
-            f"管理器版本: {sys.version}",
-            f"操作系统: {platform.platform()}",
-            f"TCL_LIBRARY: {os.environ.get('TCL_LIBRARY', '(未设置)')}",
-            f"TK_LIBRARY: {os.environ.get('TK_LIBRARY', '(未设置)')}",
-            "",
-            "后端运行环境",
-            "",
-        ]
-        if backend_probe.get("ok"):
-            runtime_lines.extend(
-                [
-                    f"后端 Python: {backend_probe.get('python', '')}",
-                    f"后端版本: {backend_probe.get('version', '')}",
-                ]
-            )
-        else:
-            runtime_lines.append(f"后端环境检查失败: {backend_probe.get('error', '未知错误')}")
-        runtime_text = "\n".join(runtime_lines)
-
-        deps_lines = [
-            "管理器依赖检查",
-            "",
-            *manager_module_lines,
-            "",
-            "后端关键依赖检查",
-            "",
-        ]
-        if backend_probe.get("ok"):
-            for module_name, ok in backend_probe.get("modules", {}).items():
-                deps_lines.append(f"[{'OK' if ok else 'MISSING'}] {module_name}")
-        else:
-            deps_lines.append(f"无法检查后端依赖: {backend_probe.get('error', '未知错误')}")
-        deps_lines.append("")
-        deps_lines.append("说明: 如果 `Crypto` 缺失，需要在 backend/.venv 中安装 `pycryptodome`。")
-        deps_text = "\n".join(deps_lines)
-
-        path_lines = [
-            "路径与端口检查",
-            "",
-            f"backend/.venv: {'存在' if backend_python.exists() else '缺失'}",
-            f"backend/.env: {'存在' if ENV_PATH.exists() else '缺失'}",
-            f"backend/.encryption.key: {'存在' if KEY_PATH.exists() else '缺失'}",
-            f"frontend/dist/index.html: {'存在' if (DIST_DIR / 'index.html').exists() else '缺失'}",
-            f"日志目录: {'存在' if LOG_DIR.exists() else '缺失'}",
-            f"归档目录: {'存在' if LOG_ARCHIVE_DIR.exists() else '缺失'}",
-            "",
-            f"监听地址配置: {host}",
-            f"浏览器访问地址: {browser_host}",
-            f"监听端口: {port}",
-            f"端口可连接: {'是' if (port.isdigit() and is_port_open(browser_host, int(port))) else '否'}",
-        ]
-        if owner:
-            path_lines.extend(
-                [
-                    f"端口占用 PID: {owner.get('pid', '')}",
-                    f"端口占用状态: {build_port_owner_label(owner)}",
-                ]
-            )
-        else:
-            path_lines.append("端口占用进程: 无")
-        paths_text = "\n".join(path_lines)
-
-        self.set_readonly_text(self.env_text_widgets["overview"], overview_text)
-        self.set_readonly_text(self.env_text_widgets["runtime"], runtime_text)
-        self.set_readonly_text(self.env_text_widgets["deps"], deps_text)
-        self.set_readonly_text(self.env_text_widgets["paths"], paths_text)
+        _ff_refresh_environment_info(self)
 
     def create_tray_icon(self) -> None:
-        menu = Menu(
-            MenuItem("打开管理器", lambda: self.root.after(0, self.show_window)),
-            MenuItem("启动全部", lambda: self.root.after(0, self.handle_start_all)),
-            MenuItem("停止全部", lambda: self.root.after(0, self.handle_stop_all)),
-            MenuItem("重启全部", lambda: self.root.after(0, self.handle_restart_all)),
-            MenuItem("启动后端", lambda: self.root.after(0, self.handle_start_backend)),
-            MenuItem("停止后端", lambda: self.root.after(0, self.handle_stop_backend)),
-            MenuItem("重启后端", lambda: self.root.after(0, self.handle_restart_backend)),
-            MenuItem("启动前端", lambda: self.root.after(0, self.handle_start_frontend)),
-            MenuItem("停止前端", lambda: self.root.after(0, self.handle_stop_frontend)),
-            MenuItem("重启前端", lambda: self.root.after(0, self.handle_restart_frontend)),
-            MenuItem("打开前端", lambda: self.root.after(0, self.open_frontend)),
-            MenuItem("退出管理器", lambda: self.root.after(0, self.exit_application)),
-        )
-        self.tray_icon = Icon("FinFlowManager", create_tray_image(), "FinFlow 管理器", menu)
-        self.tray_thread = threading.Thread(target=self.tray_icon.run, daemon=True)
-        self.tray_thread.start()
-        self.update_tray_title()
+        _ff_create_tray_icon(self)
 
     def notify_tray(self, title: str, message: str) -> None:
         if not self.tray_icon:
@@ -3362,12 +2657,12 @@ class FinFlowManagerApp:
         enabled = bool(self.manager_state.get("launch_manager_on_startup", False))
         exists = STARTUP_SCRIPT_PATH.exists()
         if enabled and exists:
-            return "已启用"
+            return "\u5df2\u542f\u7528"
         if enabled and not exists:
-            return "待写入"
+            return "\u5f85\u5199\u5165"
         if exists:
-            return "已存在脚本"
-        return "未启用"
+            return "\u5df2\u5b58\u5728\u811a\u672c"
+        return "\u672a\u542f\u7528"
 
     def sync_startup_entry(self, show_message: bool = False) -> None:
         enabled = bool(self.manager_state.get("launch_manager_on_startup", False))
@@ -3383,10 +2678,10 @@ class FinFlowManagerApp:
                 self.manager_option_vars["launch_manager_on_startup"].set(False)
             write_state_file(STATE_PATH, self.manager_state)
             if show_message:
-                messagebox.showerror("开机自启设置失败", str(exc))
+                messagebox.showerror("\u5f00\u673a\u81ea\u542f\u8bbe\u7f6e\u5931\u8d25", str(exc))
             return
         if show_message:
-            messagebox.showinfo("设置成功", "已更新管理器开机自启设置")
+            messagebox.showinfo("\u8bbe\u7f6e\u6210\u529f", "\u5df2\u66f4\u65b0\u7ba1\u7406\u5668\u5f00\u673a\u81ea\u542f\u8bbe\u7f6e")
 
     def schedule_status_refresh(self, delay_ms: int = STATUS_REFRESH_INTERVAL_MS) -> None:
         if self.exiting:
@@ -3427,6 +2722,63 @@ class FinFlowManagerApp:
             except Exception:
                 pass
         self.db_job = self.root.after(delay_ms, self.refresh_database_status)
+
+    def schedule_ui_queue_refresh(self, delay_ms: int = 150) -> None:
+        if self.exiting:
+            return
+        if self.ui_queue_job:
+            try:
+                self.root.after_cancel(self.ui_queue_job)
+            except Exception:
+                pass
+        self.ui_queue_job = self.root.after(delay_ms, self.process_ui_queues)
+
+    def process_ui_queues(self) -> None:
+        self.ui_queue_job = None
+
+        while True:
+            try:
+                callback, done_event, state = self.ui_callback_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                result = callback()
+                if state is not None:
+                    state["result"] = result
+            except Exception as exc:
+                if state is not None:
+                    state["error"] = exc
+            finally:
+                if done_event is not None:
+                    done_event.set()
+
+        log_lines: List[str] = []
+        while True:
+            try:
+                log_lines.append(self.deploy_log_queue.get_nowait())
+            except queue.Empty:
+                break
+        if log_lines:
+            self.deploy_log_text.configure(state="normal")
+            self.deploy_log_text.insert("end", "".join(log_lines))
+            self.deploy_log_text.see("end")
+            self.deploy_log_text.configure(state="disabled")
+
+        self.schedule_ui_queue_refresh(150 if self.deploy_running else 300)
+
+    def call_on_ui_thread(self, callback: Any, wait: bool = False) -> Any:
+        if threading.current_thread() is threading.main_thread():
+            return callback()
+        if not wait:
+            self.ui_callback_queue.put((callback, None, None))
+            return None
+        done_event = threading.Event()
+        state: Dict[str, Any] = {}
+        self.ui_callback_queue.put((callback, done_event, state))
+        done_event.wait()
+        if "error" in state:
+            raise state["error"]
+        return state.get("result")
 
     def save_manager_state(self) -> None:
         for key, var in self.manager_option_vars.items():
@@ -3868,7 +3220,7 @@ class FinFlowManagerApp:
 
             self.last_backend_health_state = "unknown"
             self.last_frontend_health_state = "unknown"
-            self.refresh_status()
+            refresh_status_async()
             self.notify_tray("发布包升级完成", f"已应用：{package_path.name}")
             summary = "，".join(f"{key}={value}" for key, value in copied_counts.items() if value)
             detail = f"升级完成。\n备份目录：{backup_root}\n覆盖内容：{summary or '无文件变更'}"
@@ -3899,7 +3251,7 @@ class FinFlowManagerApp:
             messagebox.showerror("升级失败", detail)
         finally:
             shutil.rmtree(extract_dir, ignore_errors=True)
-            self.refresh_status()
+            refresh_status_async()
 
     def backup_database(self) -> None:
         self.save_manager_state()
@@ -3932,296 +3284,45 @@ class FinFlowManagerApp:
             return False
 
     def check_git_update(self) -> None:
-        self.save_manager_state()
-        
-        if not self.check_git_available():
-            messagebox.showerror("错误", "未找到 Git 命令，请先安装 Git 并添加到系统 PATH")
-            return
-        
-        repo_url = self.ops_vars["git_repo_url"].get().strip()
-        if not repo_url:
-            messagebox.showerror("错误", "请先配置 Git 仓库地址")
-            return
-        
-        branch = self.ops_vars["git_branch"].get().strip() or "main"
-        
-        try:
-            result = subprocess.run(
-                ["git", "ls-remote", "--heads", repo_url, branch],
-                cwd=ROOT_DIR,
-                capture_output=True,
-                text=True,
-                timeout=30,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            
-            if result.returncode != 0:
-                messagebox.showerror("检查失败", f"无法访问仓库或分支不存在：\n{result.stderr.strip()}")
-                return
-            
-            if not result.stdout.strip():
-                messagebox.showinfo("检查结果", f"分支 '{branch}' 不存在于仓库中")
-                return
-            
-            messagebox.showinfo("检查结果", f"分支 '{branch}' 存在，可以拉取更新")
-            
-        except Exception as exc:
-            messagebox.showerror("检查失败", f"检查更新时出错：{exc}")
+        _ff_check_git_update(self)
 
     def git_pull_update(self) -> None:
-        self.save_manager_state()
-        
-        if not self.check_git_available():
-            messagebox.showerror("错误", "未找到 Git 命令，请先安装 Git 并添加到系统 PATH")
-            return
-        
-        repo_url = self.ops_vars["git_repo_url"].get().strip()
-        if not repo_url:
-            messagebox.showerror("错误", "请先配置 Git 仓库地址")
-            return
-        
-        branch = self.ops_vars["git_branch"].get().strip() or "main"
-        
-        if not (ROOT_DIR / ".git").exists():
-            proceed = messagebox.askyesno(
-                "初始化 Git 仓库",
-                "当前项目目录没有 Git 仓库，是否初始化并从远程仓库克隆？\n注意：这会覆盖本地的 backend、frontend 等目录。",
-            )
-            if not proceed:
-                return
-            
-            try:
-                subprocess.run(
-                    ["git", "clone", "--branch", branch, repo_url, str(ROOT_DIR)],
-                    capture_output=True,
-                    text=True,
-                    timeout=300,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                )
-                messagebox.showinfo("成功", "Git 仓库初始化完成，代码已克隆")
-                self.refresh_status()
-                return
-            except Exception as exc:
-                messagebox.showerror("失败", f"克隆仓库失败：{exc}")
-                return
-        
-        backend_was_running = self.backend.is_running()
-        frontend_was_running = self.frontend.is_running()
-        
-        try:
-            if frontend_was_running:
-                self.frontend.stop()
-            if backend_was_running:
-                self.backend.stop()
-            
-            result = subprocess.run(
-                ["git", "pull", "origin", branch],
-                cwd=ROOT_DIR,
-                capture_output=True,
-                text=True,
-                timeout=300,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            
-            if result.returncode != 0:
-                detail = (result.stderr or result.stdout or "未知错误").strip()
-                messagebox.showerror("拉取失败", f"Git pull 失败：\n{detail}")
-                return
-            
-            stdout_text = result.stdout.strip()
-            if "Already up to date" in stdout_text:
-                messagebox.showinfo("结果", "代码已是最新，无需更新")
-                return
-            
-            messagebox.showinfo("成功", f"代码已更新：\n{stdout_text}")
-            
-            self.refresh_status()
-            self.notify_tray("Git 更新完成", "代码已从远程仓库拉取")
-            
-        except Exception as exc:
-            messagebox.showerror("失败", f"拉取更新时出错：{exc}")
-        finally:
-            if backend_was_running and not self.backend.is_running():
-                self.backend.start(self.get_effective_config())
-            if frontend_was_running and not self.frontend.is_running():
-                self.frontend.start(self.get_effective_config())
+        _ff_git_pull_update(self)
+
+    def run_git_post_update_tasks(self) -> Tuple[bool, str]:
+        if not self.manager_state.get("git_auto_build_frontend", True):
+            return True, "\u5df2\u8df3\u8fc7\u81ea\u52a8\u4f9d\u8d56\u540c\u6b65\u4e0e\u524d\u7aef\u6784\u5efa"
+
+        steps: List[str] = []
+
+        backend_dep_ok, backend_dep_msg = sync_backend_dependencies()
+        if not backend_dep_ok:
+            return False, f"\u540e\u7aef\u4f9d\u8d56\u540c\u6b65\u5931\u8d25\uff1a{backend_dep_msg}"
+        steps.append(f"\u540e\u7aef\u4f9d\u8d56\uff1a{backend_dep_msg}")
+
+        frontend_dep_ok, frontend_dep_msg = sync_frontend_dependencies()
+        if not frontend_dep_ok:
+            return False, f"\u524d\u7aef\u4f9d\u8d56\u540c\u6b65\u5931\u8d25\uff1a{frontend_dep_msg}"
+        steps.append(f"\u524d\u7aef\u4f9d\u8d56\uff1a{frontend_dep_msg}")
+
+        frontend_build_ok, frontend_build_msg = build_frontend()
+        if not frontend_build_ok:
+            return False, f"\u524d\u7aef\u6784\u5efa\u5931\u8d25\uff1a{frontend_build_msg}"
+        steps.append(f"\u524d\u7aef\u6784\u5efa\uff1a{frontend_build_msg}")
+
+        return True, "\n".join(steps)
 
     def git_show_history(self) -> None:
-        self.save_manager_state()
-        
-        if not self.check_git_available():
-            messagebox.showerror("错误", "未找到 Git 命令，请先安装 Git 并添加到系统 PATH")
-            return
-        
-        repo_url = self.ops_vars["git_repo_url"].get().strip()
-        if not repo_url:
-            messagebox.showerror("错误", "请先配置 Git 仓库地址")
-            return
-        
-        try:
-            result = subprocess.run(
-                ["git", "log", "-5", "--oneline"],
-                cwd=ROOT_DIR,
-                capture_output=True,
-                text=True,
-                timeout=30,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            
-            if result.returncode != 0:
-                messagebox.showinfo("提示", "本地仓库暂无提交历史")
-                return
-            
-            history = result.stdout.strip()
-            if not history:
-                messagebox.showinfo("提示", "本地仓库暂无提交历史")
-                return
-            
-            top_level = subprocess.run(
-                ["git", "rev-parse", "--show-toplevel"],
-                cwd=ROOT_DIR,
-                capture_output=True,
-                text=True,
-                timeout=10,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            repo_dir = top_level.stdout.strip() if top_level.returncode == 0 else str(ROOT_DIR)
-            
-            history_window = tk.Toplevel(self.root)
-            history_window.title("Git 提交历史")
-            history_window.geometry("600x400")
-            
-            text_widget = scrolledtext.ScrolledText(history_window, wrap="word", font=("Consolas", 10))
-            text_widget.pack(fill="both", expand=True, padx=10, pady=10)
-            text_widget.insert("1.0", f"仓库目录：{repo_dir}\n\n{history}")
-            text_widget.configure(state="disabled")
-            
-            ttk.Button(history_window, text="关闭", command=history_window.destroy).pack(pady=10)
-            
-        except Exception as exc:
-            messagebox.showerror("错误", f"查看提交历史失败：{exc}")
+        _ff_git_show_history(self)
 
     def git_rollback(self) -> None:
-        self.save_manager_state()
-        
-        if not self.check_git_available():
-            messagebox.showerror("错误", "未找到 Git 命令，请先安装 Git 并添加到系统 PATH")
-            return
-        
-        if not (ROOT_DIR / ".git").exists():
-            messagebox.showerror("错误", "当前项目目录没有 Git 仓库")
-            return
-        
-        try:
-            result = subprocess.run(
-                ["git", "log", "--oneline", "-20"],
-                cwd=ROOT_DIR,
-                capture_output=True,
-                text=True,
-                timeout=30,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            
-            if result.returncode != 0:
-                messagebox.showinfo("提示", "本地仓库暂无提交历史")
-                return
-            
-            history = result.stdout.strip()
-            if not history:
-                messagebox.showinfo("提示", "本地仓库暂无提交历史")
-                return
-            
-            commits = []
-            for line in history.split("\n"):
-                if " " in line:
-                    commit_hash = line.split(" ", 1)[0]
-                    message = line.split(" ", 1)[1]
-                    commits.append((commit_hash, message))
-            
-            if not commits:
-                messagebox.showinfo("提示", "本地仓库暂无提交历史")
-                return
-            
-            rollback_window = tk.Toplevel(self.root)
-            rollback_window.title("选择回滚版本")
-            rollback_window.geometry("500x400")
-            
-            ttk.Label(rollback_window, text="选择要回滚到的版本：").pack(pady=10)
-            
-            listbox = tk.Listbox(rollback_window, height=15, font=("Consolas", 10))
-            listbox.pack(fill="both", expand=True, padx=10, pady=10)
-            
-            for commit_hash, message in commits:
-                listbox.insert("end", f"{commit_hash} {message}")
-            
-            ttk.Button(rollback_window, text="确定回滚", command=lambda: self.execute_rollback(listbox, rollback_window)).pack(pady=10)
-            
-        except Exception as exc:
-            messagebox.showerror("错误", f"获取提交历史失败：{exc}")
+        _ff_git_rollback(self)
 
     def execute_rollback(self, listbox: tk.Listbox, window: tk.Toplevel) -> None:
-        selection = listbox.curselection()
-        if not selection:
-            messagebox.showwarning("警告", "请选择一个版本")
-            return
-        
-        selected = listbox.get(selection[0])
-        commit_hash = selected.split(" ")[0]
-        
-        proceed = messagebox.askyesno(
-            "确认回滚",
-            f"确定要回滚到版本 {commit_hash} 吗？\n\n注意：这会覆盖本地的代码变更。",
-        )
-        if not proceed:
-            return
-        
-        backend_was_running = self.backend.is_running()
-        frontend_was_running = self.frontend.is_running()
-        
-        try:
-            if frontend_was_running:
-                self.frontend.stop()
-            if backend_was_running:
-                self.backend.stop()
-            
-            result = subprocess.run(
-                ["git", "reset", "--hard", commit_hash],
-                cwd=ROOT_DIR,
-                capture_output=True,
-                text=True,
-                timeout=300,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            
-            if result.returncode != 0:
-                messagebox.showerror("回滚失败", f"Git reset 失败：\n{result.stderr.strip()}")
-                return
-            
-            messagebox.showinfo("成功", f"已回滚到版本 {commit_hash}")
-            
-            self.refresh_status()
-            self.notify_tray("Git 回滚完成", f"已回滚到版本 {commit_hash}")
-            
-        except Exception as exc:
-            messagebox.showerror("失败", f"回滚时出错：{exc}")
-        finally:
-            if backend_was_running and not self.backend.is_running():
-                self.backend.start(self.get_effective_config())
-            if frontend_was_running and not self.frontend.is_running():
-                self.frontend.start(self.get_effective_config())
-            window.destroy()
+        _ff_execute_rollback(self, listbox, window)
 
     def select_migration_file(self) -> None:
-        path = filedialog.askopenfilename(title="选择 SQL 脚本", filetypes=[("SQL 文件", "*.sql"), ("所有文件", "*.*")])
-        if path:
-            try:
-                content = Path(path).read_text(encoding="utf-8")
-                self.migration_script_text.configure(state="normal")
-                self.migration_script_text.delete("1.0", tk.END)
-                self.migration_script_text.insert("1.0", content)
-                self.migration_script_text.configure(state="disabled")
-            except Exception as exc:
-                messagebox.showerror("读取失败", f"无法读取 SQL 文件：{exc}")
+        _ff_select_migration_file(self)
 
     def clear_migration_script(self) -> None:
         self.migration_script_text.configure(state="normal")
@@ -4229,87 +3330,159 @@ class FinFlowManagerApp:
         self.migration_script_text.configure(state="disabled")
 
     def execute_migration(self) -> None:
-        self.save_manager_state()
-        sql_content = self.migration_script_text.get("1.0", tk.END).strip()
-        if not sql_content:
-            messagebox.showwarning("提示", "请先输入或选择 SQL 脚本内容")
-            return
-        
-        sqlcmd = self.ops_vars["sqlcmd_path"].get().strip() or "sqlcmd"
-        config = self.get_effective_config()
-        
-        proceed = messagebox.askyesno("确认执行", "确定要执行此 SQL 脚本吗？\n请确保脚本内容正确，执行后将直接修改数据库。")
-        if not proceed:
-            return
-            
-        ok, detail = execute_sql_script_via_sqlcmd(sql_content, config, sqlcmd)
-        if ok:
-            messagebox.showinfo("执行成功", detail)
-            self.notify_tray("数据库迁移成功", "SQL 脚本已执行")
-        else:
-            messagebox.showerror("执行失败", detail)
+        _ff_execute_migration(self)
 
     def append_deploy_log(self, message: str) -> None:
-        self.deploy_log_text.configure(state="normal")
-        self.deploy_log_text.insert("end", f"[{datetime.now().strftime('%H:%M:%S')}] {message}\n")
-        self.deploy_log_text.see("end")
-        self.deploy_log_text.configure(state="disabled")
-        self.root.update()
+        line = f"[{datetime.now().strftime('%H:%M:%S')}] {message}\n"
+        if threading.current_thread() is threading.main_thread():
+            self.deploy_log_text.configure(state="normal")
+            self.deploy_log_text.insert("end", line)
+            self.deploy_log_text.see("end")
+            self.deploy_log_text.configure(state="disabled")
+            return
+        self.deploy_log_queue.put(line)
 
     def clear_deploy_log(self) -> None:
+        while True:
+            try:
+                self.deploy_log_queue.get_nowait()
+            except queue.Empty:
+                break
         self.deploy_log_text.configure(state="normal")
         self.deploy_log_text.delete("1.0", tk.END)
         self.deploy_log_text.configure(state="disabled")
 
     def start_one_click_deploy(self) -> None:
+        if self.deploy_running:
+            messagebox.showinfo("\u63d0\u793a", "\u4e00\u952e\u90e8\u7f72\u6b63\u5728\u8fd0\u884c\uff0c\u8bf7\u7a0d\u5019")
+            return
         self.save_manager_state()
         self.clear_deploy_log()
-        
+
         mode = self.deploy_mode.get()
         repo_url = self.ops_vars["git_repo_url"].get().strip()
         branch = self.ops_vars["git_branch"].get().strip() or "main"
         sqlcmd = self.ops_vars["sqlcmd_path"].get().strip() or "sqlcmd"
+        release_package_path = self.ops_vars["release_package_path"].get().strip()
         config = self.get_effective_config()
-        
+
         if mode == "git" and not repo_url:
-            messagebox.showerror("错误", "Git 部署模式需要先配置仓库地址")
+            messagebox.showerror("\u9519\u8bef", "Git \u90e8\u7f72\u6a21\u5f0f\u9700\u8981\u5148\u914d\u7f6e\u4ed3\u5e93\u5730\u5740")
             return
         if mode == "zip":
-            pkg = Path(self.ops_vars["release_package_path"].get().strip())
+            pkg = Path(release_package_path)
             if not pkg.exists():
-                messagebox.showerror("错误", "ZIP 部署模式需要先选择发布包文件")
+                messagebox.showerror("\u9519\u8bef", "ZIP \u90e8\u7f72\u6a21\u5f0f\u9700\u8981\u5148\u9009\u62e9\u53d1\u5e03\u5305\u6587\u4ef6")
                 return
-        
+
         proceed = messagebox.askyesno(
-            "确认一键部署",
-            "一键部署将自动执行以下流程：\n"
-            "1. 环境检查（Git/Python/Node/sqlcmd）\n"
-            "2. 停止前后端服务\n"
-            "3. 代码部署（Git 拉取 或 ZIP 升级）\n"
-            "4. 依赖同步（后端 + 前端）\n"
-            "5. 运行配置写入、前端构建与运行配置同步\n"
-            "6. 启动后端服务\n"
-            "7. 启动前端服务\n"
-            "8. 前后端健康检查\n"
-            "9. 数据库后置配置检查（如未配置则提示待处理）\n\n"
-            "是否继续？"
+            "\u786e\u8ba4\u4e00\u952e\u90e8\u7f72",
+            "\u4e00\u952e\u90e8\u7f72\u5c06\u81ea\u52a8\u6267\u884c\u4ee5\u4e0b\u6d41\u7a0b\uff1a\n\n"
+            "1. \u73af\u5883\u68c0\u67e5\uff08Git/Python/Node/sqlcmd\uff09\n"
+            "2. \u505c\u6b62\u524d\u540e\u7aef\u670d\u52a1\n"
+            "3. \u4ee3\u7801\u90e8\u7f72\uff08Git \u62c9\u53d6 \u6216 ZIP \u5347\u7ea7\uff09\n"
+            "4. \u4f9d\u8d56\u540c\u6b65\uff08\u540e\u7aef + \u524d\u7aef\uff09\n"
+            "5. \u8fd0\u884c\u914d\u7f6e\u5199\u5165\u3001\u524d\u7aef\u6784\u5efa\u4e0e\u8fd0\u884c\u914d\u7f6e\u540c\u6b65\n"
+            "6. \u542f\u52a8\u540e\u7aef\u670d\u52a1\n"
+            "7. \u542f\u52a8\u524d\u7aef\u670d\u52a1\n"
+            "8. \u524d\u540e\u7aef\u5065\u5eb7\u68c0\u67e5\n"
+            "9. \u6570\u636e\u5e93\u540e\u7f6e\u914d\u7f6e\u68c0\u67e5\uff08\u5982\u672a\u914d\u7f6e\u5219\u63d0\u793a\u5f85\u5904\u7406\uff09\n\n"
+            "\u662f\u5426\u7ee7\u7eed\uff1f"
         )
         if not proceed:
             return
-        
+
         self.root.config(cursor="watch")
-        self.root.update()
-        
+        self.deploy_running = True
+        self.deploy_thread = threading.Thread(
+            target=self._run_one_click_deploy_worker,
+            args=(mode, repo_url, branch, sqlcmd, config, release_package_path),
+            daemon=True,
+        )
+        self.deploy_thread.start()
+
+
+    def _run_one_click_deploy_worker(
+        self,
+        mode: str,
+        repo_url: str,
+        branch: str,
+        sqlcmd: str,
+        config: Dict[str, str],
+        release_package_path: str,
+    ) -> None:
+        original_showerror = messagebox.showerror
+        original_showinfo = messagebox.showinfo
+        original_showwarning = messagebox.showwarning
+        original_refresh_status = self.refresh_status
+        original_refresh_database_status = self.refresh_database_status
+
+        def _show_modal(dialog, *args, **kwargs):
+            def _invoke():
+                try:
+                    self.root.deiconify()
+                    self.root.lift()
+                    self.root.focus_force()
+                except Exception:
+                    pass
+                kwargs.setdefault("parent", self.root)
+                return dialog(*args, **kwargs)
+
+            return self.call_on_ui_thread(_invoke, wait=True)
+
+        def _safe_showerror(*args, **kwargs):
+            return _show_modal(original_showerror, *args, **kwargs)
+
+        def _safe_showinfo(*args, **kwargs):
+            return _show_modal(original_showinfo, *args, **kwargs)
+
+        def _safe_showwarning(*args, **kwargs):
+            return _show_modal(original_showwarning, *args, **kwargs)
+
+        def _safe_refresh_status():
+            return self.call_on_ui_thread(original_refresh_status)
+
+        def _safe_refresh_database_status(*args, **kwargs):
+            return self.call_on_ui_thread(lambda: original_refresh_database_status(*args, **kwargs), wait=True)
+
+        messagebox.showerror = _safe_showerror
+        messagebox.showinfo = _safe_showinfo
+        messagebox.showwarning = _safe_showwarning
+        self.refresh_status = _safe_refresh_status
+        self.refresh_database_status = _safe_refresh_database_status
+
         try:
-            self._run_one_click_deploy(mode, repo_url, branch, sqlcmd, config)
+            self._run_one_click_deploy(mode, repo_url, branch, sqlcmd, config, release_package_path)
         except RuntimeError:
             pass
         except Exception as exc:
-            self.append_deploy_log(f"部署异常: {exc}")
+            self.append_deploy_log(f"\u90e8\u7f72\u5f02\u5e38\uff1a{exc}")
+            self.append_deploy_log(traceback.format_exc())
+            _safe_showerror("\u4e00\u952e\u90e8\u7f72\u5f02\u5e38", f"{exc}\n\n{traceback.format_exc()}")
         finally:
-            self.root.config(cursor="")
+            messagebox.showerror = original_showerror
+            messagebox.showinfo = original_showinfo
+            messagebox.showwarning = original_showwarning
+            self.refresh_status = original_refresh_status
+            self.refresh_database_status = original_refresh_database_status
+            self.call_on_ui_thread(self._finish_one_click_deploy)
 
-    def _run_one_click_deploy(self, mode: str, repo_url: str, branch: str, sqlcmd: str, config: Dict[str, str]) -> None:
+
+    def _finish_one_click_deploy(self) -> None:
+        self.deploy_running = False
+        self.deploy_thread = None
+        self.root.config(cursor="")
+
+
+    def _run_one_click_deploy(
+        self,
+        mode: str,
+        repo_url: str,
+        branch: str,
+        sqlcmd: str,
+        config: Dict[str, str],
+        release_package_path: str,
+    ) -> None:
         steps_passed = 0
         total_steps = 9
         backend_was_running = self.backend.is_running()
@@ -4317,44 +3490,58 @@ class FinFlowManagerApp:
         services_stopped = False
         backend_started_after_deploy = False
         frontend_started_after_deploy = False
-        
-        self.append_deploy_log(f"{'='*50}")
-        self.append_deploy_log(f"开始一键部署 (模式: {'Git 拉取' if mode == 'git' else 'ZIP 发布包'})")
-        self.append_deploy_log(f"{'='*50}")
+
+        self.append_deploy_log(f"{'=' * 50}")
+        self.append_deploy_log(
+            f"\u5f00\u59cb\u4e00\u952e\u90e8\u7f72 (\u6a21\u5f0f: {'Git \u62c9\u53d6' if mode == 'git' else 'ZIP \u53d1\u5e03\u5305'})"
+        )
+        self.append_deploy_log(f"{'=' * 50}")
+
+        def refresh_status_async() -> None:
+            self.call_on_ui_thread(self.refresh_status)
+
+        def save_runtime_config(runtime_config: Dict[str, str]) -> None:
+            port = (runtime_config.get("APP_PORT") or "").strip()
+            if not port.isdigit():
+                raise ValueError("APP_PORT must be numeric")
+            token_minutes = (runtime_config.get("ACCESS_TOKEN_EXPIRE_MINUTES") or "").strip()
+            if token_minutes and not token_minutes.isdigit():
+                raise ValueError("ACCESS_TOKEN_EXPIRE_MINUTES must be numeric")
+            runtime_config["APP_RELOAD"] = "false"
+            write_env_file(ENV_PATH, runtime_config, self.extra_env_values)
+            self.config_values = dict(runtime_config)
 
         def abort_deploy(reason: str) -> None:
             restore_messages: List[str] = []
 
             if frontend_started_after_deploy and not frontend_was_running and self.frontend.is_running():
                 ok, msg = self.frontend.stop()
-                restore_messages.append(f"清理本次启动前端：{msg}")
+                restore_messages.append(f"\u6e05\u7406\u672c\u6b21\u542f\u52a8\u524d\u7aef\uff1a{msg}")
             if backend_started_after_deploy and not backend_was_running and self.backend.is_running():
                 ok, msg = self.backend.stop()
-                restore_messages.append(f"清理本次启动后端：{msg}")
+                restore_messages.append(f"\u6e05\u7406\u672c\u6b21\u542f\u52a8\u540e\u7aef\uff1a{msg}")
 
             if services_stopped:
                 if backend_was_running and not self.backend.is_running():
                     ok, msg = self.backend.start(config)
-                    restore_messages.append(f"恢复后端：{msg}")
+                    restore_messages.append(f"\u6062\u590d\u540e\u7aef\uff1a{msg}")
                 if frontend_was_running and not self.frontend.is_running():
                     ok, msg = self.frontend.start(config)
-                    restore_messages.append(f"恢复前端：{msg}")
+                    restore_messages.append(f"\u6062\u590d\u524d\u7aef\uff1a{msg}")
 
             self.last_backend_health_state = "unknown"
             self.last_frontend_health_state = "unknown"
-            self.refresh_status()
+            refresh_status_async()
 
             detail = reason
             if restore_messages:
-                detail += "\n\n恢复结果：\n" + "\n".join(restore_messages)
+                detail += "\n\n\u6062\u590d\u7ed3\u679c\uff1a\n" + "\n".join(restore_messages)
             self.append_deploy_log(f"[FAIL] {reason}")
-            messagebox.showerror("一键部署失败", detail)
+            messagebox.showerror("\u4e00\u952e\u90e8\u7f72\u5931\u8d25", detail)
             raise RuntimeError(reason)
-        
-        # Step 1: 环境检查与自动完善
-        self.append_deploy_log(f"[1/{total_steps}] 环境检查...")
-        
-        # 检查 Python
+
+        self.append_deploy_log(f"[1/{total_steps}] \u73af\u5883\u68c0\u67e5...")
+
         python_exe = BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
         system_python = "python"
         try:
@@ -4366,15 +3553,14 @@ class FinFlowManagerApp:
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             if result.returncode == 0:
-                self.append_deploy_log(f"  [OK] 系统 Python 已安装: {result.stdout.strip()}")
+                self.append_deploy_log(f"  [OK] \u7cfb\u7edf Python \u5df2\u5b89\u88c5: {result.stdout.strip()}")
         except Exception:
-            self.append_deploy_log("  [FAIL] 系统未安装 Python，请先安装 Python 3.9+")
-            messagebox.showerror("环境缺失", "请先安装 Python 3.9 或更高版本\n下载地址：https://www.python.org/downloads/")
+            self.append_deploy_log("  [FAIL] \u7cfb\u7edf\u672a\u5b89\u88c5 Python\uff0c\u8bf7\u5148\u5b89\u88c5 Python 3.9+")
+            messagebox.showerror("\u73af\u5883\u7f3a\u5931", "\u8bf7\u5148\u5b89\u88c5 Python 3.9 \u6216\u66f4\u9ad8\u7248\u672c\n\u4e0b\u8f7d\u5730\u5740\uff1ahttps://www.python.org/downloads/")
             return
-        
-        # 检查并创建虚拟环境
+
         if not python_exe.exists():
-            self.append_deploy_log("  正在创建后端虚拟环境...")
+            self.append_deploy_log("  \u6b63\u5728\u521b\u5efa\u540e\u7aef\u865a\u62df\u73af\u5883...")
             try:
                 result = subprocess.run(
                     [system_python, "-m", "venv", str(BACKEND_DIR / ".venv")],
@@ -4385,19 +3571,18 @@ class FinFlowManagerApp:
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
                 if result.returncode == 0:
-                    self.append_deploy_log("  [OK] 后端虚拟环境已创建")
+                    self.append_deploy_log("  [OK] \u540e\u7aef\u865a\u62df\u73af\u5883\u5df2\u521b\u5efa")
                 else:
-                    error_msg = result.stderr or result.stdout or "创建失败"
-                    self.append_deploy_log(f"  [FAIL] 创建虚拟环境失败: {error_msg}")
+                    error_msg = result.stderr or result.stdout or "\u521b\u5efa\u5931\u8d25"
+                    self.append_deploy_log(f"  [FAIL] \u521b\u5efa\u865a\u62df\u73af\u5883\u5931\u8d25: {error_msg}")
                     return
             except Exception as exc:
-                self.append_deploy_log(f"  [FAIL] 创建虚拟环境异常: {exc}")
+                self.append_deploy_log(f"  [FAIL] \u521b\u5efa\u865a\u62df\u73af\u5883\u5f02\u5e38: {exc}")
                 return
         else:
-            self.append_deploy_log("  [OK] 后端虚拟环境已存在")
-        
-        # 升级虚拟环境中的 pip
-        self.append_deploy_log("  正在升级虚拟环境 pip...")
+            self.append_deploy_log("  [OK] \u540e\u7aef\u865a\u62df\u73af\u5883\u5df2\u5b58\u5728")
+
+        self.append_deploy_log("  \u6b63\u5728\u5347\u7ea7\u865a\u62df\u73af\u5883 pip...")
         try:
             upgrade_result = subprocess.run(
                 [str(python_exe), "-m", "pip", "install", "--upgrade", "pip"],
@@ -4408,24 +3593,24 @@ class FinFlowManagerApp:
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             if upgrade_result.returncode == 0:
-                self.append_deploy_log("  [OK] pip 升级成功")
+                self.append_deploy_log("  [OK] pip \u5347\u7ea7\u6210\u529f")
             else:
-                self.append_deploy_log(f"  [WARN] pip 升级失败: {upgrade_result.stderr or upgrade_result.stdout}")
+                self.append_deploy_log(
+                    f"  [WARN] pip \u5347\u7ea7\u5931\u8d25: {upgrade_result.stderr or upgrade_result.stdout}"
+                )
         except Exception as exc:
-            self.append_deploy_log(f"  [WARN] pip 升级异常: {exc}")
-        
-        # 检查 Git
+            self.append_deploy_log(f"  [WARN] pip \u5347\u7ea7\u5f02\u5e38: {exc}")
+
         if not self.check_git_available():
-            self.append_deploy_log("  [FAIL] Git 未安装")
-            messagebox.showerror("环境缺失", "请先安装 Git 并添加到系统 PATH\n下载地址：https://git-scm.com/download/win")
+            self.append_deploy_log("  [FAIL] Git \u672a\u5b89\u88c5")
+            messagebox.showerror("\u73af\u5883\u7f3a\u5931", "\u8bf7\u5148\u5b89\u88c5 Git \u5e76\u6dfb\u52a0\u5230\u7cfb\u7edf PATH\n\u4e0b\u8f7d\u5730\u5740\uff1ahttps://git-scm.com/download/win")
             return
-        self.append_deploy_log("  [OK] Git 可用")
-        
-        # 检查并初始化 Git 仓库
+        self.append_deploy_log("  [OK] Git \u53ef\u7528")
+
         git_dir = ROOT_DIR / ".git"
         if not git_dir.exists():
             if mode == "git" and repo_url:
-                self.append_deploy_log("  正在初始化 Git 仓库...")
+                self.append_deploy_log("  \u6b63\u5728\u521d\u59cb\u5316 Git \u4ed3\u5e93...")
                 try:
                     result = subprocess.run(
                         ["git", "init"],
@@ -4436,9 +3621,7 @@ class FinFlowManagerApp:
                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                     )
                     if result.returncode == 0:
-                        self.append_deploy_log("  [OK] Git 仓库已初始化")
-                        
-                        # 添加远程仓库
+                        self.append_deploy_log("  [OK] Git \u4ed3\u5e93\u5df2\u521d\u59cb\u5316")
                         result = subprocess.run(
                             ["git", "remote", "add", "origin", repo_url],
                             cwd=ROOT_DIR,
@@ -4448,26 +3631,30 @@ class FinFlowManagerApp:
                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                         )
                         if result.returncode == 0:
-                            self.append_deploy_log("  [OK] 远程仓库已配置")
+                            self.append_deploy_log("  [OK] \u8fdc\u7a0b\u4ed3\u5e93\u5df2\u914d\u7f6e")
                         else:
-                            self.append_deploy_log(f"  [WARN] 添加远程仓库失败: {result.stderr}")
+                            self.append_deploy_log(f"  [WARN] \u6dfb\u52a0\u8fdc\u7a0b\u4ed3\u5e93\u5931\u8d25: {result.stderr}")
                     else:
-                        self.append_deploy_log(f"  [FAIL] Git 初始化失败: {result.stderr}")
+                        self.append_deploy_log(f"  [FAIL] Git \u521d\u59cb\u5316\u5931\u8d25: {result.stderr}")
                         return
                 except Exception as exc:
-                    self.append_deploy_log(f"  [FAIL] Git 初始化异常: {exc}")
+                    self.append_deploy_log(f"  [FAIL] Git \u521d\u59cb\u5316\u5f02\u5e38: {exc}")
                     return
             else:
-                self.append_deploy_log("  [WARN] Git 仓库未初始化，且未配置远程仓库地址")
+                self.append_deploy_log("  [WARN] Git \u4ed3\u5e93\u672a\u521d\u59cb\u5316\uff0c\u4e14\u672a\u914d\u7f6e\u8fdc\u7a0b\u4ed3\u5e93\u5730\u5740")
         else:
-            self.append_deploy_log("  [OK] Git 仓库已存在")
-        
-        # 检查 sqlcmd
+            self.append_deploy_log("  [OK] Git \u4ed3\u5e93\u5df2\u5b58\u5728")
+
         try:
-            subprocess.run([sqlcmd, "-?"], capture_output=True, timeout=5, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            self.append_deploy_log("  [OK] sqlcmd 可用")
+            subprocess.run(
+                [sqlcmd, "-?"],
+                capture_output=True,
+                timeout=5,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            self.append_deploy_log("  [OK] sqlcmd \u53ef\u7528")
         except Exception:
-            self.append_deploy_log("  [WARN] sqlcmd 不可用，数据库相关操作将跳过")
+            self.append_deploy_log("  [WARN] sqlcmd \u4e0d\u53ef\u7528\uff0c\u6570\u636e\u5e93\u76f8\u5173\u64cd\u4f5c\u5c06\u8df3\u8fc7")
             sqlcmd = ""
 
         try:
@@ -4479,97 +3666,117 @@ class FinFlowManagerApp:
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             if node_result.returncode == 0:
-                self.append_deploy_log(f"  [OK] Node.js 已安装: {node_result.stdout.strip()}")
+                self.append_deploy_log(f"  [OK] Node.js \u5df2\u5b89\u88c5: {node_result.stdout.strip()}")
             else:
-                self.append_deploy_log("  [FAIL] Node.js 不可用")
-                messagebox.showerror("环境缺失", "请先安装 Node.js 18+ 后再执行一键部署")
+                self.append_deploy_log("  [FAIL] Node.js \u4e0d\u53ef\u7528")
+                messagebox.showerror("\u73af\u5883\u7f3a\u5931", "\u8bf7\u5148\u5b89\u88c5 Node.js 18+ \u540e\u518d\u6267\u884c\u4e00\u952e\u90e8\u7f72")
                 return
         except Exception:
-            self.append_deploy_log("  [FAIL] Node.js 未安装")
-            messagebox.showerror("环境缺失", "请先安装 Node.js 18+ 后再执行一键部署")
+            self.append_deploy_log("  [FAIL] Node.js \u672a\u5b89\u88c5")
+            messagebox.showerror("\u73af\u5883\u7f3a\u5931", "\u8bf7\u5148\u5b89\u88c5 Node.js 18+ \u540e\u518d\u6267\u884c\u4e00\u952e\u90e8\u7f72")
             return
-        
+
         steps_passed += 1
-        
-        # Step 2: 停止前后端服务
-        self.append_deploy_log(f"[2/{total_steps}] 停止前后端服务...")
+
+        self.append_deploy_log(f"[2/{total_steps}] \u505c\u6b62\u524d\u540e\u7aef\u670d\u52a1...")
         if frontend_was_running:
             ok, message = self.frontend.stop()
-            self.append_deploy_log(f"  [{'OK' if ok else 'WARN'}] 前端: {message}")
+            self.append_deploy_log(f"  [{'OK' if ok else 'WARN'}] \u524d\u7aef: {message}")
         else:
-            self.append_deploy_log("  [SKIP] 前端未运行")
+            self.append_deploy_log("  [SKIP] \u524d\u7aef\u672a\u8fd0\u884c")
         if backend_was_running:
             ok, message = self.backend.stop()
-            self.append_deploy_log(f"  [{'OK' if ok else 'WARN'}] 后端: {message}")
+            self.append_deploy_log(f"  [{'OK' if ok else 'WARN'}] \u540e\u7aef: {message}")
         else:
-            self.append_deploy_log("  [SKIP] 后端未运行")
+            self.append_deploy_log("  [SKIP] \u540e\u7aef\u672a\u8fd0\u884c")
         services_stopped = True
         steps_passed += 1
-        
-        # Step 3: 代码部署
-        self.append_deploy_log(f"[3/{total_steps}] 代码部署...")
-        
+
+        self.append_deploy_log(f"[3/{total_steps}] \u4ee3\u7801\u90e8\u7f72...")
+
         if mode == "git":
             if not (ROOT_DIR / ".git").exists():
-                self.append_deploy_log("  初始化 Git 仓库...")
+                self.append_deploy_log("  \u521d\u59cb\u5316 Git \u4ed3\u5e93...")
                 temp_clone_dir = Path(tempfile.mkdtemp(prefix="finflow_git_clone_"))
                 try:
                     result = subprocess.run(
                         ["git", "clone", "--branch", branch, "--depth", "1", repo_url, str(temp_clone_dir)],
-                        capture_output=True, text=True, timeout=300,
+                        capture_output=True,
+                        text=True,
+                        timeout=300,
                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                     )
                     if result.returncode != 0:
-                        abort_deploy(f"Git 克隆失败: {result.stderr.strip()}")
-                    
+                        abort_deploy(f"Git \u514b\u9686\u5931\u8d25: {result.stderr.strip()}")
+
                     backup_root = UPGRADE_BACKUP_DIR / datetime.now().strftime("%Y%m%d_%H%M%S_oneclick")
                     for item_name in ("backend", "frontend", "tools", "deploy"):
                         src = temp_clone_dir / item_name
                         if src.exists():
                             overlay_directory(src, ROOT_DIR / item_name, backup_root)
-                    
-                    self.append_deploy_log(f"  [OK] 代码已克隆并覆盖")
+
+                    self.append_deploy_log("  [OK] \u4ee3\u7801\u5df2\u514b\u9686\u5e76\u8986\u76d6")
                 finally:
                     shutil.rmtree(temp_clone_dir, ignore_errors=True)
             else:
                 diff_result = subprocess.run(
-                    ["git", "diff", "--quiet"], cwd=ROOT_DIR, capture_output=True, timeout=10,
+                    ["git", "diff", "--quiet"],
+                    cwd=ROOT_DIR,
+                    capture_output=True,
+                    timeout=10,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
                 if diff_result.returncode != 0:
                     subprocess.run(
-                        ["git", "stash", "push", "-m", f"One-click deploy auto-stash {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"],
-                        cwd=ROOT_DIR, capture_output=True, text=True, timeout=30,
+                        [
+                            "git",
+                            "stash",
+                            "push",
+                            "-m",
+                            f"One-click deploy auto-stash {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                        ],
+                        cwd=ROOT_DIR,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                     )
-                    self.append_deploy_log("  已暂存本地变更")
-                
+                    self.append_deploy_log("  \u5df2\u6682\u5b58\u672c\u5730\u53d8\u66f4")
+
                 fetch_result = subprocess.run(
-                    ["git", "fetch", "origin", branch], cwd=ROOT_DIR, capture_output=True, text=True, timeout=60,
+                    ["git", "fetch", "origin", branch],
+                    cwd=ROOT_DIR,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
                 if fetch_result.returncode != 0:
-                    abort_deploy(f"Git fetch 失败: {fetch_result.stderr.strip()}")
-                
+                    abort_deploy(f"Git fetch \u5931\u8d25: {fetch_result.stderr.strip()}")
+
                 pull_result = subprocess.run(
-                    ["git", "pull", "origin", branch], cwd=ROOT_DIR, capture_output=True, text=True, timeout=300,
+                    ["git", "pull", "origin", branch],
+                    cwd=ROOT_DIR,
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
                 if pull_result.returncode != 0:
-                    abort_deploy(f"Git pull 失败: {pull_result.stderr.strip()}")
-                
+                    abort_deploy(f"Git pull \u5931\u8d25: {pull_result.stderr.strip()}")
+
                 if "Already up to date" in pull_result.stdout:
-                    self.append_deploy_log("  [OK] 代码已是最新")
+                    self.append_deploy_log("  [OK] \u4ee3\u7801\u5df2\u662f\u6700\u65b0")
                 else:
-                    self.append_deploy_log(f"  [OK] 代码已更新")
+                    self.append_deploy_log("  [OK] \u4ee3\u7801\u5df2\u66f4\u65b0")
         else:
-            package_path = Path(self.ops_vars["release_package_path"].get().strip())
+            package_path = Path(release_package_path)
             extract_dir = Path(tempfile.mkdtemp(prefix="finflow_release_"))
             backup_root = UPGRADE_BACKUP_DIR / datetime.now().strftime("%Y%m%d_%H%M%S_oneclick")
             try:
                 with zipfile.ZipFile(package_path, "r") as archive:
                     archive.extractall(extract_dir)
-                
+
                 release_root = detect_release_root(extract_dir)
                 if (release_root / "backend").exists():
                     overlay_directory(release_root / "backend", ROOT_DIR / "backend", backup_root)
@@ -4579,93 +3786,92 @@ class FinFlowManagerApp:
                     overlay_directory(release_root / "tools", ROOT_DIR / "tools", backup_root)
                 if (release_root / "deploy").exists():
                     overlay_directory(release_root / "deploy", ROOT_DIR / "deploy", backup_root)
-                
-                self.append_deploy_log(f"  [OK] ZIP 发布包已应用")
+
+                self.append_deploy_log("  [OK] ZIP \u53d1\u5e03\u5305\u5df2\u5e94\u7528")
             finally:
                 shutil.rmtree(extract_dir, ignore_errors=True)
-        
+
         steps_passed += 1
-        
-        # Step 4: 依赖同步
-        self.append_deploy_log(f"[4/{total_steps}] 依赖同步...")
+
+        self.append_deploy_log(f"[4/{total_steps}] \u4f9d\u8d56\u540c\u6b65...")
+        self.append_deploy_log("  [RUN] \u5f00\u59cb\u540c\u6b65\u540e\u7aef Python \u4f9d\u8d56...")
         backend_dep_ok, backend_dep_msg = sync_backend_dependencies()
         if backend_dep_ok:
-            self.append_deploy_log(f"  [OK] 后端依赖: {backend_dep_msg}")
+            self.append_deploy_log(f"  [OK] \u540e\u7aef\u4f9d\u8d56: {backend_dep_msg}")
         else:
-            self.append_deploy_log(f"  [WARN] 后端依赖: {backend_dep_msg}")
+            self.append_deploy_log(f"  [WARN] \u540e\u7aef\u4f9d\u8d56: {backend_dep_msg}")
 
+        self.append_deploy_log("  [RUN] \u5f00\u59cb\u540c\u6b65\u524d\u7aef Node.js \u4f9d\u8d56...")
         frontend_dep_ok, frontend_dep_msg = sync_frontend_dependencies()
         if frontend_dep_ok:
-            self.append_deploy_log(f"  [OK] 前端依赖: {frontend_dep_msg}")
+            self.append_deploy_log(f"  [OK] \u524d\u7aef\u4f9d\u8d56: {frontend_dep_msg}")
         else:
-            abort_deploy(f"前端依赖同步失败: {frontend_dep_msg}")
+            abort_deploy(f"\u524d\u7aef\u4f9d\u8d56\u540c\u6b65\u5931\u8d25: {frontend_dep_msg}")
         steps_passed += 1
-        
-        # Step 5: 运行配置写入、前端构建与运行配置同步
-        self.append_deploy_log(f"[5/{total_steps}] 运行配置写入、前端构建与运行配置同步...")
+
+        self.append_deploy_log(f"[5/{total_steps}] \u8fd0\u884c\u914d\u7f6e\u5199\u5165\u3001\u524d\u7aef\u6784\u5efa\u4e0e\u8fd0\u884c\u914d\u7f6e\u540c\u6b65...")
+        self.append_deploy_log("  [RUN] \u51c6\u5907\u5199\u5165 backend/.env ...")
         try:
-            self.save_config_values()
-            config = self.get_effective_config()
-            self.append_deploy_log("  [OK] 后端运行配置已写入 backend/.env")
+            save_runtime_config(config)
+            self.append_deploy_log("  [OK] \u540e\u7aef\u8fd0\u884c\u914d\u7f6e\u5df2\u5199\u5165 backend/.env")
         except Exception as exc:
-            abort_deploy(f"运行配置写入失败: {exc}")
+            abort_deploy(f"\u8fd0\u884c\u914d\u7f6e\u5199\u5165\u5931\u8d25: {exc}")
+        self.append_deploy_log("  [RUN] \u5f00\u59cb\u6267\u884c\u524d\u7aef\u6784\u5efa...")
         fe_ok, fe_msg = build_frontend()
         if fe_ok:
             self.append_deploy_log(f"  [OK] {fe_msg}")
         else:
             self.append_deploy_log(f"  [WARN] {fe_msg}")
+        self.append_deploy_log("  [RUN] \u5f00\u59cb\u540c\u6b65\u524d\u7aef\u8fd0\u884c\u914d\u7f6e...")
         key_ok, key_msg = sync_keys_to_frontend(config)
         if key_ok:
-            self.append_deploy_log(f"  [OK] 前端运行配置: {key_msg}")
+            self.append_deploy_log(f"  [OK] \u524d\u7aef\u8fd0\u884c\u914d\u7f6e: {key_msg}")
         else:
-            abort_deploy(f"前端运行配置同步失败: {key_msg}")
+            abort_deploy(f"\u524d\u7aef\u8fd0\u884c\u914d\u7f6e\u540c\u6b65\u5931\u8d25: {key_msg}")
         steps_passed += 1
-        
-        # Step 6: 启动后端服务
-        self.append_deploy_log(f"[6/{total_steps}] 启动后端服务...")
+
+        self.append_deploy_log(f"[6/{total_steps}] \u542f\u52a8\u540e\u7aef\u670d\u52a1...")
         ok, msg = self.backend.start(config)
         if ok or self.backend.is_running():
             backend_started_after_deploy = True
             self.append_deploy_log(f"  [OK] {msg}")
         else:
-            abort_deploy(f"后端启动失败: {msg}")
+            abort_deploy(f"\u540e\u7aef\u542f\u52a8\u5931\u8d25: {msg}")
         steps_passed += 1
-        
-        self.append_deploy_log("  等待后端服务启动...")
+
+        self.append_deploy_log("  \u7b49\u5f85\u540e\u7aef\u670d\u52a1\u542f\u52a8...")
         time.sleep(3)
 
-        # Step 7: 启动前端服务
-        self.append_deploy_log(f"[7/{total_steps}] 启动前端服务...")
+        self.append_deploy_log(f"[7/{total_steps}] \u542f\u52a8\u524d\u7aef\u670d\u52a1...")
         ok, msg = self.frontend.start(config)
         if ok or self.frontend.is_running():
             frontend_started_after_deploy = True
             self.append_deploy_log(f"  [OK] {msg}")
         else:
-            abort_deploy(f"前端启动失败: {msg}")
+            abort_deploy(f"\u524d\u7aef\u542f\u52a8\u5931\u8d25: {msg}")
         steps_passed += 1
-        self.append_deploy_log("  等待前端服务启动...")
+
+        self.append_deploy_log("  \u7b49\u5f85\u524d\u7aef\u670d\u52a1\u542f\u52a8...")
         time.sleep(2)
-        
-        # Step 8: 健康检查
-        self.append_deploy_log(f"[8/{total_steps}] 健康检查...")
+
+        self.append_deploy_log(f"[8/{total_steps}] \u5065\u5eb7\u68c0\u67e5...")
         host = resolve_browser_host(config.get("APP_HOST", "127.0.0.1"))
         port = config.get("APP_PORT", "8100")
         backend_url = f"http://{host}:{port}"
         frontend_url = resolve_frontend_service_settings(config)["frontend_url"]
         backend_health_ok, backend_health_detail = probe_backend_health(backend_url)
         if backend_health_ok:
-            self.append_deploy_log(f"  [OK] 后端健康检查: {backend_health_detail}")
+            self.append_deploy_log(f"  [OK] \u540e\u7aef\u5065\u5eb7\u68c0\u67e5: {backend_health_detail}")
         else:
-            self.append_deploy_log(f"  [WARN] 后端健康检查: {backend_health_detail}")
+            self.append_deploy_log(f"  [WARN] \u540e\u7aef\u5065\u5eb7\u68c0\u67e5: {backend_health_detail}")
         frontend_health_ok, frontend_health_detail = probe_http(frontend_url)
         if frontend_health_ok:
-            self.append_deploy_log(f"  [OK] 前端健康检查: {frontend_health_detail}")
+            self.append_deploy_log(f"  [OK] \u524d\u7aef\u5065\u5eb7\u68c0\u67e5: {frontend_health_detail}")
         else:
-            self.append_deploy_log(f"  [WARN] 前端健康检查: {frontend_health_detail}")
+            self.append_deploy_log(f"  [WARN] \u524d\u7aef\u5065\u5eb7\u68c0\u67e5: {frontend_health_detail}")
         steps_passed += 1
 
-        # Step 9: 数据库后置配置检查
-        self.append_deploy_log(f"[9/{total_steps}] 数据库后置配置检查...")
+        self.append_deploy_log(f"[9/{total_steps}] \u6570\u636e\u5e93\u540e\u7f6e\u914d\u7f6e\u68c0\u67e5...")
         db_state, db_detail = self.refresh_database_status(
             force_check=True,
             show_dialog=False,
@@ -4679,144 +3885,66 @@ class FinFlowManagerApp:
         else:
             self.append_deploy_log(f"  [WARN] {db_detail}")
         steps_passed += 1
-        
-        self.append_deploy_log(f"{'='*50}")
-        self.append_deploy_log(f"一键部署完成! 通过 {steps_passed}/{total_steps} 个检查点")
-        self.append_deploy_log(f"后端地址: {backend_url}")
-        self.append_deploy_log(f"前端地址: {frontend_url}")
-        self.append_deploy_log(f"{'='*50}")
-        
+
+        self.append_deploy_log(f"{'=' * 50}")
+        self.append_deploy_log(f"\u4e00\u952e\u90e8\u7f72\u5b8c\u6210! \u901a\u8fc7 {steps_passed}/{total_steps} \u4e2a\u68c0\u67e5\u70b9")
+        self.append_deploy_log(f"\u540e\u7aef\u5730\u5740: {backend_url}")
+        self.append_deploy_log(f"\u524d\u7aef\u5730\u5740: {frontend_url}")
+        self.append_deploy_log(f"{'=' * 50}")
+
         self.last_backend_health_state = "unknown"
         self.last_frontend_health_state = "unknown"
-        self.refresh_status()
-        deploy_title = "一键部署完成"
-        deploy_notice = f"通过 {steps_passed}/{total_steps} 个检查点"
+        refresh_status_async()
+        deploy_title = "\u4e00\u952e\u90e8\u7f72\u5b8c\u6210"
+        deploy_notice = f"\u901a\u8fc7 {steps_passed}/{total_steps} \u4e2a\u68c0\u67e5\u70b9"
         deploy_lines = [
-            f"部署成功！通过 {steps_passed}/{total_steps} 个检查点。",
-            f"后端地址：{backend_url}",
-            f"前端地址：{frontend_url}",
+            f"\u90e8\u7f72\u6210\u529f\uff01\u901a\u8fc7 {steps_passed}/{total_steps} \u4e2a\u68c0\u67e5\u70b9\u3002",
+            f"\u540e\u7aef\u5730\u5740\uff1a{backend_url}",
+            f"\u524d\u7aef\u5730\u5740\uff1a{frontend_url}",
         ]
         if not backend_health_ok or not frontend_health_ok:
-            deploy_title = "一键部署完成（需关注）"
-            deploy_notice = "服务已启动，但健康检查存在告警"
+            deploy_title = "\u4e00\u952e\u90e8\u7f72\u5b8c\u6210\uff08\u9700\u5173\u6ce8\uff09"
+            deploy_notice = "\u670d\u52a1\u5df2\u542f\u52a8\uff0c\u4f46\u5065\u5eb7\u68c0\u67e5\u5b58\u5728\u544a\u8b66"
             if not backend_health_ok:
-                deploy_lines.append(f"后端健康检查：异常，{backend_health_detail}")
+                deploy_lines.append(f"\u540e\u7aef\u5065\u5eb7\u68c0\u67e5\uff1a\u5f02\u5e38\uff0c{backend_health_detail}")
             if not frontend_health_ok:
-                deploy_lines.append(f"前端健康检查：异常，{frontend_health_detail}")
+                deploy_lines.append(f"\u524d\u7aef\u5065\u5eb7\u68c0\u67e5\uff1a\u5f02\u5e38\uff0c{frontend_health_detail}")
 
         if db_state == "ok":
-            deploy_lines.append(f"数据库后置检查：正常，{db_detail}")
+            deploy_lines.append(f"\u6570\u636e\u5e93\u540e\u7f6e\u68c0\u67e5\uff1a\u6b63\u5e38\uff0c{db_detail}")
         elif db_state in {"missing_env", "missing_config", "missing_sqlcmd", "missing_runtime"}:
-            if deploy_title == "一键部署完成":
-                deploy_title = "一键部署完成（待补配置）"
-                deploy_notice = "服务已部署完成，数据库仍需后置配置"
-            deploy_lines.append(f"数据库后置检查：待处理，{db_detail}")
+            if deploy_title == "\u4e00\u952e\u90e8\u7f72\u5b8c\u6210":
+                deploy_title = "\u4e00\u952e\u90e8\u7f72\u5b8c\u6210\uff08\u5f85\u8865\u914d\u7f6e\uff09"
+                deploy_notice = "\u670d\u52a1\u5df2\u90e8\u7f72\u5b8c\u6210\uff0c\u6570\u636e\u5e93\u4ecd\u9700\u540e\u7f6e\u914d\u7f6e"
+            deploy_lines.append(f"\u6570\u636e\u5e93\u540e\u7f6e\u68c0\u67e5\uff1a\u5f85\u5904\u7406\uff0c{db_detail}")
         else:
-            deploy_title = "一键部署完成（数据库检查告警）"
-            deploy_notice = "服务已部署完成，但数据库后置检查失败"
-            deploy_lines.append(f"数据库后置检查：异常，{db_detail}")
+            deploy_title = "\u4e00\u952e\u90e8\u7f72\u5b8c\u6210\uff08\u6570\u636e\u5e93\u68c0\u67e5\u544a\u8b66\uff09"
+            deploy_notice = "\u670d\u52a1\u5df2\u90e8\u7f72\u5b8c\u6210\uff0c\u4f46\u6570\u636e\u5e93\u540e\u7f6e\u68c0\u67e5\u5931\u8d25"
+            deploy_lines.append(f"\u6570\u636e\u5e93\u540e\u7f6e\u68c0\u67e5\uff1a\u5f02\u5e38\uff0c{db_detail}")
 
         self.notify_tray(deploy_title, deploy_notice)
-        if deploy_title == "一键部署完成":
+        if deploy_title == "\u4e00\u952e\u90e8\u7f72\u5b8c\u6210":
             messagebox.showinfo(deploy_title, "\n".join(deploy_lines))
         else:
             messagebox.showwarning(deploy_title, "\n".join(deploy_lines))
 
     def manual_cleanup_backups(self) -> None:
-        self.save_manager_state()
-        backup_dir = Path(self.ops_vars["backup_dir"].get().strip() or str(BACKUP_DIR))
-        retention_days = int(self.ops_vars["backup_retention_days"].get().strip() or 30)
-        retention_count = int(self.ops_vars["backup_retention_count"].get().strip() or 10)
-        
-        removed, msg = cleanup_old_backups(backup_dir, retention_days, retention_count)
-        messagebox.showinfo("清理完成", msg)
+        _ff_manual_cleanup_backups(self)
 
     def manual_cleanup_logs(self) -> None:
-        self.save_manager_state()
-        retention_days = int(self.ops_vars["log_archive_retention_days"].get().strip() or 90)
-        
-        removed, msg = cleanup_old_archived_logs(retention_days)
-        messagebox.showinfo("清理完成", msg)
+        _ff_manual_cleanup_logs(self)
 
     def send_test_alert(self) -> None:
-        self.save_manager_state()
-        webhook_url = self.ops_vars["webhook_url"].get().strip()
-        if not webhook_url:
-            messagebox.showwarning("提示", "请先配置 Webhook URL")
-            return
-            
-        ok = send_webhook_notification(webhook_url, "测试告警", "这是一条来自 FinFlow 管理器的测试告警消息。")
-        if ok:
-            messagebox.showinfo("发送成功", "测试告警已发送，请检查接收端。")
-        else:
-            messagebox.showerror("发送失败", "Webhook 发送失败，请检查 URL 和网络连接。")
+        _ff_send_test_alert(self)
 
     def sync_backend_deps(self) -> None:
-        proceed = messagebox.askyesno("确认同步", "将使用 pip 安装 backend/requirements.txt 中的所有依赖。\n这可能需要几分钟，是否继续？")
-        if not proceed:
-            return
-        
-        self.log_status_var.set("当前显示：正在同步后端依赖...")
-        ok, detail = sync_backend_dependencies()
-        if ok:
-            messagebox.showinfo("同步成功", detail)
-            self.notify_tray("依赖同步成功", "后端 Python 依赖已更新")
-        else:
-            messagebox.showerror("同步失败", detail)
+        _ff_sync_backend_deps(self)
 
     def sync_frontend_deps(self) -> None:
-        proceed = messagebox.askyesno("确认同步", "将使用 npm install 安装 frontend/package.json 中的所有依赖。\n这可能需要几分钟，是否继续？")
-        if not proceed:
-            return
-
-        self.log_status_var.set("当前显示：正在同步前端依赖...")
-        ok, detail = sync_frontend_dependencies()
-        if ok:
-            messagebox.showinfo("同步成功", detail)
-            self.notify_tray("依赖同步成功", "前端 Node 依赖已更新")
-        else:
-            messagebox.showerror("同步失败", detail)
+        _ff_sync_frontend_deps(self)
 
     def restore_database(self) -> None:
-        self.save_manager_state()
-        sqlcmd = self.ops_vars["sqlcmd_path"].get().strip() or "sqlcmd"
-        backup_dir = Path(self.ops_vars["backup_dir"].get().strip() or str(BACKUP_DIR))
-        
-        bak_files = sorted(backup_dir.glob("*.bak"), key=lambda p: p.stat().st_mtime, reverse=True)
-        if not bak_files:
-            messagebox.showerror("恢复失败", f"备份目录中未找到 .bak 文件：{backup_dir}")
-            return
-        
-        file_list = [f"{f.name} ({f.stat().st_size / (1024*1024):.1f} MB)" for f in bak_files[:10]]
-        choice_window = tk.Toplevel(self.root)
-        choice_window.title("选择恢复文件")
-        choice_window.geometry("500x350")
-        
-        ttk.Label(choice_window, text="选择要恢复的备份文件：").pack(pady=10)
-        listbox = tk.Listbox(choice_window, height=12, font=("Consolas", 9))
-        listbox.pack(fill="both", expand=True, padx=10, pady=5)
-        for item in file_list:
-            listbox.insert("end", item)
-        
-        def do_restore():
-            sel = listbox.curselection()
-            if not sel:
-                messagebox.showwarning("警告", "请选择一个备份文件")
-                return
-            selected_file = bak_files[sel[0]]
-            proceed = messagebox.askyesno("确认恢复", f"确定要从以下备份恢复数据库吗？\n{selected_file.name}\n\n警告：这将覆盖当前数据库中的所有数据！")
-            if not proceed:
-                return
-            
-            ok, detail = restore_database_from_backup(self.get_effective_config(), selected_file, sqlcmd)
-            choice_window.destroy()
-            if ok:
-                messagebox.showinfo("恢复成功", f"数据库已从 {selected_file.name} 恢复")
-                self.notify_tray("数据库恢复成功", f"已从 {selected_file.name} 恢复")
-            else:
-                messagebox.showerror("恢复失败", detail)
-        
-        ttk.Button(choice_window, text="确认恢复", command=do_restore).pack(pady=10)
+        _ff_restore_database(self)
 
     def hide_to_tray(self) -> None:
         self.root.withdraw()
@@ -4836,7 +3964,7 @@ class FinFlowManagerApp:
         if self.exiting:
             return
         self.exiting = True
-        for job_name in ("status_job", "log_job", "health_job", "db_job"):
+        for job_name in ("status_job", "log_job", "health_job", "db_job", "ui_queue_job"):
             job = getattr(self, job_name)
             if job:
                 try:
@@ -4856,180 +3984,10 @@ class FinFlowManagerApp:
         self.root.destroy()
 
     def refresh_status(self) -> None:
-        backend_status = self.backend.poll_status()
-        frontend_status = self.frontend.poll_status()
-        config = self.get_effective_config()
-        backend_port = (config.get("APP_PORT") or "8100").strip() or "8100"
-        frontend_settings = resolve_frontend_service_settings(config)
-        frontend_port = frontend_settings["frontend_port"]
-        backend_owner_text = "未占用"
-        frontend_owner_text = "未占用"
-        if backend_port.isdigit():
-            owner = get_port_owner_info(int(backend_port))
-            if owner:
-                manager_pid = self.backend.process.pid if self.backend.is_running() and self.backend.process else None
-                backend_owner_text = build_port_owner_label(owner, manager_pid)
-        if frontend_port.isdigit():
-            owner = get_port_owner_info(int(frontend_port))
-            if owner:
-                manager_pid = int(getattr(self.frontend.process, "pid", 0) or 0) if self.frontend.is_running() else None
-                frontend_owner_text = build_port_owner_label(owner, manager_pid)
-        self.status_vars["env_file"].set("已存在" if ENV_PATH.exists() else "缺失")
-        self.status_vars["key_file"].set("已存在" if KEY_PATH.exists() else "缺失")
-        self.status_vars["dist_dir"].set("已存在" if (DIST_DIR / "index.html").exists() else "缺失")
-        self.status_vars["backend_status"].set(backend_status)
-        self.status_vars["backend_port_owner"].set(backend_owner_text)
-        self.status_vars["backend_url"].set(self.get_backend_url())
-        self.status_vars["frontend_status"].set(frontend_status)
-        self.status_vars["frontend_port_owner"].set(frontend_owner_text)
-        self.status_vars["frontend_url"].set(self.get_frontend_url())
-        self.status_vars["startup_status"].set(self.get_startup_status_text())
-        self.status_vars["app_url"].set(self.get_app_url())
-        db_config_state, db_config_detail = describe_database_configuration_from_disk()
-        self.status_vars["db_config_status"].set(format_database_config_status(db_config_state, db_config_detail))
-
-        if (
-            self.backend.last_exit_at > self.last_notified_exit_at
-            and not self.backend.user_stopped
-            and self.backend.last_exit_code is not None
-        ):
-            self.last_notified_exit_at = self.backend.last_exit_at
-            fast_failed = self.backend.register_failed_start_if_needed()
-            self.notify_tray("后端异常退出", f"退出码：{self.backend.last_exit_code}")
-            webhook_url = self.manager_state.get("webhook_url", "")
-            send_webhook_notification(webhook_url, "后端异常退出", f"退出码：{self.backend.last_exit_code}")
-            if self.backend.auto_restart_suppressed:
-                self.status_vars["backend_status"].set(
-                    f"启动失败过多，已暂停自动拉起 (最近退出码 {self.backend.last_exit_code})"
-                )
-                self.notify_tray("已暂停自动拉起", "后端连续快速失败 3 次，请先修复依赖或配置后再手动启动")
-                send_webhook_notification(webhook_url, "已暂停自动拉起", "后端连续快速失败 3 次")
-            elif fast_failed:
-                self.status_vars["backend_status"].set(
-                    f"启动后快速退出，等待自动重试 ({self.backend.consecutive_failed_starts}/3)"
-                )
-
-        if (
-            self.manager_state.get("auto_restart_backend", True)
-            and not self.backend.is_running()
-            and not self.backend.user_stopped
-            and not self.backend.auto_restart_suppressed
-            and time.time() - self.backend.last_start_attempt > 8
-            and self.backend.last_start_attempt > 0
-        ):
-            ok, message = self.backend.start(self.get_effective_config())
-            if ok:
-                self.notify_tray("后端已自动拉起", message)
-                self.status_vars["backend_status"].set(self.backend.poll_status())
-            else:
-                if "端口" in message and "占用" in message:
-                    self.backend.auto_restart_suppressed = True
-                    self.status_vars["backend_status"].set(message)
-                    self.notify_tray("自动拉起已暂停", message)
-
-        if self.backend.is_running():
-            self.backend.consecutive_failed_starts = 0
-
-        if (
-            self.frontend.last_exit_at > self.last_notified_frontend_exit_at
-            and not self.frontend.user_stopped
-            and self.frontend.last_exit_code is not None
-        ):
-            self.last_notified_frontend_exit_at = self.frontend.last_exit_at
-            fast_failed = self.frontend.register_failed_start_if_needed()
-            self.notify_tray("前端异常退出", f"退出码：{self.frontend.last_exit_code}")
-            webhook_url = self.manager_state.get("webhook_url", "")
-            send_webhook_notification(webhook_url, "前端异常退出", f"退出码：{self.frontend.last_exit_code}")
-            if self.frontend.auto_restart_suppressed:
-                self.status_vars["frontend_status"].set(
-                    f"启动失败过多，已暂停自动拉起 (最近退出码 {self.frontend.last_exit_code})"
-                )
-                self.notify_tray("前端已暂停自动拉起", "前端连续快速失败 3 次，请先修复依赖或配置后再手动启动")
-                send_webhook_notification(webhook_url, "前端已暂停自动拉起", "前端连续快速失败 3 次")
-            elif fast_failed:
-                self.status_vars["frontend_status"].set(
-                    f"启动后快速退出，等待自动重试 ({self.frontend.consecutive_failed_starts}/3)"
-                )
-
-        if (
-            self.manager_state.get("auto_restart_frontend", True)
-            and not self.frontend.is_running()
-            and not self.frontend.user_stopped
-            and not self.frontend.auto_restart_suppressed
-            and time.time() - self.frontend.last_start_attempt > 8
-            and self.frontend.last_start_attempt > 0
-        ):
-            ok, message = self.frontend.start(self.get_effective_config())
-            if ok:
-                self.notify_tray("前端已自动拉起", message)
-                self.status_vars["frontend_status"].set(self.frontend.poll_status())
-            else:
-                if "端口" in message and "占用" in message:
-                    self.frontend.auto_restart_suppressed = True
-                    self.frontend._sync_runtime_state(frontend_auto_restart_suppressed=True)
-                    self.status_vars["frontend_status"].set(message)
-                    self.notify_tray("前端自动拉起已暂停", message)
-
-        if self.frontend.is_running():
-            self.frontend.consecutive_failed_starts = 0
-            self.frontend._sync_runtime_state(frontend_consecutive_failed_starts=0)
-
-        self.update_tray_title()
-
-        self.schedule_status_refresh()
+        _ff_refresh_status(self)
 
     def refresh_health_status(self) -> None:
-        if self.exiting:
-            return
-
-        if not self.manager_state.get("enable_health_check", True):
-            self.status_vars["backend_health_status"].set("已关闭")
-            self.status_vars["frontend_health_status"].set("已关闭")
-            self.last_backend_health_state = "unknown"
-            self.last_frontend_health_state = "unknown"
-            self.update_tray_title()
-            self.schedule_health_refresh()
-            return
-
-        backend_ok = False
-        backend_detail = "未运行"
-        backend_state = "unknown"
-        if self.backend.is_running():
-            backend_ok, backend_detail = probe_backend_health(self.get_backend_url())
-            backend_state = "healthy" if backend_ok else "unhealthy"
-        self.status_vars["backend_health_status"].set(f"正常 ({backend_detail})" if backend_ok else f"异常 ({backend_detail})" if backend_state == "unhealthy" else "未运行")
-
-        if self.backend.is_running() and self.last_backend_health_state not in {"unknown", backend_state}:
-            webhook_url = self.manager_state.get("webhook_url", "")
-            if backend_ok:
-                self.notify_tray("后端健康检查恢复", f"{self.get_backend_url()} 已恢复可访问")
-                send_webhook_notification(webhook_url, "后端健康检查恢复", f"{self.get_backend_url()} 已恢复可访问")
-            else:
-                self.notify_tray("后端健康检查异常", f"{self.get_backend_url()} 当前不可访问：{backend_detail}")
-                send_webhook_notification(webhook_url, "后端健康检查异常", f"{self.get_backend_url()} 当前不可访问：{backend_detail}")
-        self.last_backend_health_state = backend_state
-
-        frontend_ok = False
-        frontend_detail = "未运行"
-        frontend_state = "unknown"
-        if self.frontend.is_running():
-            frontend_ok, frontend_detail = probe_http(self.get_frontend_url())
-            frontend_state = "healthy" if frontend_ok else "unhealthy"
-        self.status_vars["frontend_health_status"].set(
-            f"正常 ({frontend_detail})" if frontend_ok else f"异常 ({frontend_detail})" if frontend_state == "unhealthy" else "未运行"
-        )
-
-        if self.frontend.is_running() and self.last_frontend_health_state not in {"unknown", frontend_state}:
-            webhook_url = self.manager_state.get("webhook_url", "")
-            if frontend_ok:
-                self.notify_tray("前端健康检查恢复", f"{self.get_frontend_url()} 已恢复可访问")
-                send_webhook_notification(webhook_url, "前端健康检查恢复", f"{self.get_frontend_url()} 已恢复可访问")
-            else:
-                self.notify_tray("前端健康检查异常", f"{self.get_frontend_url()} 当前不可访问：{frontend_detail}")
-                send_webhook_notification(webhook_url, "前端健康检查异常", f"{self.get_frontend_url()} 当前不可访问：{frontend_detail}")
-        self.last_frontend_health_state = frontend_state
-        self.update_tray_title()
-        self.schedule_health_refresh()
+        _ff_refresh_health_status(self)
 
     def refresh_database_status(
         self,
@@ -5038,147 +3996,1630 @@ class FinFlowManagerApp:
         sqlcmd_override: str | None = None,
         schedule_next: bool = True,
     ) -> Tuple[str, str]:
-        if self.exiting:
-            return "unknown", "应用正在退出"
-
-        monitor_enabled = self.manager_state.get("enable_db_monitor", True)
-        if not force_check and not monitor_enabled:
-            self.status_vars["db_monitor_status"].set("已关闭")
-            self.status_vars["db_connection_status"].set("未检查 (数据库监控已关闭)")
-            if schedule_next:
-                self.schedule_db_refresh()
-            self.last_database_status_state = "unknown"
-            return "disabled", "数据库监控已关闭"
-
-        sqlcmd = (sqlcmd_override if sqlcmd_override is not None else self.ops_vars["sqlcmd_path"].get().strip() or "sqlcmd").strip()
-        state, detail = evaluate_database_runtime_status(sqlcmd)
-        checked_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        self.status_vars["db_connection_status"].set(format_database_connection_status(state, detail))
-        self.status_vars["db_monitor_status"].set("手动检查" if force_check and not monitor_enabled else "监控中" if monitor_enabled else "已关闭")
-        self.status_vars["db_last_check_at"].set(checked_at)
-
-        previous_state = self.last_database_status_state
-        if (
-            monitor_enabled
-            and not force_check
-            and previous_state not in {"unknown", state}
-        ):
-            webhook_url = self.manager_state.get("webhook_url", "")
-            if state == "ok":
-                self.notify_tray("数据库连接已恢复", detail)
-                send_webhook_notification(webhook_url, "数据库连接已恢复", detail)
-            else:
-                self.notify_tray("数据库连接状态变化", detail)
-                send_webhook_notification(webhook_url, "数据库连接状态变化", detail)
-        self.last_database_status_state = state
-
-        if show_dialog:
-            if state == "ok":
-                messagebox.showinfo("数据库连接检查", detail)
-            elif state == "error":
-                messagebox.showerror("数据库连接检查失败", detail)
-            elif state == "missing_env":
-                messagebox.showwarning("数据库待配置", detail)
-            elif state == "missing_config":
-                messagebox.showwarning("数据库配置不完整", detail)
-            elif state == "missing_sqlcmd":
-                messagebox.showwarning("数据库检查工具不可用", detail)
-            elif state == "missing_runtime":
-                messagebox.showwarning("数据库检查环境未就绪", detail)
-            else:
-                messagebox.showwarning("数据库连接检查", detail)
-
-        if schedule_next:
-            self.schedule_db_refresh()
-        return state, detail
+        return _ff_refresh_database_status(self, force_check, show_dialog, sqlcmd_override, schedule_next)
 
     def check_database_connection(self) -> None:
         self.save_manager_state()
         self.refresh_database_status(force_check=True, show_dialog=True, schedule_next=False)
 
     def resolve_log_path(self) -> Path:
-        choice = self.log_choice.get()
-        if choice == "后端错误输出":
-            return STDERR_LOG
-        if choice == "前端标准输出":
-            return FRONTEND_STDOUT_LOG
-        if choice == "前端错误输出":
-            return FRONTEND_STDERR_LOG
-        if choice == "项目同步日志":
-            return PROJECT_SYNC_LOG
-        return STDOUT_LOG
+        return _ff_resolve_log_path(self)
 
     def clear_current_log(self) -> None:
-        path = self.resolve_log_path()
-        if path == PROJECT_SYNC_LOG:
-            confirm = messagebox.askyesno("确认清空", "将清空当前项目同步日志文件，是否继续？")
-        else:
-            confirm = messagebox.askyesno("确认清空", f"将清空当前日志文件：\n{path}\n是否继续？")
-        if not confirm:
-            return
-
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("", encoding="utf-8")
-        except Exception as exc:
-            messagebox.showerror("清空失败", str(exc))
-            return
-
-        self.log_status_var.set("当前显示：日志已清空")
-        self.refresh_log_view(force=True)
+        _ff_clear_current_log(self)
 
     def summarize_log_view(self, path: Path, lines: List[str]) -> tuple[str, str]:
-        if path == PROJECT_SYNC_LOG:
-            return "当前显示：项目同步日志（历史累计）", "\n".join(lines[-300:])
-
-        if path in (FRONTEND_STDOUT_LOG, FRONTEND_STDERR_LOG):
-            marker = self.frontend.last_session_marker
-            started_label = self.frontend.last_session_started_label
-        else:
-            marker = self.backend.last_session_marker
-            started_label = self.backend.last_session_started_label
-        if marker and marker in lines:
-            marker_index = len(lines) - 1 - lines[::-1].index(marker)
-            session_lines = lines[marker_index:]
-            label = f"当前显示：本次启动日志（自 {started_label} 起）"
-            return label, "\n".join(session_lines[-300:])
-
-        label = "当前显示：历史日志（尚未找到本次启动分界线）"
-        return label, "\n".join(lines[-300:])
+        return _ff_summarize_log_view(self, path, lines)
 
     def refresh_log_view(self, force: bool = False) -> None:
-        if self.exiting:
-            return
-        if not force and not self.log_auto_refresh.get():
-            self.schedule_log_refresh()
-            return
-
-        path = self.resolve_log_path()
-        content = ""
-        if path.exists():
-            try:
-                raw_bytes = path.read_bytes()
-                lines = decode_console_output(raw_bytes).splitlines()
-                status_text, content = self.summarize_log_view(path, lines)
-                self.log_status_var.set(status_text)
-            except Exception as exc:
-                content = f"读取日志失败：{exc}"
-                self.log_status_var.set("当前显示：日志读取失败")
-        else:
-            content = f"日志文件不存在：{path}"
-            self.log_status_var.set("当前显示：日志文件不存在")
-
-        self.log_text.configure(state="normal")
-        self.log_text.delete("1.0", tk.END)
-        self.log_text.insert("1.0", content)
-        self.log_text.configure(state="disabled")
-        self.log_text.see(tk.END)
-
-        self.schedule_log_refresh()
+        _ff_refresh_log_view(self, force)
 
     def run(self) -> None:
         self.root.mainloop()
+
+
+def describe_database_configuration(config: Dict[str, str]) -> Tuple[str, str]:
+    conn, missing = get_database_connection_issues(config)
+    if missing:
+        return "missing_config", f"\u6570\u636e\u5e93\u8fde\u63a5\u914d\u7f6e\u4e0d\u5b8c\u6574\uff0c\u7f3a\u5c11\u5b57\u6bb5: {', '.join(missing)}"
+    return "ready", f"{conn['host']}:{conn['port']} / {conn['dbname']} / \u7528\u6237 {conn['user']}"
+
+
+def describe_database_configuration_from_disk() -> Tuple[str, str]:
+    if not ENV_PATH.exists():
+        return "missing_env", "\u672a\u627e\u5230 backend/.env\uff0c\u5f53\u524d\u8fd8\u6ca1\u6709\u53ef\u4f9b\u68c0\u67e5\u7684\u6570\u636e\u5e93\u8fde\u63a5\u914d\u7f6e"
+    return describe_database_configuration(load_effective_config_from_disk())
+
+
+def check_database_connectivity_via_backend_runtime(config: Dict[str, str]) -> Tuple[bool, str]:
+    python_exe = BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
+    if not python_exe.exists():
+        return False, f"\u672a\u627e\u5230\u540e\u7aef\u865a\u62df\u73af\u5883 Python: {python_exe}"
+
+    env = os.environ.copy()
+    env.update(config)
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    script = (
+        "from sqlalchemy import create_engine, text\n"
+        "from database import _build_database_url, _connect_args\n"
+        "engine = create_engine(_build_database_url(), pool_pre_ping=True, connect_args=_connect_args)\n"
+        "with engine.connect() as conn:\n"
+        "    conn.execute(text('SELECT 1'))\n"
+        "print('\\u6570\\u636e\\u5e93\\u8fde\\u63a5\\u6210\\u529f')\n"
+    )
+    try:
+        result = subprocess.run(
+            [str(python_exe), "-c", script],
+            cwd=BACKEND_DIR,
+            env=env,
+            capture_output=True,
+            text=False,
+            timeout=20,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception as exc:
+        return False, f"\u540e\u7aef\u8fd0\u884c\u65f6\u6570\u636e\u5e93\u63a2\u6d4b\u5931\u8d25: {exc}"
+
+    stdout_text = decode_console_output(result.stdout or b"").strip()
+    stderr_text = decode_console_output(result.stderr or b"").strip()
+    if result.returncode == 0:
+        conn = extract_db_connection(config)
+        return True, stdout_text or f"\u6570\u636e\u5e93 {conn.get('dbname') or ''} \u8fde\u63a5\u6b63\u5e38".strip()
+    combined_text = stderr_text or stdout_text or "\u6570\u636e\u5e93\u8fde\u63a5\u5931\u8d25"
+    if "ModuleNotFoundError" in combined_text or "No module named" in combined_text:
+        return False, f"\u540e\u7aef\u8fd0\u884c\u73af\u5883\u7f3a\u5c11\u6570\u636e\u5e93\u4f9d\u8d56\uff0c\u65e0\u6cd5\u5b8c\u6210\u8fde\u63a5\u68c0\u67e5: {combined_text}"
+    return False, combined_text
+
+
+def evaluate_database_runtime_status(sqlcmd: str = "sqlcmd") -> Tuple[str, str]:
+    config_state, config_detail = describe_database_configuration_from_disk()
+    if config_state != "ready":
+        return config_state, config_detail
+
+    config = load_effective_config_from_disk()
+    backend_host = resolve_browser_host(config.get("APP_HOST", "127.0.0.1"))
+    backend_port = (config.get("APP_PORT") or "8100").strip() or "8100"
+    if backend_port.isdigit():
+        backend_ok, payload, _ = fetch_backend_health_payload(f"http://{backend_host}:{backend_port}")
+        if payload:
+            database_status = payload.get("database")
+            if backend_ok and database_status == "ok":
+                conn = extract_db_connection(config)
+                return "ok", f"\u6570\u636e\u5e93 {conn.get('dbname') or ''} \u8fde\u63a5\u6b63\u5e38\uff08\u6765\u81ea\u540e\u7aef\u5065\u5eb7\u68c0\u67e5\uff09".strip()
+            if database_status and database_status != "ok":
+                return "error", f"\u540e\u7aef\u5065\u5eb7\u68c0\u67e5\u8fd4\u56de\u6570\u636e\u5e93\u72b6\u6001: {database_status}"
+
+    runtime_python = BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
+    if runtime_python.exists():
+        ok, detail = check_database_connectivity_via_backend_runtime(config)
+        if ok:
+            return "ok", detail
+        if "\u7f3a\u5c11\u6570\u636e\u5e93\u4f9d\u8d56" in detail:
+            return "missing_runtime", detail
+        return "error", detail
+
+    sqlcmd = (sqlcmd or "").strip()
+    sqlcmd_available = False
+    if sqlcmd:
+        sqlcmd_path = Path(sqlcmd)
+        sqlcmd_available = sqlcmd_path.exists() if sqlcmd_path.suffix else shutil.which(sqlcmd) is not None
+    if not sqlcmd_available:
+        return "missing_runtime", "\u672a\u627e\u5230\u540e\u7aef\u8fd0\u884c\u65f6 Python\uff0c\u4e5f\u65e0\u6cd5\u4f7f\u7528 sqlcmd\uff0c\u65e0\u6cd5\u6267\u884c\u6570\u636e\u5e93\u8fde\u63a5\u68c0\u67e5"
+
+    ok, detail = check_database_connectivity(config, sqlcmd)
+    return ("ok" if ok else "error"), detail
+
+
+def format_database_config_status(state: str, detail: str) -> str:
+    prefix = {
+        "ready": "\u5df2\u5c31\u7eea",
+        "missing_env": "\u672a\u627e\u5230\u73af\u5883\u6587\u4ef6",
+        "missing_config": "\u914d\u7f6e\u4e0d\u5b8c\u6574",
+    }.get(state, "\u672a\u77e5")
+    return f"{prefix} ({detail})"
+
+
+def format_database_connection_status(state: str, detail: str) -> str:
+    prefix = {
+        "ok": "\u6b63\u5e38",
+        "error": "\u5f02\u5e38",
+        "missing_env": "\u672a\u627e\u5230\u73af\u5883\u6587\u4ef6",
+        "missing_config": "\u914d\u7f6e\u4e0d\u5b8c\u6574",
+        "missing_sqlcmd": "sqlcmd \u4e0d\u53ef\u7528",
+        "missing_runtime": "\u8fd0\u884c\u65f6\u7f3a\u5931",
+        "disabled": "\u5df2\u7981\u7528",
+    }.get(state, "\u672a\u68c0\u67e5")
+    return f"{prefix} ({detail})"
+
+
+def run_database_backup(config: Dict[str, str], backup_dir: Path, sqlcmd: str) -> Tuple[bool, str]:
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    conn = extract_db_connection(config)
+    missing = [key for key in ("host", "port", "user", "dbname") if not conn.get(key)]
+    if missing:
+        return False, f"\u6570\u636e\u5e93\u8fde\u63a5\u914d\u7f6e\u4e0d\u5b8c\u6574\uff0c\u7f3a\u5c11\u5b57\u6bb5: {', '.join(missing)}"
+
+    filename = f"finflow_{datetime.now().strftime('%Y%m%d_%H%M%S')}.bak"
+    target_file = backup_dir / filename
+    query = f"BACKUP DATABASE [{conn['dbname']}] TO DISK = N'{target_file}' WITH INIT, NAME = N'FinFlow Full Backup'"
+    cmd = [sqlcmd, "-S", f"{conn['host']},{conn['port']}", "-U", conn["user"], "-d", conn["dbname"], "-Q", query]
+    if conn.get("password"):
+        cmd.extend(["-P", conn["password"]])
+
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=ROOT_DIR,
+            capture_output=True,
+            text=False,
+            timeout=600,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except FileNotFoundError:
+        return False, f"\u672a\u627e\u5230 sqlcmd: {sqlcmd}"
+    except Exception as exc:
+        return False, f"\u6267\u884c sqlcmd \u5907\u4efd\u5931\u8d25: {exc}"
+
+    stdout_text = decode_console_output(result.stdout or b"")
+    stderr_text = decode_console_output(result.stderr or b"")
+    if result.returncode != 0:
+        if target_file.exists():
+            remove_path(target_file)
+        return False, (stderr_text or stdout_text or "\u5907\u4efd\u5931\u8d25").strip()
+    return True, str(target_file)
+
+
+def check_database_connectivity(config: Dict[str, str], sqlcmd: str = "sqlcmd") -> Tuple[bool, str]:
+    conn, missing = get_database_connection_issues(config)
+    if missing:
+        return False, f"\u6570\u636e\u5e93\u8fde\u63a5\u914d\u7f6e\u4e0d\u5b8c\u6574\uff0c\u7f3a\u5c11\u5b57\u6bb5: {', '.join(missing)}"
+
+    try:
+        cmd = [sqlcmd, "-S", f"{conn['host']},{conn['port']}", "-U", conn["user"], "-d", conn["dbname"], "-Q", "SELECT 1", "-b"]
+        if conn.get("password"):
+            cmd.extend(["-P", conn["password"]])
+
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        result = subprocess.run(cmd, capture_output=True, text=False, timeout=15, creationflags=creationflags)
+        if result.returncode == 0:
+            return True, f"\u6570\u636e\u5e93 {conn['dbname']} \u8fde\u63a5\u6b63\u5e38"
+        stderr_text = decode_console_output(result.stderr or b"")
+        stdout_text = decode_console_output(result.stdout or b"")
+        return False, (stderr_text or stdout_text or "\u6570\u636e\u5e93\u8fde\u63a5\u5931\u8d25").strip()
+    except FileNotFoundError:
+        return False, f"\u672a\u627e\u5230 sqlcmd: {sqlcmd}"
+    except Exception as exc:
+        return False, f"\u6570\u636e\u5e93\u8fde\u63a5\u68c0\u67e5\u5931\u8d25: {exc}"
+
+
+def _is_port_conflict_message(message: str) -> bool:
+    text = (message or "").lower()
+    return any(token in text for token in ("\u7aef\u53e3", "\u5360\u7528", "port", "occupied", "address already in use"))
+
+
+def _clean_poll_status(self: Any) -> str:
+    if self.is_running():
+        pid = int(getattr(getattr(self, "process", None), "pid", 0) or 0)
+        return f"\u8fd0\u884c\u4e2d (PID {pid})"
+    exit_code = self.capture_exit()
+    if exit_code is not None:
+        return f"\u5df2\u9000\u51fa (code {exit_code})"
+    return "\u672a\u8fd0\u884c"
+
+
+def _managed_backend_poll_status(self: Any) -> str:
+    state = self._state()
+    host_pid = int(state.get("service_host_pid") or 0)
+    backend_pid = int(state.get("backend_pid") or 0)
+    if state.get("service_host_alive") and state.get("backend_alive"):
+        return f"\u8fd0\u884c\u4e2d (\u4e3b\u63a7 PID {host_pid}, \u540e\u7aef PID {backend_pid})"
+    if state.get("service_host_alive"):
+        return f"\u4e3b\u63a7\u8fdb\u7a0b\u8fd0\u884c\u4e2d (PID {host_pid})\uff0c\u7b49\u5f85\u540e\u7aef\u5c31\u7eea"
+    if state.get("backend_alive"):
+        return f"\u540e\u7aef\u8fd0\u884c\u4e2d (PID {backend_pid})\uff0c\u4f46\u4e3b\u63a7\u8fdb\u7a0b\u5df2\u4e22\u5931"
+    if state.get("last_exit_code") is not None:
+        return f"\u672a\u8fd0\u884c (\u4e0a\u6b21\u9000\u51fa code {state['last_exit_code']})"
+    return "\u672a\u8fd0\u884c"
+
+
+def _ff_build_status_tab(self: Any, parent: ttk.Frame) -> None:
+    db_config_state, db_config_detail = describe_database_configuration_from_disk()
+    parent.columnconfigure(0, weight=1)
+    parent.rowconfigure(1, weight=1)
+    self.status_badges = {}
+
+    status_items = {
+        "project_root": str(ROOT_DIR),
+        "env_file": "\u5df2\u5b58\u5728" if ENV_PATH.exists() else "\u4e0d\u5b58\u5728",
+        "key_file": "\u5df2\u5b58\u5728" if KEY_PATH.exists() else "\u4e0d\u5b58\u5728",
+        "dist_dir": "\u5df2\u5b58\u5728" if (DIST_DIR / "index.html").exists() else "\u4e0d\u5b58\u5728",
+        "backend_status": self.backend.poll_status(),
+        "backend_port_owner": "\u672a\u68c0\u6d4b",
+        "backend_health_status": "\u672a\u68c0\u67e5",
+        "backend_url": self.get_backend_url(),
+        "frontend_status": self.frontend.poll_status(),
+        "frontend_port_owner": "\u672a\u68c0\u6d4b",
+        "frontend_health_status": "\u672a\u68c0\u67e5",
+        "frontend_url": self.get_frontend_url(),
+        "db_config_status": format_database_config_status(db_config_state, db_config_detail),
+        "db_connection_status": "\u672a\u68c0\u67e5",
+        "db_monitor_status": "\u5df2\u542f\u7528" if self.manager_state.get("enable_db_monitor", True) else "\u5df2\u7981\u7528",
+        "db_last_check_at": "\u672a\u68c0\u67e5",
+        "startup_status": self.get_startup_status_text(),
+        "app_url": self.get_app_url(),
+    }
+    for key, value in status_items.items():
+        self.status_vars[key] = tk.StringVar(value=value)
+
+    overview = ttk.LabelFrame(parent, text="\u6982\u89c8", padding=12)
+    overview.grid(row=0, column=0, sticky="nsew", padx=10, pady=(10, 6))
+    for col in (1, 3):
+        overview.columnconfigure(col, weight=1)
+
+    overview_fields = [
+        ("\u9879\u76ee\u76ee\u5f55", "project_root", 0, 0, 320),
+        ("\u5e94\u7528\u5165\u53e3", "app_url", 0, 2, 320),
+        ("\u73af\u5883\u6587\u4ef6", "env_file", 1, 0, 180),
+        ("\u5bc6\u94a5\u6587\u4ef6", "key_file", 1, 2, 180),
+        ("\u524d\u7aef\u6784\u5efa", "dist_dir", 2, 0, 180),
+        ("\u542f\u52a8\u72b6\u6001", "startup_status", 2, 2, 180),
+    ]
+    for label_text, key, row, col, wrap_length in overview_fields:
+        ttk.Label(overview, text=f"{label_text}\uff1a").grid(row=row, column=col, sticky="w", padx=(0, 6), pady=4)
+        ttk.Label(overview, textvariable=self.status_vars[key], justify="left", wraplength=wrap_length).grid(
+            row=row, column=col + 1, sticky="w", padx=(0, 16), pady=4
+        )
+
+    dashboard = ttk.Frame(parent)
+    dashboard.grid(row=1, column=0, sticky="nsew", padx=10, pady=6)
+    dashboard.columnconfigure(0, weight=1)
+    dashboard.columnconfigure(1, weight=1)
+    dashboard.rowconfigure(0, weight=1)
+    dashboard.rowconfigure(1, weight=1)
+
+    sections = [
+        ("\u540e\u7aef\u670d\u52a1", [("\u8fd0\u884c\u72b6\u6001", "backend_status"), ("\u7aef\u53e3\u5360\u7528", "backend_port_owner"), ("\u5065\u5eb7\u68c0\u67e5", "backend_health_status"), ("\u8bbf\u95ee\u5730\u5740", "backend_url")], 0, 0),
+        ("\u524d\u7aef\u670d\u52a1", [("\u8fd0\u884c\u72b6\u6001", "frontend_status"), ("\u7aef\u53e3\u5360\u7528", "frontend_port_owner"), ("\u5065\u5eb7\u68c0\u67e5", "frontend_health_status"), ("\u8bbf\u95ee\u5730\u5740", "frontend_url")], 0, 1),
+        ("\u6570\u636e\u5e93\u72b6\u6001", [("\u914d\u7f6e\u72b6\u6001", "db_config_status"), ("\u8fde\u63a5\u72b6\u6001", "db_connection_status"), ("\u76d1\u63a7\u72b6\u6001", "db_monitor_status"), ("\u4e0a\u6b21\u68c0\u67e5", "db_last_check_at")], 1, 0),
+        ("\u5feb\u6377\u64cd\u4f5c", [], 1, 1),
+    ]
+    for title, fields, row, column in sections:
+        frame = ttk.LabelFrame(dashboard, text=title, padding=12)
+        frame.grid(row=row, column=column, sticky="nsew", padx=6, pady=6)
+        frame.columnconfigure(1, weight=1)
+        if fields:
+            for field_row, (label_text, key) in enumerate(fields):
+                ttk.Label(frame, text=f"{label_text}\uff1a").grid(row=field_row, column=0, sticky="nw", padx=(0, 8), pady=4)
+                if key in {"backend_status", "frontend_status", "backend_health_status", "frontend_health_status", "db_connection_status", "db_monitor_status"}:
+                    badge = tk.Label(frame, textvariable=self.status_vars[key], anchor="w", justify="left", padx=8, pady=3, relief="groove", bd=1)
+                    badge.grid(row=field_row, column=1, sticky="ew", pady=4)
+                    self.status_badges[key] = badge
+                else:
+                    wrap_length = 320 if key in {"db_config_status", "backend_url", "frontend_url"} else 240
+                    ttk.Label(frame, textvariable=self.status_vars[key], justify="left", wraplength=wrap_length).grid(
+                        row=field_row, column=1, sticky="w", pady=4
+                    )
+        else:
+            action_groups = [
+                ("\u5168\u90e8\u670d\u52a1", [("\u542f\u52a8\u5168\u90e8", self.handle_start_all), ("\u505c\u6b62\u5168\u90e8", self.handle_stop_all), ("\u91cd\u542f\u5168\u90e8", self.handle_restart_all), ("\u6253\u5f00\u524d\u7aef", self.open_frontend), ("\u6253\u5f00\u65e5\u5fd7\u76ee\u5f55", self.open_logs_folder), ("\u6700\u5c0f\u5316\u5230\u6258\u76d8", self.hide_to_tray)]),
+                ("\u540e\u7aef\u670d\u52a1", [("\u542f\u52a8\u540e\u7aef", self.handle_start_backend), ("\u505c\u6b62\u540e\u7aef", self.handle_stop_backend), ("\u91cd\u542f\u540e\u7aef", self.handle_restart_backend), ("\u63a5\u7ba1\u540e\u7aef", self.handle_takeover_backend), ("\u91ca\u653e\u7aef\u53e3", self.handle_force_release_port)]),
+                ("\u524d\u7aef\u4e0e\u6570\u636e\u5e93", [("\u542f\u52a8\u524d\u7aef", self.handle_start_frontend), ("\u505c\u6b62\u524d\u7aef", self.handle_stop_frontend), ("\u91cd\u542f\u524d\u7aef", self.handle_restart_frontend), ("\u68c0\u67e5\u6570\u636e\u5e93", self.check_database_connection)]),
+            ]
+            frame.columnconfigure(0, weight=1)
+            for group_row, (group_title, action_specs) in enumerate(action_groups):
+                group = ttk.LabelFrame(frame, text=group_title, padding=8)
+                group.grid(row=group_row, column=0, sticky="ew", pady=4)
+                for action_col in range(3):
+                    group.columnconfigure(action_col, weight=1)
+                for idx, (button_text, command) in enumerate(action_specs):
+                    ttk.Button(group, text=button_text, command=command).grid(row=idx // 3, column=idx % 3, sticky="ew", padx=3, pady=3)
+
+    self.refresh_status_badges()
+
+
+def _ff_get_status_badge_palette(self: Any, key: str, value: str) -> Tuple[str, str]:
+    text = (value or "").lower()
+    if any(keyword in text for keyword in ("\u8fd0\u884c\u4e2d", "\u6b63\u5e38", "\u5df2\u542f\u7528", "\u5df2\u5c31\u7eea", "\u5df2\u5b58\u5728", "http 200", "\u53ef\u8bbf\u95ee")):
+        return "#e8f7ee", "#156f3d"
+    if any(keyword in text for keyword in ("\u672a\u8fd0\u884c", "\u672a\u68c0\u67e5", "\u5df2\u7981\u7528", "\u4e0d\u5b58\u5728", "\u7b49\u5f85\u4e2d", "\u624b\u52a8\u68c0\u67e5", "\u672a\u68c0\u6d4b")):
+        return "#eef2f7", "#5b6575"
+    if any(keyword in text for keyword in ("\u672a\u627e\u5230\u73af\u5883\u6587\u4ef6", "\u914d\u7f6e\u4e0d\u5b8c\u6574", "\u7f3a\u5c11", "\u8fd0\u884c\u65f6\u7f3a\u5931", "\u4e0d\u53ef\u7528", "\u5f85\u914d\u7f6e", "warn")):
+        return "#fff5dd", "#8a5a00"
+    if any(keyword in text for keyword in ("\u5f02\u5e38", "\u5931\u8d25", "\u5df2\u9000\u51fa", "\u4e0d\u53ef\u8bbf\u95ee", "error", "traceback")):
+        return "#fdeceb", "#b42318"
+    if key in {"backend_health_status", "frontend_health_status", "db_connection_status"}:
+        return "#eef2f7", "#5b6575"
+    return "#f4f4f5", "#374151"
+
+
+def _ff_manual_cleanup_backups(self: Any) -> None:
+    self.save_manager_state()
+    backup_dir = Path(self.ops_vars["backup_dir"].get().strip() or str(BACKUP_DIR))
+    retention_days = int(self.ops_vars["backup_retention_days"].get().strip() or 30)
+    retention_count = int(self.ops_vars["backup_retention_count"].get().strip() or 10)
+    _removed, msg = cleanup_old_backups(backup_dir, retention_days, retention_count)
+    messagebox.showinfo("\u6e05\u7406\u5b8c\u6210", msg)
+
+
+def _ff_manual_cleanup_logs(self: Any) -> None:
+    self.save_manager_state()
+    retention_days = int(self.ops_vars["log_archive_retention_days"].get().strip() or 90)
+    _removed, msg = cleanup_old_archived_logs(retention_days)
+    messagebox.showinfo("\u6e05\u7406\u5b8c\u6210", msg)
+
+
+def _ff_send_test_alert(self: Any) -> None:
+    self.save_manager_state()
+    webhook_url = self.ops_vars["webhook_url"].get().strip()
+    if not webhook_url:
+        messagebox.showwarning("\u7f3a\u5c11\u914d\u7f6e", "\u8bf7\u5148\u586b\u5199\u544a\u8b66 Webhook URL")
+        return
+    ok = send_webhook_notification(webhook_url, "\u6d4b\u8bd5\u544a\u8b66", "\u8fd9\u662f\u4e00\u6761\u6765\u81ea FinFlow \u670d\u52a1\u7ba1\u7406\u5668\u7684\u6d4b\u8bd5\u544a\u8b66\u6d88\u606f\u3002")
+    if ok:
+        messagebox.showinfo("\u53d1\u9001\u6210\u529f", "\u6d4b\u8bd5\u544a\u8b66\u5df2\u53d1\u9001\uff0c\u8bf7\u5728 Webhook \u63a5\u6536\u7aef\u786e\u8ba4\u6d88\u606f\u3002")
+    else:
+        messagebox.showerror("\u53d1\u9001\u5931\u8d25", "Webhook \u6d4b\u8bd5\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5 URL \u662f\u5426\u6b63\u786e\u4e14\u63a5\u6536\u7aef\u53ef\u8fbe\u3002")
+
+
+def _ff_sync_backend_deps(self: Any) -> None:
+    proceed = messagebox.askyesno("\u540c\u6b65\u540e\u7aef\u4f9d\u8d56", "\u5c06\u4f7f\u7528 pip \u6839\u636e backend/requirements.txt \u540c\u6b65\u540e\u7aef Python \u4f9d\u8d56\u3002\n\u8fd9\u53ef\u80fd\u9700\u8981\u51e0\u5206\u949f\uff0c\u662f\u5426\u7ee7\u7eed\uff1f")
+    if not proceed:
+        return
+    self.log_status_var.set("\u6b63\u5728\u540c\u6b65\u540e\u7aef Python \u4f9d\u8d56...")
+    ok, detail = sync_backend_dependencies()
+    if ok:
+        messagebox.showinfo("\u540c\u6b65\u5b8c\u6210", detail)
+        self.notify_tray("\u540e\u7aef\u4f9d\u8d56\u540c\u6b65\u5b8c\u6210", "\u540e\u7aef Python \u4f9d\u8d56\u5df2\u540c\u6b65")
+    else:
+        messagebox.showerror("\u540c\u6b65\u5931\u8d25", detail)
+
+
+def _ff_sync_frontend_deps(self: Any) -> None:
+    proceed = messagebox.askyesno("\u540c\u6b65\u524d\u7aef\u4f9d\u8d56", "\u5c06\u4f7f\u7528 npm install \u6839\u636e frontend/package.json \u540c\u6b65\u524d\u7aef\u4f9d\u8d56\u3002\n\u8fd9\u53ef\u80fd\u9700\u8981\u51e0\u5206\u949f\uff0c\u662f\u5426\u7ee7\u7eed\uff1f")
+    if not proceed:
+        return
+    self.log_status_var.set("\u6b63\u5728\u540c\u6b65\u524d\u7aef Node \u4f9d\u8d56...")
+    ok, detail = sync_frontend_dependencies()
+    if ok:
+        messagebox.showinfo("\u540c\u6b65\u5b8c\u6210", detail)
+        self.notify_tray("\u524d\u7aef\u4f9d\u8d56\u540c\u6b65\u5b8c\u6210", "\u524d\u7aef Node \u4f9d\u8d56\u5df2\u540c\u6b65")
+    else:
+        messagebox.showerror("\u540c\u6b65\u5931\u8d25", detail)
+
+
+def _ff_refresh_status(self: Any) -> None:
+    backend_status = self.backend.poll_status()
+    frontend_status = self.frontend.poll_status()
+    config = self.get_effective_config()
+    backend_port = (config.get("APP_PORT") or "8100").strip() or "8100"
+    frontend_settings = resolve_frontend_service_settings(config)
+    frontend_port = frontend_settings["frontend_port"]
+    backend_owner_text = "\u672a\u68c0\u6d4b"
+    frontend_owner_text = "\u672a\u68c0\u6d4b"
+
+    if backend_port.isdigit():
+        owner = get_port_owner_info(int(backend_port))
+        if owner:
+            manager_pid = self.backend.process.pid if self.backend.is_running() and self.backend.process else None
+            backend_owner_text = build_port_owner_label(owner, manager_pid)
+    if frontend_port.isdigit():
+        owner = get_port_owner_info(int(frontend_port))
+        if owner:
+            manager_pid = int(getattr(self.frontend.process, "pid", 0) or 0) if self.frontend.is_running() else None
+            frontend_owner_text = build_port_owner_label(owner, manager_pid)
+
+    self.status_vars["env_file"].set("\u5df2\u5b58\u5728" if ENV_PATH.exists() else "\u4e0d\u5b58\u5728")
+    self.status_vars["key_file"].set("\u5df2\u5b58\u5728" if KEY_PATH.exists() else "\u4e0d\u5b58\u5728")
+    self.status_vars["dist_dir"].set("\u5df2\u5b58\u5728" if (DIST_DIR / "index.html").exists() else "\u4e0d\u5b58\u5728")
+    self.status_vars["backend_status"].set(backend_status)
+    self.status_vars["backend_port_owner"].set(backend_owner_text)
+    self.status_vars["backend_url"].set(self.get_backend_url())
+    self.status_vars["frontend_status"].set(frontend_status)
+    self.status_vars["frontend_port_owner"].set(frontend_owner_text)
+    self.status_vars["frontend_url"].set(self.get_frontend_url())
+    self.status_vars["startup_status"].set(self.get_startup_status_text())
+    self.status_vars["app_url"].set(self.get_app_url())
+    db_config_state, db_config_detail = describe_database_configuration_from_disk()
+    self.status_vars["db_config_status"].set(format_database_config_status(db_config_state, db_config_detail))
+    self.refresh_status_badges()
+
+    if self.backend.last_exit_at > self.last_notified_exit_at and not self.backend.user_stopped and self.backend.last_exit_code is not None:
+        self.last_notified_exit_at = self.backend.last_exit_at
+        fast_failed = self.backend.register_failed_start_if_needed()
+        exit_message = f"\u9000\u51fa\u4ee3\u7801: {self.backend.last_exit_code}"
+        self.notify_tray("\u540e\u7aef\u670d\u52a1\u5f02\u5e38\u9000\u51fa", exit_message)
+        webhook_url = self.manager_state.get("webhook_url", "")
+        send_webhook_notification(webhook_url, "\u540e\u7aef\u670d\u52a1\u5f02\u5e38\u9000\u51fa", exit_message)
+        if self.backend.auto_restart_suppressed:
+            self.status_vars["backend_status"].set(f"\u81ea\u52a8\u91cd\u542f\u5df2\u6682\u505c\uff08\u6700\u8fd1\u9000\u51fa\u4ee3\u7801 {self.backend.last_exit_code}\uff09")
+            suppressed_message = "\u540e\u7aef\u8fde\u7eed 3 \u6b21\u5feb\u901f\u9000\u51fa\uff0c\u5df2\u6682\u505c\u81ea\u52a8\u91cd\u542f\uff0c\u8bf7\u68c0\u67e5\u65e5\u5fd7\u4e0e\u914d\u7f6e\u540e\u624b\u52a8\u6062\u590d\u3002"
+            self.notify_tray("\u81ea\u52a8\u91cd\u542f\u5df2\u6682\u505c", suppressed_message)
+            send_webhook_notification(webhook_url, "\u81ea\u52a8\u91cd\u542f\u5df2\u6682\u505c", suppressed_message)
+        elif fast_failed:
+            self.status_vars["backend_status"].set(f"\u540e\u7aef\u8fde\u7eed\u5feb\u901f\u9000\u51fa\uff0c\u81ea\u52a8\u91cd\u542f\u4fdd\u62a4\u5df2\u8ba1\u6570 ({self.backend.consecutive_failed_starts}/3)")
+
+    if self.manager_state.get("auto_restart_backend", True) and not self.backend.is_running() and not self.backend.user_stopped and not self.backend.auto_restart_suppressed and time.time() - self.backend.last_start_attempt > 8 and self.backend.last_start_attempt > 0:
+        ok, message = self.backend.start(self.get_effective_config())
+        if ok:
+            self.notify_tray("\u540e\u7aef\u670d\u52a1\u5df2\u81ea\u52a8\u91cd\u542f", message)
+            self.status_vars["backend_status"].set(self.backend.poll_status())
+        elif _is_port_conflict_message(message):
+            self.backend.auto_restart_suppressed = True
+            self.status_vars["backend_status"].set(message)
+            self.notify_tray("\u81ea\u52a8\u91cd\u542f\u5df2\u6682\u505c", message)
+
+    if self.backend.is_running():
+        self.backend.consecutive_failed_starts = 0
+
+    if self.frontend.last_exit_at > self.last_notified_frontend_exit_at and not self.frontend.user_stopped and self.frontend.last_exit_code is not None:
+        self.last_notified_frontend_exit_at = self.frontend.last_exit_at
+        fast_failed = self.frontend.register_failed_start_if_needed()
+        exit_message = f"\u9000\u51fa\u4ee3\u7801: {self.frontend.last_exit_code}"
+        self.notify_tray("\u524d\u7aef\u670d\u52a1\u5f02\u5e38\u9000\u51fa", exit_message)
+        webhook_url = self.manager_state.get("webhook_url", "")
+        send_webhook_notification(webhook_url, "\u524d\u7aef\u670d\u52a1\u5f02\u5e38\u9000\u51fa", exit_message)
+        if self.frontend.auto_restart_suppressed:
+            self.status_vars["frontend_status"].set(f"\u81ea\u52a8\u91cd\u542f\u5df2\u6682\u505c\uff08\u6700\u8fd1\u9000\u51fa\u4ee3\u7801 {self.frontend.last_exit_code}\uff09")
+            suppressed_message = "\u524d\u7aef\u8fde\u7eed 3 \u6b21\u5feb\u901f\u9000\u51fa\uff0c\u5df2\u6682\u505c\u81ea\u52a8\u91cd\u542f\uff0c\u8bf7\u68c0\u67e5\u65e5\u5fd7\u4e0e\u914d\u7f6e\u540e\u624b\u52a8\u6062\u590d\u3002"
+            self.notify_tray("\u81ea\u52a8\u91cd\u542f\u5df2\u6682\u505c", suppressed_message)
+            send_webhook_notification(webhook_url, "\u81ea\u52a8\u91cd\u542f\u5df2\u6682\u505c", suppressed_message)
+        elif fast_failed:
+            self.status_vars["frontend_status"].set(f"\u524d\u7aef\u8fde\u7eed\u5feb\u901f\u9000\u51fa\uff0c\u81ea\u52a8\u91cd\u542f\u4fdd\u62a4\u5df2\u8ba1\u6570 ({self.frontend.consecutive_failed_starts}/3)")
+
+    if self.manager_state.get("auto_restart_frontend", True) and not self.frontend.is_running() and not self.frontend.user_stopped and not self.frontend.auto_restart_suppressed and time.time() - self.frontend.last_start_attempt > 8 and self.frontend.last_start_attempt > 0:
+        ok, message = self.frontend.start(self.get_effective_config())
+        if ok:
+            self.notify_tray("\u524d\u7aef\u670d\u52a1\u5df2\u81ea\u52a8\u91cd\u542f", message)
+            self.status_vars["frontend_status"].set(self.frontend.poll_status())
+        elif _is_port_conflict_message(message):
+            self.frontend.auto_restart_suppressed = True
+            self.frontend._sync_runtime_state(frontend_auto_restart_suppressed=True)
+            self.status_vars["frontend_status"].set(message)
+            self.notify_tray("\u81ea\u52a8\u91cd\u542f\u5df2\u6682\u505c", message)
+
+    if self.frontend.is_running():
+        self.frontend.consecutive_failed_starts = 0
+        self.frontend._sync_runtime_state(frontend_consecutive_failed_starts=0)
+
+    self.update_tray_title()
+    self.schedule_status_refresh()
+
+
+def _ff_refresh_health_status(self: Any) -> None:
+    if self.exiting:
+        return
+    if not self.manager_state.get("enable_health_check", True):
+        self.status_vars["backend_health_status"].set("\u5df2\u7981\u7528")
+        self.status_vars["frontend_health_status"].set("\u5df2\u7981\u7528")
+        self.last_backend_health_state = "unknown"
+        self.last_frontend_health_state = "unknown"
+        self.update_tray_title()
+        self.schedule_health_refresh()
+        return
+
+    backend_ok = False
+    backend_detail = "\u672a\u68c0\u67e5"
+    backend_state = "unknown"
+    if self.backend.is_running():
+        backend_ok, backend_detail = probe_backend_health(self.get_backend_url())
+        backend_state = "healthy" if backend_ok else "unhealthy"
+    self.status_vars["backend_health_status"].set(f"\u6b63\u5e38 ({backend_detail})" if backend_ok else f"\u5f02\u5e38 ({backend_detail})" if backend_state == "unhealthy" else "\u672a\u68c0\u67e5")
+
+    if self.backend.is_running() and self.last_backend_health_state not in {"unknown", backend_state}:
+        webhook_url = self.manager_state.get("webhook_url", "")
+        if backend_ok:
+            message = f"{self.get_backend_url()} \u5df2\u6062\u590d\u6b63\u5e38\u54cd\u5e94"
+            self.notify_tray("\u540e\u7aef\u5065\u5eb7\u68c0\u67e5\u5df2\u6062\u590d", message)
+            send_webhook_notification(webhook_url, "\u540e\u7aef\u5065\u5eb7\u68c0\u67e5\u5df2\u6062\u590d", message)
+        else:
+            message = f"{self.get_backend_url()} \u5065\u5eb7\u68c0\u67e5\u5f02\u5e38: {backend_detail}"
+            self.notify_tray("\u540e\u7aef\u5065\u5eb7\u68c0\u67e5\u5f02\u5e38", message)
+            send_webhook_notification(webhook_url, "\u540e\u7aef\u5065\u5eb7\u68c0\u67e5\u5f02\u5e38", message)
+    self.last_backend_health_state = backend_state
+
+    frontend_ok = False
+    frontend_detail = "\u672a\u68c0\u67e5"
+    frontend_state = "unknown"
+    if self.frontend.is_running():
+        frontend_ok, frontend_detail = probe_http(self.get_frontend_url())
+        frontend_state = "healthy" if frontend_ok else "unhealthy"
+    self.status_vars["frontend_health_status"].set(f"\u6b63\u5e38 ({frontend_detail})" if frontend_ok else f"\u5f02\u5e38 ({frontend_detail})" if frontend_state == "unhealthy" else "\u672a\u68c0\u67e5")
+
+    if self.frontend.is_running() and self.last_frontend_health_state not in {"unknown", frontend_state}:
+        webhook_url = self.manager_state.get("webhook_url", "")
+        if frontend_ok:
+            message = f"{self.get_frontend_url()} \u5df2\u6062\u590d\u6b63\u5e38\u54cd\u5e94"
+            self.notify_tray("\u524d\u7aef\u5065\u5eb7\u68c0\u67e5\u5df2\u6062\u590d", message)
+            send_webhook_notification(webhook_url, "\u524d\u7aef\u5065\u5eb7\u68c0\u67e5\u5df2\u6062\u590d", message)
+        else:
+            message = f"{self.get_frontend_url()} \u5065\u5eb7\u68c0\u67e5\u5f02\u5e38: {frontend_detail}"
+            self.notify_tray("\u524d\u7aef\u5065\u5eb7\u68c0\u67e5\u5f02\u5e38", message)
+            send_webhook_notification(webhook_url, "\u524d\u7aef\u5065\u5eb7\u68c0\u67e5\u5f02\u5e38", message)
+    self.last_frontend_health_state = frontend_state
+    self.update_tray_title()
+    self.refresh_status_badges()
+    self.schedule_health_refresh()
+
+
+def _ff_refresh_database_status(self: Any, force_check: bool = False, show_dialog: bool = False, sqlcmd_override: str | None = None, schedule_next: bool = True) -> Tuple[str, str]:
+    if self.exiting:
+        return "unknown", "\u5e94\u7528\u6b63\u5728\u9000\u51fa\uff0c\u8df3\u8fc7\u6570\u636e\u5e93\u68c0\u67e5"
+
+    monitor_enabled = self.manager_state.get("enable_db_monitor", True)
+    if not force_check and not monitor_enabled:
+        self.status_vars["db_monitor_status"].set("\u5df2\u7981\u7528")
+        self.status_vars["db_connection_status"].set("\u672a\u68c0\u67e5\uff08\u6570\u636e\u5e93\u76d1\u63a7\u5df2\u7981\u7528\uff09")
+        if schedule_next:
+            self.schedule_db_refresh()
+        self.last_database_status_state = "unknown"
+        return "disabled", "\u6570\u636e\u5e93\u76d1\u63a7\u5df2\u7981\u7528"
+
+    sqlcmd = (sqlcmd_override if sqlcmd_override is not None else self.ops_vars["sqlcmd_path"].get().strip() or "sqlcmd").strip()
+    state, detail = evaluate_database_runtime_status(sqlcmd)
+    checked_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    self.status_vars["db_connection_status"].set(format_database_connection_status(state, detail))
+    self.status_vars["db_monitor_status"].set("\u624b\u52a8\u68c0\u67e5" if force_check and not monitor_enabled else "\u5df2\u542f\u7528" if monitor_enabled else "\u5df2\u7981\u7528")
+    self.status_vars["db_last_check_at"].set(checked_at)
+
+    previous_state = self.last_database_status_state
+    if monitor_enabled and not force_check and previous_state not in {"unknown", state}:
+        webhook_url = self.manager_state.get("webhook_url", "")
+        if state == "ok":
+            self.notify_tray("\u6570\u636e\u5e93\u8fde\u63a5\u5df2\u6062\u590d", detail)
+            send_webhook_notification(webhook_url, "\u6570\u636e\u5e93\u8fde\u63a5\u5df2\u6062\u590d", detail)
+        else:
+            self.notify_tray("\u6570\u636e\u5e93\u8fde\u63a5\u5f02\u5e38", detail)
+            send_webhook_notification(webhook_url, "\u6570\u636e\u5e93\u8fde\u63a5\u5f02\u5e38", detail)
+    self.last_database_status_state = state
+
+    if show_dialog:
+        if state == "ok":
+            messagebox.showinfo("\u6570\u636e\u5e93\u8fde\u63a5\u68c0\u67e5", detail)
+        elif state == "error":
+            messagebox.showerror("\u6570\u636e\u5e93\u8fde\u63a5\u68c0\u67e5\u5931\u8d25", detail)
+        elif state == "missing_env":
+            messagebox.showwarning("\u6570\u636e\u5e93\u73af\u5883\u914d\u7f6e", detail)
+        elif state == "missing_config":
+            messagebox.showwarning("\u6570\u636e\u5e93\u8fde\u63a5\u914d\u7f6e", detail)
+        elif state == "missing_sqlcmd":
+            messagebox.showwarning("sqlcmd \u4e0d\u53ef\u7528", detail)
+        elif state == "missing_runtime":
+            messagebox.showwarning("\u6570\u636e\u5e93\u68c0\u67e5\u8fd0\u884c\u65f6", detail)
+        else:
+            messagebox.showwarning("\u6570\u636e\u5e93\u8fde\u63a5\u68c0\u67e5", detail)
+
+    self.refresh_status_badges()
+    if schedule_next:
+        self.schedule_db_refresh()
+    return state, detail
+
+
+FF_CONFIG_SECTIONS: List[Tuple[str, List[Tuple[str, str, bool]]]] = [
+    (
+        "\u57fa\u7840\u914d\u7f6e",
+        [
+            ("APP_HOST", "\u76d1\u542c\u5730\u5740", False),
+            ("APP_PORT", "\u76d1\u542c\u7aef\u53e3", False),
+            ("ALLOWED_ORIGINS", "\u5141\u8bb8\u7684\u6765\u6e90", False),
+            ("ALLOW_LAN_ORIGINS", "\u5141\u8bb8\u5c40\u57df\u7f51\u6765\u6e90", False),
+        ],
+    ),
+    (
+        "\u6570\u636e\u5e93\u914d\u7f6e",
+        [
+            ("DATABASE_URL", "\u8fde\u63a5\u5b57\u7b26\u4e32", False),
+            ("DB_HOST", "\u4e3b\u673a", False),
+            ("DB_PORT", "\u7aef\u53e3", False),
+            ("DB_NAME", "\u6570\u636e\u5e93\u540d", False),
+            ("DB_USER", "\u7528\u6237\u540d", False),
+            ("DB_PASSWORD", "\u5bc6\u7801", True),
+        ],
+    ),
+    (
+        "\u5b89\u5168\u914d\u7f6e",
+        [
+            ("SECRET_KEY", "JWT \u5bc6\u94a5", True),
+            ("ACCESS_TOKEN_EXPIRE_MINUTES", "Token \u8fc7\u671f\u65f6\u95f4(\u5206\u949f)", False),
+        ],
+    ),
+    (
+        "\u5916\u90e8\u7cfb\u7edf",
+        [
+            ("MARKI_USER", "Marki \u8d26\u53f7", False),
+            ("MARKI_PASSWORD", "Marki \u5bc6\u7801", True),
+            ("MARKI_SYSTEM_ID", "Marki \u7cfb\u7edf ID", False),
+        ],
+    ),
+]
+
+FF_LOG_CHOICES = [
+    "\u540e\u7aef\u6807\u51c6\u8f93\u51fa",
+    "\u540e\u7aef\u6807\u51c6\u9519\u8bef",
+    "\u524d\u7aef\u6807\u51c6\u8f93\u51fa",
+    "\u524d\u7aef\u6807\u51c6\u9519\u8bef",
+    "\u9879\u76ee\u540c\u6b65\u65e5\u5fd7",
+]
+
+
+def _ff_build_ui(self: Any) -> None:
+    notebook = ttk.Notebook(self.root)
+    notebook.pack(fill="both", expand=True, padx=10, pady=10)
+
+    status_frame = ttk.Frame(notebook)
+    manager_frame = ttk.Frame(notebook)
+    config_frame = ttk.Frame(notebook)
+    ops_frame = ttk.Frame(notebook)
+    env_frame = ttk.Frame(notebook)
+    logs_frame = ttk.Frame(notebook)
+
+    notebook.add(status_frame, text="\u670d\u52a1\u72b6\u6001")
+    notebook.add(manager_frame, text="\u7ba1\u7406\u8bbe\u7f6e")
+    notebook.add(config_frame, text="\u7cfb\u7edf\u914d\u7f6e")
+    notebook.add(ops_frame, text="\u8fd0\u7ef4\u5de5\u5177")
+    notebook.add(env_frame, text="\u73af\u5883\u68c0\u67e5")
+    notebook.add(logs_frame, text="\u65e5\u5fd7\u67e5\u770b")
+
+    self.build_status_tab(status_frame)
+    self.build_manager_tab(manager_frame)
+    self.build_config_tab(config_frame)
+    self.build_ops_tab(ops_frame)
+    self.build_env_tab(env_frame)
+    self.build_logs_tab(logs_frame)
+
+
+def _ff_build_manager_tab(self: Any, parent: ttk.Frame) -> None:
+    parent.columnconfigure(0, weight=1)
+
+    options = ttk.LabelFrame(parent, text="\u7ba1\u7406\u9009\u9879", padding=16)
+    options.pack(fill="x", padx=10, pady=10)
+
+    option_items = [
+        ("auto_restart_backend", "\u540e\u7aef\u5f02\u5e38\u9000\u51fa\u540e\u81ea\u52a8\u91cd\u542f"),
+        ("auto_restart_frontend", "\u524d\u7aef\u5f02\u5e38\u9000\u51fa\u540e\u81ea\u52a8\u91cd\u542f"),
+        ("start_backend_on_launch", "\u542f\u52a8\u7ba1\u7406\u5668\u65f6\u81ea\u52a8\u542f\u52a8\u540e\u7aef"),
+        ("start_frontend_on_launch", "\u542f\u52a8\u7ba1\u7406\u5668\u65f6\u81ea\u52a8\u542f\u52a8\u524d\u7aef"),
+        ("hide_to_tray_on_close", "\u5173\u95ed\u7a97\u53e3\u65f6\u6700\u5c0f\u5316\u5230\u6258\u76d8"),
+        ("launch_manager_on_startup", "Windows \u5f00\u673a\u81ea\u542f\u7ba1\u7406\u5668"),
+        ("enable_health_check", "\u542f\u7528\u524d\u540e\u7aef\u5065\u5eb7\u68c0\u67e5"),
+        ("enable_db_monitor", "\u542f\u7528\u6570\u636e\u5e93\u8fde\u63a5\u76d1\u63a7"),
+    ]
+    for idx, (key, label) in enumerate(option_items):
+        var = tk.BooleanVar(value=self.manager_state.get(key, False))
+        self.manager_option_vars[key] = var
+        ttk.Checkbutton(options, text=label, variable=var, command=self.save_manager_state).grid(
+            row=idx // 2, column=idx % 2, padx=10, pady=6, sticky="w"
+        )
+
+    tips = ttk.LabelFrame(parent, text="\u4f7f\u7528\u8bf4\u660e", padding=16)
+    tips.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+    ttk.Label(
+        tips,
+        text=(
+            "\u7ba1\u7406\u5668\u4f1a\u7edf\u4e00\u63a5\u7ba1\u540e\u7aef\u3001\u524d\u7aef\u3001\u65e5\u5fd7\u3001Git \u66f4\u65b0\u548c\u6570\u636e\u5e93\u76d1\u63a7\u3002\n"
+            "\u540e\u7aef\u542f\u52a8\u4f9d\u8d56 backend/.env \u4e0e backend/.encryption.key\uff0c\u524d\u7aef\u53d1\u5e03\u4f9d\u8d56 frontend/dist\u3002\n"
+            "\u4e00\u952e\u90e8\u7f72\u4f1a\u5148\u5b8c\u6210\u914d\u7f6e\u5199\u5165\u3001\u4f9d\u8d56\u540c\u6b65\u4e0e\u6784\u5efa\uff0c\u7136\u540e\u518d\u6267\u884c\u540e\u7f6e\u68c0\u67e5\u3002\n"
+            "\u82e5\u542f\u7528\u5065\u5eb7\u68c0\u67e5\u6216\u6570\u636e\u5e93\u76d1\u63a7\uff0c\u7ba1\u7406\u5668\u4f1a\u6301\u7eed\u66f4\u65b0\u72b6\u6001\u5e76\u5728\u5f02\u5e38\u65f6\u53d1\u9001\u63d0\u9192\u3002"
+        ),
+        justify="left",
+        wraplength=880,
+    ).pack(anchor="w")
+
+
+def _ff_build_config_tab(self: Any, parent: ttk.Frame) -> None:
+    toolbar = ttk.Frame(parent)
+    toolbar.pack(fill="x", padx=10, pady=10)
+    ttk.Button(toolbar, text="\u4fdd\u5b58\u914d\u7f6e", command=self.handle_save_config).pack(side="left", padx=4)
+    ttk.Button(toolbar, text="\u91cd\u65b0\u52a0\u8f7d", command=self.reload_form_from_disk).pack(side="left", padx=4)
+    ttk.Button(toolbar, text="\u751f\u6210 JWT \u5bc6\u94a5", command=self.generate_secret_key).pack(side="left", padx=4)
+    ttk.Button(toolbar, text="\u751f\u6210\u52a0\u5bc6\u5bc6\u94a5", command=self.generate_encryption_key).pack(side="left", padx=4)
+    ttk.Button(toolbar, text="\u6253\u5f00 backend \u76ee\u5f55", command=self.open_backend_folder).pack(side="left", padx=4)
+
+    container = ttk.Frame(parent)
+    container.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+    nav_frame = tk.Frame(container, bg="#f0f0f0", bd=1, relief="flat")
+    nav_frame.pack(side="left", fill="y", padx=(0, 10))
+
+    nav_title = tk.Label(
+        nav_frame,
+        text="\u914d\u7f6e\u5206\u7ec4",
+        bg="#f0f0f0",
+        fg="#333333",
+        font=("Microsoft YaHei UI", 10, "bold"),
+        anchor="w",
+    )
+    nav_title.pack(fill="x", padx=8, pady=(8, 12))
+
+    content_frame = ttk.Frame(container)
+    content_frame.pack(side="left", fill="both", expand=True)
+
+    self.config_section_var = tk.StringVar(value=FF_CONFIG_SECTIONS[0][0])
+    self.config_section_frames = {}
+
+    summary_group = ttk.LabelFrame(content_frame, text="\u914d\u7f6e\u8bf4\u660e", padding=16)
+    summary_group.pack(fill="x", pady=(0, 10))
+    ttk.Label(
+        summary_group,
+        text=(
+            "\u672c\u9875\u7528\u4e8e\u7ef4\u62a4 backend/.env \u7684\u5173\u952e\u914d\u7f6e\u3002\n"
+            "\u4fdd\u5b58\u540e\u7ba1\u7406\u5668\u4f1a\u5c06\u6700\u65b0\u503c\u5199\u56de\u78c1\u76d8\uff0c\u4f46\u5bc6\u94a5\u7c7b\u5b57\u6bb5\u4ecd\u5efa\u8bae\u914d\u5408\u751f\u6210\u6309\u94ae\u4f7f\u7528\u3002"
+        ),
+        justify="left",
+    ).pack(anchor="w")
+
+    self.config_content_host = ttk.Frame(content_frame)
+    self.config_content_host.pack(fill="both", expand=True)
+
+    descriptions = {
+        "\u57fa\u7840\u914d\u7f6e": "\u540e\u7aef\u76d1\u542c\u5730\u5740\u3001\u7aef\u53e3\u548c CORS \u7b49\u57fa\u672c\u8fd0\u884c\u53c2\u6570",
+        "\u6570\u636e\u5e93\u914d\u7f6e": "\u6570\u636e\u5e93\u4e3b\u673a\u3001\u7aef\u53e3\u3001\u8d26\u6237\u548c\u5bc6\u7801\u7b49\u8fde\u63a5\u4fe1\u606f",
+        "\u5b89\u5168\u914d\u7f6e": "JWT \u5bc6\u94a5\u3001Token \u8fc7\u671f\u65f6\u95f4\u7b49\u5b89\u5168\u53c2\u6570",
+        "\u5916\u90e8\u7cfb\u7edf": "Marki \u7b49\u5916\u90e8\u7cfb\u7edf\u5bf9\u63a5\u6240\u9700\u7684\u8d26\u6237\u53c2\u6570",
+    }
+    config_nav_items = [(title, title, descriptions.get(title, "")) for title, _fields in FF_CONFIG_SECTIONS]
+    config_nav_items.append(("git_repo", "Git \u4ed3\u5e93\u914d\u7f6e", "\u914d\u7f6e Git \u66f4\u65b0\u6240\u9700\u7684\u4ed3\u5e93\u5730\u5740\u4e0e\u5206\u652f"))
+    self.create_side_nav(nav_frame, config_nav_items, self.config_section_var, self.show_config_section, self.config_nav_items)
+
+    for section_title, fields in FF_CONFIG_SECTIONS:
+        section_frame = ttk.LabelFrame(self.config_content_host, text=section_title, padding=16)
+        for row, (key, label, secret) in enumerate(fields):
+            ttk.Label(section_frame, text=f"{label}\uff1a", width=18).grid(row=row, column=0, sticky="w", padx=6, pady=6)
+            var = tk.StringVar(value=self.config_values.get(key, ""))
+            ttk.Entry(section_frame, textvariable=var, width=88, show="*" if secret else "").grid(
+                row=row, column=1, sticky="ew", padx=6, pady=6
+            )
+            section_frame.columnconfigure(1, weight=1)
+            self.form_vars[key] = var
+        self.config_section_frames[section_title] = section_frame
+
+    git_section = ttk.LabelFrame(self.config_content_host, text="Git \u4ed3\u5e93\u914d\u7f6e", padding=16)
+    ttk.Label(
+        git_section,
+        text="\u8fd9\u91cc\u7684 Git \u914d\u7f6e\u4f1a\u88ab\u8fd0\u7ef4\u5de5\u5177\u9875\u4e2d\u7684\u66f4\u65b0\u529f\u80fd\u76f4\u63a5\u4f7f\u7528\u3002",
+        justify="left",
+    ).grid(row=0, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 8))
+    ttk.Label(git_section, text="\u4ed3\u5e93\u5730\u5740\uff1a", width=18).grid(row=1, column=0, sticky="w", padx=6, pady=6)
+    ttk.Entry(git_section, textvariable=self.ops_vars["git_repo_url"], width=88).grid(row=1, column=1, sticky="ew", padx=6, pady=6)
+    ttk.Label(git_section, text="\u5206\u652f\u540d\u79f0\uff1a", width=18).grid(row=2, column=0, sticky="w", padx=6, pady=6)
+    ttk.Entry(git_section, textvariable=self.ops_vars["git_branch"], width=30).grid(row=2, column=1, sticky="w", padx=6, pady=6)
+    ttk.Button(git_section, text="\u4fdd\u5b58 Git \u914d\u7f6e", command=self.save_manager_state).grid(row=3, column=1, sticky="w", padx=6, pady=(8, 0))
+    git_section.columnconfigure(1, weight=1)
+    self.config_section_frames["git_repo"] = git_section
+
+    self.show_config_section()
+
+
+def _ff_build_ops_tab(self: Any, parent: ttk.Frame) -> None:
+    container = ttk.Frame(parent)
+    container.pack(fill="both", expand=True, padx=10, pady=10)
+
+    nav_frame = tk.Frame(container, bg="#f0f0f0", bd=1, relief="flat")
+    nav_frame.pack(side="left", fill="y", padx=(0, 10))
+
+    nav_title = tk.Label(
+        nav_frame,
+        text="\u8fd0\u7ef4\u5de5\u5177",
+        bg="#f0f0f0",
+        fg="#333333",
+        font=("Microsoft YaHei UI", 10, "bold"),
+        anchor="w",
+    )
+    nav_title.pack(fill="x", padx=8, pady=(8, 12))
+
+    content_frame = ttk.Frame(container)
+    content_frame.pack(side="left", fill="both", expand=True)
+
+    self.ops_section_var = tk.StringVar(value="one_click_deploy")
+    ops_nav_items = [
+        ("one_click_deploy", "\u4e00\u952e\u90e8\u7f72", "\u7edf\u4e00\u5b8c\u6210\u914d\u7f6e\u5199\u5165\u3001\u4f9d\u8d56\u540c\u6b65\u3001\u6784\u5efa\u4e0e\u540e\u7f6e\u68c0\u67e5"),
+        ("frontend", "\u524d\u7aef\u90e8\u7f72", "\u5355\u72ec\u90e8\u7f72 frontend/dist \u5230\u670d\u52a1\u73af\u5883"),
+        ("release", "\u53d1\u5e03\u5305\u90e8\u7f72", "\u4ece ZIP \u53d1\u5e03\u5305\u76f4\u63a5\u8986\u76d6\u9879\u76ee"),
+        ("git_update", "Git \u66f4\u65b0", "\u68c0\u67e5\u5e76\u62c9\u53d6\u4ed3\u5e93\u6700\u65b0\u4ee3\u7801"),
+        ("migration", "\u6570\u636e\u5e93\u8fc1\u79fb", "\u6267\u884c SQL \u8fc1\u79fb\u811a\u672c"),
+        ("db_monitor", "\u6570\u636e\u5e93\u76d1\u63a7", "\u67e5\u770b\u914d\u7f6e\u3001\u8fde\u63a5\u548c\u76d1\u63a7\u72b6\u6001"),
+        ("backup", "\u6570\u636e\u5e93\u5907\u4efd", "\u6267\u884c\u5907\u4efd\u3001\u6062\u590d\u4e0e\u5907\u4efd\u76ee\u5f55\u7ba1\u7406"),
+        ("maintenance", "\u7ef4\u62a4\u6e05\u7406", "\u6e05\u7406\u65e7\u5907\u4efd\u3001\u5f52\u6863\u65e5\u5fd7\u548c\u540c\u6b65\u4f9d\u8d56"),
+        ("alert", "\u544a\u8b66\u901a\u77e5", "\u914d\u7f6e Webhook \u5e76\u53d1\u9001\u6d4b\u8bd5\u544a\u8b66"),
+        ("notes", "\u8fd0\u7ef4\u8bf4\u660e", "\u67e5\u770b\u90e8\u7f72\u548c\u7ef4\u62a4\u6ce8\u610f\u4e8b\u9879"),
+    ]
+
+    for key in ("frontend_deploy_source", "release_package_path", "backup_dir", "sqlcmd_path", "git_repo_url", "git_branch", "backup_retention_days", "backup_retention_count", "log_max_size_mb", "log_archive_retention_days", "webhook_url"):
+        if key not in self.ops_vars:
+            self.ops_vars[key] = tk.StringVar(value=str(self.manager_state.get(key, DEFAULT_STATE.get(key, ""))))
+
+    self.create_side_nav(nav_frame, ops_nav_items, self.ops_section_var, self.show_ops_section, self.ops_nav_items)
+
+    self.ops_content_host = ttk.Frame(content_frame)
+    self.ops_content_host.pack(fill="both", expand=True)
+    self.ops_section_frames = {}
+
+    one_click_frame = ttk.LabelFrame(self.ops_content_host, text="\u4e00\u952e\u90e8\u7f72", padding=16)
+    ttk.Label(
+        one_click_frame,
+        text="\u4e00\u952e\u90e8\u7f72\u4f1a\u4f9d\u6b21\u6267\u884c\u4ee3\u7801\u51c6\u5907\u3001\u914d\u7f6e\u5199\u5165\u3001\u4f9d\u8d56\u540c\u6b65\u3001\u524d\u7aef\u6784\u5efa\u4e0e\u540e\u7f6e\u68c0\u67e5\u3002\u6570\u636e\u5e93\u8fde\u63a5\u5c06\u5728\u90e8\u7f72\u540e\u5355\u72ec\u68c0\u67e5\u3002",
+        justify="left",
+        wraplength=760,
+    ).pack(anchor="w", pady=(0, 12))
+    deploy_type_frame = ttk.Frame(one_click_frame)
+    deploy_type_frame.pack(fill="x", pady=(0, 10))
+    self.deploy_mode = tk.StringVar(value="git")
+    ttk.Radiobutton(deploy_type_frame, text="Git \u66f4\u65b0\u90e8\u7f72", variable=self.deploy_mode, value="git").pack(side="left", padx=20)
+    ttk.Radiobutton(deploy_type_frame, text="ZIP \u53d1\u5e03\u5305\u90e8\u7f72", variable=self.deploy_mode, value="zip").pack(side="left", padx=20)
+    deploy_log_frame = ttk.LabelFrame(one_click_frame, text="\u90e8\u7f72\u65e5\u5fd7", padding=10)
+    deploy_log_frame.pack(fill="both", expand=True, pady=(0, 10))
+    self.deploy_log_text = scrolledtext.ScrolledText(deploy_log_frame, wrap="word", font=("Consolas", 9), height=14)
+    self.deploy_log_text.pack(fill="both", expand=True)
+    self.deploy_log_text.configure(state="disabled")
+    deploy_actions = ttk.Frame(one_click_frame)
+    deploy_actions.pack(fill="x")
+    ttk.Button(deploy_actions, text="\u5f00\u59cb\u4e00\u952e\u90e8\u7f72", command=self.start_one_click_deploy).pack(side="left", padx=4)
+    ttk.Button(deploy_actions, text="\u6e05\u7a7a\u65e5\u5fd7", command=self.clear_deploy_log).pack(side="left", padx=4)
+    self.ops_section_frames["one_click_deploy"] = one_click_frame
+
+    frontend_frame = ttk.LabelFrame(self.ops_content_host, text="\u524d\u7aef\u90e8\u7f72", padding=16)
+    frontend_top = ttk.Frame(frontend_frame)
+    frontend_top.pack(fill="x", pady=(0, 10))
+    self.ops_common_group = ttk.LabelFrame(frontend_top, text="\u516c\u5171\u8def\u5f84\u8bbe\u7f6e", padding=16)
+    self.ops_common_group.pack(fill="x", pady=(0, 10))
+    path_fields = [
+        ("frontend_deploy_source", "\u524d\u7aef dist \u76ee\u5f55", "directory"),
+        ("release_package_path", "ZIP \u53d1\u5e03\u5305", "zip"),
+        ("backup_dir", "\u6570\u636e\u5e93\u5907\u4efd\u76ee\u5f55", "directory"),
+        ("sqlcmd_path", "sqlcmd \u53ef\u6267\u884c\u6587\u4ef6", "file"),
+    ]
+    for row, (key, label, select_mode) in enumerate(path_fields):
+        ttk.Label(self.ops_common_group, text=f"{label}\uff1a", width=18).grid(row=row, column=0, sticky="w", padx=6, pady=6)
+        ttk.Entry(self.ops_common_group, textvariable=self.ops_vars[key], width=82).grid(row=row, column=1, sticky="ew", padx=6, pady=6)
+        ttk.Button(self.ops_common_group, text="\u9009\u62e9", command=lambda target_key=key, mode=select_mode: self.select_path_for_var(target_key, mode)).grid(row=row, column=2, padx=6, pady=6)
+    self.ops_common_group.columnconfigure(1, weight=1)
+    ttk.Button(self.ops_common_group, text="\u4fdd\u5b58\u8fd0\u7ef4\u8def\u5f84", command=self.save_manager_state).grid(row=len(path_fields), column=1, sticky="w", padx=6, pady=(10, 0))
+    ttk.Label(frontend_frame, text="\u5c06\u6307\u5b9a\u7684 frontend/dist \u8986\u76d6\u5230\u670d\u52a1\u73af\u5883\u7684 dist \u76ee\u5f55\uff0c\u7528\u4e8e\u5355\u72ec\u66f4\u65b0\u524d\u7aef\u9759\u6001\u8d44\u6e90\u3002", justify="left").pack(anchor="w", pady=(0, 8))
+    frontend_actions = ttk.Frame(frontend_frame)
+    frontend_actions.pack(fill="x")
+    ttk.Button(frontend_actions, text="\u90e8\u7f72\u524d\u7aef dist", command=self.deploy_frontend_dist).pack(side="left", padx=4)
+    ttk.Button(frontend_actions, text="\u6253\u5f00 dist \u76ee\u5f55", command=self.open_dist_folder).pack(side="left", padx=4)
+    self.ops_section_frames["frontend"] = frontend_frame
+
+    release_frame = ttk.LabelFrame(self.ops_content_host, text="\u53d1\u5e03\u5305\u90e8\u7f72", padding=16)
+    ttk.Label(release_frame, text="\u9009\u62e9 ZIP \u53d1\u5e03\u5305\u540e\u53ef\u76f4\u63a5\u89e3\u538b\u8986\u76d6\u5230\u5f53\u524d\u9879\u76ee\u3002\u53d1\u5e03\u5305\u5185\u5efa\u8bae\u5305\u542b backend\u3001frontend/dist\u3001tools \u548c deploy \u7b49\u76ee\u5f55\u3002", justify="left", wraplength=760).pack(anchor="w", pady=(0, 8))
+    release_actions = ttk.Frame(release_frame)
+    release_actions.pack(fill="x")
+    ttk.Button(release_actions, text="\u9009\u62e9\u53d1\u5e03\u5305", command=lambda: self.select_path_for_var("release_package_path", "zip")).pack(side="left", padx=4)
+    ttk.Button(release_actions, text="\u5e94\u7528\u53d1\u5e03\u5305", command=self.apply_release_package).pack(side="left", padx=4)
+    ttk.Button(release_actions, text="\u6253\u5f00\u9879\u76ee\u76ee\u5f55", command=self.open_project_root).pack(side="left", padx=4)
+    self.ops_section_frames["release"] = release_frame
+
+    db_monitor_frame = ttk.LabelFrame(self.ops_content_host, text="\u6570\u636e\u5e93\u76d1\u63a7", padding=16)
+    ttk.Label(db_monitor_frame, text="\u6570\u636e\u5e93\u76d1\u63a7\u4f1a\u7ed3\u5408 backend/.env\u3001\u540e\u7aef\u8fd0\u884c\u65f6\u548c sqlcmd \u60c5\u51b5\u7ed9\u51fa\u8fde\u63a5\u72b6\u6001\u3002", justify="left", wraplength=760).pack(anchor="w", pady=(0, 8))
+    db_monitor_grid = ttk.Frame(db_monitor_frame)
+    db_monitor_grid.pack(fill="x", pady=(0, 10))
+    for row, (label, key) in enumerate([
+        ("\u914d\u7f6e\u72b6\u6001", "db_config_status"),
+        ("\u8fde\u63a5\u72b6\u6001", "db_connection_status"),
+        ("\u76d1\u63a7\u72b6\u6001", "db_monitor_status"),
+        ("\u4e0a\u6b21\u68c0\u67e5", "db_last_check_at"),
+    ]):
+        ttk.Label(db_monitor_grid, text=f"{label}\uff1a", width=14).grid(row=row, column=0, sticky="w", padx=6, pady=4)
+        ttk.Label(db_monitor_grid, textvariable=self.status_vars[key]).grid(row=row, column=1, sticky="w", padx=6, pady=4)
+    db_monitor_actions = ttk.Frame(db_monitor_frame)
+    db_monitor_actions.pack(fill="x")
+    ttk.Button(db_monitor_actions, text="\u7acb\u5373\u68c0\u67e5\u6570\u636e\u5e93", command=self.check_database_connection).pack(side="left", padx=4)
+    ttk.Checkbutton(db_monitor_actions, text="\u542f\u7528\u6570\u636e\u5e93\u76d1\u63a7", variable=self.manager_option_vars["enable_db_monitor"], command=self.save_manager_state).pack(side="left", padx=12)
+    self.ops_section_frames["db_monitor"] = db_monitor_frame
+
+    backup_frame = ttk.LabelFrame(self.ops_content_host, text="\u6570\u636e\u5e93\u5907\u4efd", padding=16)
+    ttk.Label(backup_frame, text="\u5907\u4efd\u4e0e\u6062\u590d\u529f\u80fd\u4f9d\u8d56 sqlcmd\uff0c\u5e76\u4f1a\u4f7f\u7528 backend/.env \u4e2d\u7684\u6570\u636e\u5e93\u8fde\u63a5\u4fe1\u606f\u3002", justify="left").pack(anchor="w", pady=(0, 8))
+    backup_actions = ttk.Frame(backup_frame)
+    backup_actions.pack(fill="x")
+    ttk.Button(backup_actions, text="\u6267\u884c\u6570\u636e\u5e93\u5907\u4efd", command=self.backup_database).pack(side="left", padx=4)
+    ttk.Button(backup_actions, text="\u4ece\u5907\u4efd\u6062\u590d", command=self.restore_database).pack(side="left", padx=4)
+    ttk.Button(backup_actions, text="\u6253\u5f00\u5907\u4efd\u76ee\u5f55", command=self.open_backup_folder).pack(side="left", padx=4)
+    self.ops_section_frames["backup"] = backup_frame
+
+    git_frame = ttk.LabelFrame(self.ops_content_host, text="Git \u66f4\u65b0", padding=16)
+    ttk.Label(git_frame, text="\u53ef\u4ee5\u5148\u68c0\u67e5\u66f4\u65b0\uff0c\u518d\u6267\u884c Git \u62c9\u53d6\u3002\u5982\u542f\u7528\u81ea\u52a8\u6784\u5efa\uff0c\u62c9\u53d6\u540e\u4f1a\u81ea\u52a8\u540c\u6b65\u524d\u7aef\u4f9d\u8d56\u5e76\u6784\u5efa\u3002", justify="left").pack(anchor="w", pady=(0, 8))
+    git_config = ttk.LabelFrame(git_frame, text="Git \u914d\u7f6e", padding=12)
+    git_config.pack(fill="x", pady=(0, 10))
+    ttk.Label(git_config, text="\u4ed3\u5e93\u5730\u5740\uff1a", width=12).grid(row=0, column=0, sticky="w", padx=6, pady=6)
+    ttk.Label(git_config, textvariable=self.ops_vars["git_repo_url"]).grid(row=0, column=1, sticky="ew", padx=6, pady=6)
+    ttk.Label(git_config, text="\u5206\u652f\u540d\u79f0\uff1a", width=12).grid(row=1, column=0, sticky="w", padx=6, pady=6)
+    ttk.Label(git_config, textvariable=self.ops_vars["git_branch"]).grid(row=1, column=1, sticky="w", padx=6, pady=6)
+    ttk.Label(git_config, text="\u5982\u672a\u914d\u7f6e Git \u4ed3\u5e93\uff0c\u8bf7\u5148\u5728\u7cfb\u7edf\u914d\u7f6e\u9875\u4fdd\u5b58 Git \u5730\u5740\u4e0e\u5206\u652f\u3002", foreground="#666666").grid(row=2, column=0, columnspan=2, sticky="w", padx=6, pady=(4, 0))
+    git_config.columnconfigure(1, weight=1)
+    if "git_auto_build_frontend" not in self.manager_option_vars:
+        self.manager_option_vars["git_auto_build_frontend"] = tk.BooleanVar(value=self.manager_state.get("git_auto_build_frontend", True))
+    ttk.Checkbutton(git_frame, text="Git \u62c9\u53d6\u66f4\u65b0\u540e\u81ea\u52a8\u540c\u6b65\u4f9d\u8d56\u5e76\u6784\u5efa\u524d\u7aef", variable=self.manager_option_vars["git_auto_build_frontend"], command=self.save_manager_state).pack(anchor="w", pady=(0, 10))
+    git_actions = ttk.Frame(git_frame)
+    git_actions.pack(fill="x")
+    ttk.Button(git_actions, text="\u68c0\u67e5\u66f4\u65b0", command=self.check_git_update).pack(side="left", padx=4)
+    ttk.Button(git_actions, text="\u62c9\u53d6\u66f4\u65b0", command=self.git_pull_update).pack(side="left", padx=4)
+    ttk.Button(git_actions, text="\u63d0\u4ea4\u5386\u53f2", command=self.git_show_history).pack(side="left", padx=4)
+    ttk.Button(git_actions, text="\u56de\u6eda\u7248\u672c", command=self.git_rollback).pack(side="left", padx=4)
+    self.ops_section_frames["git_update"] = git_frame
+
+    migration_frame = ttk.LabelFrame(self.ops_content_host, text="\u6570\u636e\u5e93\u8fc1\u79fb", padding=16)
+    ttk.Label(migration_frame, text="\u53ef\u9009\u62e9 SQL \u811a\u672c\u6216\u5728\u4e0b\u65b9\u7f16\u8f91\u7a97\u53e3\u4e2d\u76f4\u63a5\u7c98\u8d34 SQL\uff0c\u6267\u884c\u65f6\u540c\u6837\u4f1a\u4f7f\u7528 sqlcmd \u8fde\u63a5\u6307\u5b9a\u6570\u636e\u5e93\u3002", justify="left").pack(anchor="w", pady=(0, 8))
+    migration_config = ttk.Frame(migration_frame)
+    migration_config.pack(fill="x", pady=(0, 8))
+    ttk.Button(migration_config, text="\u9009\u62e9 SQL \u6587\u4ef6", command=self.select_migration_file).pack(side="left", padx=4)
+    ttk.Button(migration_config, text="\u6e05\u7a7a\u811a\u672c", command=self.clear_migration_script).pack(side="left", padx=4)
+    self.migration_script_text = scrolledtext.ScrolledText(migration_frame, wrap="word", font=("Consolas", 9), height=12)
+    self.migration_script_text.pack(fill="both", expand=True, pady=(0, 8))
+    migration_actions = ttk.Frame(migration_frame)
+    migration_actions.pack(fill="x")
+    ttk.Button(migration_actions, text="\u6267\u884c\u8fc1\u79fb", command=self.execute_migration).pack(side="left", padx=4)
+    self.ops_section_frames["migration"] = migration_frame
+
+    maintenance_frame = ttk.LabelFrame(self.ops_content_host, text="\u7ef4\u62a4\u6e05\u7406", padding=16)
+    maint_grid = ttk.Frame(maintenance_frame)
+    maint_grid.pack(fill="x", pady=(0, 10))
+    maint_fields = [
+        ("backup_retention_days", "\u5907\u4efd\u4fdd\u7559\u5929\u6570", "\u4ec5\u4fdd\u7559\u6700\u8fd1 N \u5929\u7684\u5907\u4efd"),
+        ("backup_retention_count", "\u5907\u4efd\u4fdd\u7559\u6570\u91cf", "\u81f3\u5c11\u4fdd\u7559\u6700\u8fd1 N \u4e2a\u5907\u4efd"),
+        ("log_max_size_mb", "\u5355\u4e2a\u65e5\u5fd7\u6700\u5927\u5927\u5c0f(MB)", "\u8d85\u8fc7\u9608\u503c\u540e\u4f1a\u6267\u884c\u65e5\u5fd7\u8f6e\u6362"),
+        ("log_archive_retention_days", "\u5f52\u6863\u65e5\u5fd7\u4fdd\u7559\u5929\u6570", "\u81ea\u52a8\u6e05\u7406\u8d85\u8fc7 N \u5929\u7684\u5f52\u6863\u65e5\u5fd7"),
+    ]
+    for idx, (key, label, desc) in enumerate(maint_fields):
+        ttk.Label(maint_grid, text=f"{label}\uff1a", width=18).grid(row=idx, column=0, sticky="w", padx=6, pady=4)
+        ttk.Entry(maint_grid, textvariable=self.ops_vars[key], width=20).grid(row=idx, column=1, sticky="w", padx=6, pady=4)
+        ttk.Label(maint_grid, text=desc, foreground="#666666").grid(row=idx, column=2, sticky="w", padx=6, pady=4)
+    maint_actions = ttk.Frame(maintenance_frame)
+    maint_actions.pack(fill="x")
+    ttk.Button(maint_actions, text="\u6e05\u7406\u65e7\u5907\u4efd", command=self.manual_cleanup_backups).pack(side="left", padx=4)
+    ttk.Button(maint_actions, text="\u6e05\u7406\u5f52\u6863\u65e5\u5fd7", command=self.manual_cleanup_logs).pack(side="left", padx=4)
+    ttk.Button(maint_actions, text="\u540c\u6b65\u540e\u7aef\u4f9d\u8d56", command=self.sync_backend_deps).pack(side="left", padx=4)
+    ttk.Button(maint_actions, text="\u540c\u6b65\u524d\u7aef\u4f9d\u8d56", command=self.sync_frontend_deps).pack(side="left", padx=4)
+    self.ops_section_frames["maintenance"] = maintenance_frame
+
+    alert_frame = ttk.LabelFrame(self.ops_content_host, text="\u544a\u8b66\u901a\u77e5", padding=16)
+    ttk.Label(alert_frame, text="\u914d\u7f6e Webhook URL \u540e\uff0c\u7ba1\u7406\u5668\u53ef\u5728\u670d\u52a1\u5f02\u5e38\u3001\u6062\u590d\u6216\u6570\u636e\u5e93\u72b6\u6001\u53d8\u5316\u65f6\u53d1\u9001\u901a\u77e5\u3002", justify="left").pack(anchor="w", pady=(0, 8))
+    alert_grid = ttk.Frame(alert_frame)
+    alert_grid.pack(fill="x", pady=(0, 8))
+    ttk.Label(alert_grid, text="Webhook URL\uff1a", width=12).grid(row=0, column=0, sticky="w", padx=6, pady=6)
+    ttk.Entry(alert_grid, textvariable=self.ops_vars["webhook_url"], width=80).grid(row=0, column=1, sticky="ew", padx=6, pady=6)
+    alert_grid.columnconfigure(1, weight=1)
+    ttk.Button(alert_frame, text="\u53d1\u9001\u6d4b\u8bd5\u544a\u8b66", command=self.send_test_alert).pack(side="left", padx=4)
+    self.ops_section_frames["alert"] = alert_frame
+
+    notes_frame = ttk.LabelFrame(self.ops_content_host, text="\u8fd0\u7ef4\u8bf4\u660e", padding=16)
+    ttk.Label(
+        notes_frame,
+        text=(
+            "1. \u524d\u7aef\u72ec\u7acb\u90e8\u7f72\u524d\uff0c\u8bf7\u786e\u4fdd frontend/dist \u5df2\u7531 npm run build \u751f\u6210\u3002\n"
+            "2. ZIP \u53d1\u5e03\u5305\u5efa\u8bae\u5305\u542b backend\u3001frontend/dist\u3001tools \u548c deploy \u76ee\u5f55\u3002\n"
+            "3. \u4e00\u952e\u90e8\u7f72\u5df2\u8c03\u6574\u4e3a\u90e8\u7f72\u540e\u518d\u68c0\u67e5\u6570\u636e\u5e93\uff0c\u4ee5\u907f\u514d\u521d\u59cb\u5316\u65f6 .env \u5c1a\u672a\u751f\u6210\u7684\u95ee\u9898\u3002\n"
+            "4. \u6570\u636e\u5e93\u76d1\u63a7\u4f1a\u4f18\u5148\u4f7f\u7528\u540e\u7aef\u8fd0\u884c\u65f6\u6267\u884c\u8fde\u63a5\u68c0\u67e5\uff0csqlcmd \u53ea\u4f5c\u4e3a\u540e\u5907\u65b9\u6848\u3002\n"
+            "5. Git \u66f4\u65b0\u529f\u80fd\u9700\u8981\u5148\u914d\u7f6e\u4ed3\u5e93\u5730\u5740\u4e0e\u5206\u652f\uff0c\u518d\u6267\u884c\u68c0\u67e5\u6216\u62c9\u53d6\u3002"
+        ),
+        justify="left",
+    ).pack(anchor="w")
+    self.ops_section_frames["notes"] = notes_frame
+
+    self.show_ops_section()
+
+
+def _ff_build_env_tab(self: Any, parent: ttk.Frame) -> None:
+    toolbar = ttk.Frame(parent)
+    toolbar.pack(fill="x", padx=10, pady=10)
+    ttk.Button(toolbar, text="\u5237\u65b0\u73af\u5883\u68c0\u67e5", command=self.refresh_environment_info).pack(side="left", padx=4)
+    ttk.Button(toolbar, text="\u6253\u5f00 backend \u76ee\u5f55", command=self.open_backend_folder).pack(side="left", padx=4)
+    ttk.Button(toolbar, text="\u6253\u5f00\u65e5\u5fd7\u76ee\u5f55", command=self.open_logs_folder).pack(side="left", padx=4)
+
+    container = ttk.Frame(parent)
+    container.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+    nav_frame = tk.Frame(container, bg="#f0f0f0", bd=1, relief="flat")
+    nav_frame.pack(side="left", fill="y", padx=(0, 10))
+    nav_title = tk.Label(nav_frame, text="\u68c0\u67e5\u9879", bg="#f0f0f0", fg="#333333", font=("Microsoft YaHei UI", 10, "bold"), anchor="w")
+    nav_title.pack(fill="x", padx=8, pady=(8, 12))
+
+    content_frame = ttk.Frame(container)
+    content_frame.pack(side="left", fill="both", expand=True)
+
+    summary = ttk.LabelFrame(content_frame, text="\u8bf4\u660e", padding=16)
+    summary.pack(fill="x", pady=(0, 10))
+    ttk.Label(summary, text="\u73af\u5883\u68c0\u67e5\u9875\u4f1a\u6c47\u603b\u5f53\u524d\u8fd0\u884c\u72b6\u6001\u3001Python \u8fd0\u884c\u65f6\u3001\u4f9d\u8d56\u5b89\u88c5\u60c5\u51b5\u4ee5\u53ca\u5173\u952e\u8def\u5f84\u662f\u5426\u5b58\u5728\u3002", justify="left").pack(anchor="w")
+
+    self.env_section_var = tk.StringVar(value="overview")
+    env_nav_items = [
+        ("overview", "\u603b\u89c8", "\u67e5\u770b\u540e\u7aef\u3001\u524d\u7aef\u3001\u5065\u5eb7\u68c0\u67e5\u548c\u5173\u952e\u6587\u4ef6\u72b6\u6001"),
+        ("runtime", "\u8fd0\u884c\u65f6", "\u67e5\u770b\u7ba1\u7406\u5668\u4e0e\u540e\u7aef Python \u8fd0\u884c\u65f6\u60c5\u51b5"),
+        ("deps", "\u4f9d\u8d56", "\u68c0\u67e5 GUI \u4f9d\u8d56\u4e0e\u540e\u7aef\u4f9d\u8d56\u662f\u5426\u9f50\u5168"),
+        ("paths", "\u8def\u5f84", "\u67e5\u770b .env\u3001dist\u3001\u65e5\u5fd7\u76ee\u5f55\u548c\u7aef\u53e3\u5360\u7528"),
+    ]
+    self.create_side_nav(nav_frame, env_nav_items, self.env_section_var, self.show_env_section, self.env_nav_items)
+
+    self.env_content_host = ttk.Frame(content_frame)
+    self.env_content_host.pack(fill="both", expand=True)
+    section_titles = {"overview": "\u603b\u89c8", "runtime": "\u8fd0\u884c\u65f6", "deps": "\u4f9d\u8d56", "paths": "\u8def\u5f84"}
+    for key, title in section_titles.items():
+        frame = ttk.LabelFrame(self.env_content_host, text=title, padding=12)
+        text_widget = scrolledtext.ScrolledText(frame, wrap="word", font=("Consolas", 10), height=24)
+        text_widget.pack(fill="both", expand=True)
+        text_widget.configure(state="disabled")
+        self.env_text_widgets[key] = text_widget
+        self.env_section_frames[key] = frame
+
+    self.show_env_section()
+    self.refresh_environment_info()
+
+
+def _ff_build_logs_tab(self: Any, parent: ttk.Frame) -> None:
+    if self.log_choice.get() not in FF_LOG_CHOICES:
+        self.log_choice.set(FF_LOG_CHOICES[0])
+    toolbar = ttk.Frame(parent)
+    toolbar.pack(fill="x", padx=10, pady=10)
+    ttk.Label(toolbar, text="\u65e5\u5fd7\u7c7b\u578b\uff1a").pack(side="left")
+    ttk.Combobox(toolbar, state="readonly", values=FF_LOG_CHOICES, textvariable=self.log_choice, width=20).pack(side="left", padx=6)
+    ttk.Button(toolbar, text="\u5237\u65b0", command=lambda: self.refresh_log_view(force=True)).pack(side="left", padx=6)
+    ttk.Checkbutton(toolbar, text="\u81ea\u52a8\u5237\u65b0", variable=self.log_auto_refresh).pack(side="left", padx=6)
+    ttk.Button(toolbar, text="\u6e05\u7a7a\u5f53\u524d\u65e5\u5fd7", command=self.clear_current_log).pack(side="left", padx=6)
+    ttk.Button(toolbar, text="\u6253\u5f00\u5f52\u6863\u76ee\u5f55", command=self.open_log_archive_folder).pack(side="left", padx=6)
+    status_bar = ttk.Frame(parent)
+    status_bar.pack(fill="x", padx=10, pady=(0, 8))
+    ttk.Label(status_bar, textvariable=self.log_status_var, foreground="#4b5f73").pack(side="left")
+    self.log_text = scrolledtext.ScrolledText(parent, wrap="none", font=("Consolas", 10))
+    self.log_text.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+    self.log_text.configure(state="disabled")
+
+
+def _ff_refresh_environment_info(self: Any) -> None:
+    config = self.get_effective_config()
+    host = (config.get("APP_HOST") or "127.0.0.1").strip() or "127.0.0.1"
+    browser_host = resolve_browser_host(host)
+    port = (config.get("APP_PORT") or "8100").strip() or "8100"
+    backend_python = BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
+    owner = get_port_owner_info(int(port)) if port.isdigit() else {}
+
+    manager_modules = ["tkinter", "pystray", "PIL", "cryptography"]
+    manager_module_lines = []
+    for name in manager_modules:
+        try:
+            __import__(name)
+            manager_module_lines.append(f"[OK] {name}")
+        except Exception as exc:
+            manager_module_lines.append(f"[MISSING] {name}: {exc}")
+
+    backend_probe = {"ok": False, "error": "\u672a\u627e\u5230 backend/.venv/Scripts/python.exe"}
+    if backend_python.exists():
+        probe_code = (
+            "import importlib.util, json, sys;"
+            "mods=['fastapi','uvicorn','sqlalchemy','psycopg2','cryptography','Crypto'];"
+            "result={m:(importlib.util.find_spec(m) is not None) for m in mods};"
+            "print(json.dumps({'ok': True, 'python': sys.executable, 'version': sys.version, 'modules': result}, ensure_ascii=False))"
+        )
+        backend_probe = run_python_json(backend_python, probe_code)
+
+    overview_text = "\n".join(
+        [
+            "FinFlow \u73af\u5883\u603b\u89c8",
+            "",
+            f"\u9879\u76ee\u76ee\u5f55: {ROOT_DIR}",
+            f"\u5e94\u7528\u5165\u53e3: {self.get_app_url()}",
+            f"\u540e\u7aef\u72b6\u6001: {self.backend.poll_status()}",
+            f"\u540e\u7aef\u7aef\u53e3\u5360\u7528: {self.status_vars.get('backend_port_owner').get() if self.status_vars.get('backend_port_owner') else '\u672a\u77e5'}",
+            f"\u524d\u7aef\u72b6\u6001: {self.frontend.poll_status()}",
+            f"\u524d\u7aef\u7aef\u53e3\u5360\u7528: {self.status_vars.get('frontend_port_owner').get() if self.status_vars.get('frontend_port_owner') else '\u672a\u77e5'}",
+            f"backend/.env: {'\u5df2\u5b58\u5728' if ENV_PATH.exists() else '\u4e0d\u5b58\u5728'}",
+            f"backend/.encryption.key: {'\u5df2\u5b58\u5728' if KEY_PATH.exists() else '\u4e0d\u5b58\u5728'}",
+            f"frontend/dist/index.html: {'\u5df2\u5b58\u5728' if (DIST_DIR / 'index.html').exists() else '\u4e0d\u5b58\u5728'}",
+            f"\u65e5\u5fd7\u76ee\u5f55: {'\u5df2\u5b58\u5728' if LOG_DIR.exists() else '\u4e0d\u5b58\u5728'}",
+            f"\u540e\u7aef\u5065\u5eb7\u72b6\u6001: {self.status_vars.get('backend_health_status').get() if self.status_vars.get('backend_health_status') else '\u672a\u68c0\u67e5'}",
+            f"\u524d\u7aef\u5065\u5eb7\u72b6\u6001: {self.status_vars.get('frontend_health_status').get() if self.status_vars.get('frontend_health_status') else '\u672a\u68c0\u67e5'}",
+        ]
+    )
+
+    runtime_lines = [
+        "\u7ba1\u7406\u5668\u8fd0\u884c\u65f6",
+        "",
+        f"\u7ba1\u7406\u5668 Python: {sys.executable}",
+        f"\u7ba1\u7406\u5668\u7248\u672c: {sys.version}",
+        f"\u64cd\u4f5c\u7cfb\u7edf: {platform.platform()}",
+        f"TCL_LIBRARY: {os.environ.get('TCL_LIBRARY', '(\u672a\u8bbe\u7f6e)')}",
+        f"TK_LIBRARY: {os.environ.get('TK_LIBRARY', '(\u672a\u8bbe\u7f6e)')}",
+        "",
+        "\u540e\u7aef\u8fd0\u884c\u65f6",
+        "",
+    ]
+    if backend_probe.get("ok"):
+        runtime_lines.extend(
+            [
+                f"\u540e\u7aef Python: {backend_probe.get('python', '')}",
+                f"\u540e\u7aef\u7248\u672c: {backend_probe.get('version', '')}",
+            ]
+        )
+    else:
+        runtime_lines.append(f"\u540e\u7aef\u8fd0\u884c\u65f6\u5f02\u5e38: {backend_probe.get('error', '\u672a\u77e5\u9519\u8bef')}")
+    runtime_text = "\n".join(runtime_lines)
+
+    deps_lines = ["\u7ba1\u7406\u5668\u4f9d\u8d56", "", *manager_module_lines, "", "\u540e\u7aef\u4f9d\u8d56", ""]
+    if backend_probe.get("ok"):
+        for module_name, ok in backend_probe.get("modules", {}).items():
+            deps_lines.append(f"[{'OK' if ok else 'MISSING'}] {module_name}")
+    else:
+        deps_lines.append(f"\u65e0\u6cd5\u68c0\u67e5\u540e\u7aef\u4f9d\u8d56: {backend_probe.get('error', '\u672a\u77e5\u9519\u8bef')}")
+    deps_lines.append("")
+    deps_lines.append("\u8bf4\u660e: \u82e5 `Crypto` \u7f3a\u5931\uff0c\u8bf7\u5728 backend/.venv \u4e2d\u5b89\u88c5 `pycryptodome`\u3002")
+    deps_text = "\n".join(deps_lines)
+
+    path_lines = [
+        "\u5173\u952e\u8def\u5f84\u4e0e\u7aef\u53e3",
+        "",
+        f"backend/.venv: {'\u5df2\u5b58\u5728' if backend_python.exists() else '\u4e0d\u5b58\u5728'}",
+        f"backend/.env: {'\u5df2\u5b58\u5728' if ENV_PATH.exists() else '\u4e0d\u5b58\u5728'}",
+        f"backend/.encryption.key: {'\u5df2\u5b58\u5728' if KEY_PATH.exists() else '\u4e0d\u5b58\u5728'}",
+        f"frontend/dist/index.html: {'\u5df2\u5b58\u5728' if (DIST_DIR / 'index.html').exists() else '\u4e0d\u5b58\u5728'}",
+        f"\u65e5\u5fd7\u76ee\u5f55: {'\u5df2\u5b58\u5728' if LOG_DIR.exists() else '\u4e0d\u5b58\u5728'}",
+        f"\u5f52\u6863\u76ee\u5f55: {'\u5df2\u5b58\u5728' if LOG_ARCHIVE_DIR.exists() else '\u4e0d\u5b58\u5728'}",
+        "",
+        f"\u76d1\u542c\u5730\u5740: {host}",
+        f"\u6d4f\u89c8\u5668\u53ef\u8bbf\u95ee\u5730\u5740: {browser_host}",
+        f"\u76d1\u542c\u7aef\u53e3: {port}",
+        f"\u7aef\u53e3\u5360\u7528: {'\u662f' if (port.isdigit() and is_port_open(browser_host, int(port))) else '\u5426'}",
+    ]
+    if owner:
+        path_lines.extend([f"\u5360\u7528 PID: {owner.get('pid', '')}", f"\u5360\u7528\u8bf4\u660e: {build_port_owner_label(owner)}"])
+    else:
+        path_lines.append("\u5360\u7528\u8bf4\u660e: \u672a\u68c0\u6d4b\u5230")
+    paths_text = "\n".join(path_lines)
+
+    self.set_readonly_text(self.env_text_widgets["overview"], overview_text)
+    self.set_readonly_text(self.env_text_widgets["runtime"], runtime_text)
+    self.set_readonly_text(self.env_text_widgets["deps"], deps_text)
+    self.set_readonly_text(self.env_text_widgets["paths"], paths_text)
+
+
+def _ff_create_tray_icon(self: Any) -> None:
+    menu = Menu(
+        MenuItem("\u6253\u5f00\u7ba1\u7406\u5668", lambda: self.root.after(0, self.show_window)),
+        MenuItem("\u542f\u52a8\u5168\u90e8", lambda: self.root.after(0, self.handle_start_all)),
+        MenuItem("\u505c\u6b62\u5168\u90e8", lambda: self.root.after(0, self.handle_stop_all)),
+        MenuItem("\u91cd\u542f\u5168\u90e8", lambda: self.root.after(0, self.handle_restart_all)),
+        MenuItem("\u542f\u52a8\u540e\u7aef", lambda: self.root.after(0, self.handle_start_backend)),
+        MenuItem("\u505c\u6b62\u540e\u7aef", lambda: self.root.after(0, self.handle_stop_backend)),
+        MenuItem("\u91cd\u542f\u540e\u7aef", lambda: self.root.after(0, self.handle_restart_backend)),
+        MenuItem("\u542f\u52a8\u524d\u7aef", lambda: self.root.after(0, self.handle_start_frontend)),
+        MenuItem("\u505c\u6b62\u524d\u7aef", lambda: self.root.after(0, self.handle_stop_frontend)),
+        MenuItem("\u91cd\u542f\u524d\u7aef", lambda: self.root.after(0, self.handle_restart_frontend)),
+        MenuItem("\u6253\u5f00\u524d\u7aef", lambda: self.root.after(0, self.open_frontend)),
+        MenuItem("\u9000\u51fa\u7a0b\u5e8f", lambda: self.root.after(0, self.exit_application)),
+    )
+    self.tray_icon = Icon("FinFlowManager", create_tray_image(), "FinFlow \u670d\u52a1\u7ba1\u7406\u5668", menu)
+    self.tray_thread = threading.Thread(target=self.tray_icon.run, daemon=True)
+    self.tray_thread.start()
+    self.update_tray_title()
+
+
+def _ff_resolve_log_path(self: Any) -> Path:
+    mapping = {
+        FF_LOG_CHOICES[0]: STDOUT_LOG,
+        FF_LOG_CHOICES[1]: STDERR_LOG,
+        FF_LOG_CHOICES[2]: FRONTEND_STDOUT_LOG,
+        FF_LOG_CHOICES[3]: FRONTEND_STDERR_LOG,
+        FF_LOG_CHOICES[4]: PROJECT_SYNC_LOG,
+    }
+    return mapping.get(self.log_choice.get(), STDOUT_LOG)
+
+
+def _ff_clear_current_log(self: Any) -> None:
+    path = self.resolve_log_path()
+    if path == PROJECT_SYNC_LOG:
+        confirm = messagebox.askyesno("\u786e\u8ba4\u6e05\u7a7a", "\u786e\u5b9a\u8981\u6e05\u7a7a\u9879\u76ee\u540c\u6b65\u65e5\u5fd7\u5417\uff1f")
+    else:
+        confirm = messagebox.askyesno("\u786e\u8ba4\u6e05\u7a7a", f"\u786e\u5b9a\u8981\u6e05\u7a7a\u4ee5\u4e0b\u65e5\u5fd7\u5417\uff1f\n{path}")
+    if not confirm:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
+    except Exception as exc:
+        messagebox.showerror("\u6e05\u7a7a\u5931\u8d25", str(exc))
+        return
+    self.log_status_var.set("\u5f53\u524d\u65e5\u5fd7\u5df2\u6e05\u7a7a")
+    self.refresh_log_view(force=True)
+
+
+def _ff_summarize_log_view(self: Any, path: Path, lines: List[str]) -> tuple[str, str]:
+    if path == PROJECT_SYNC_LOG:
+        return "\u6b63\u5728\u67e5\u770b\u9879\u76ee\u540c\u6b65\u65e5\u5fd7", "\n".join(lines[-300:])
+    if path in (FRONTEND_STDOUT_LOG, FRONTEND_STDERR_LOG):
+        marker = self.frontend.last_session_marker
+        started_label = self.frontend.last_session_started_label
+    else:
+        marker = self.backend.last_session_marker
+        started_label = self.backend.last_session_started_label
+    if marker and marker in lines:
+        marker_index = len(lines) - 1 - lines[::-1].index(marker)
+        session_lines = lines[marker_index:]
+        label = f"\u6b63\u5728\u67e5\u770b\u672c\u6b21\u4f1a\u8bdd\u65e5\u5fd7\uff08{started_label}\uff09"
+        return label, "\n".join(session_lines[-300:])
+    return "\u6b63\u5728\u67e5\u770b\u6700\u8fd1 300 \u884c\u65e5\u5fd7", "\n".join(lines[-300:])
+
+
+def _ff_refresh_log_view(self: Any, force: bool = False) -> None:
+    if self.exiting:
+        return
+    if not force and not self.log_auto_refresh.get():
+        self.schedule_log_refresh()
+        return
+    path = self.resolve_log_path()
+    content = ""
+    if path.exists():
+        try:
+            raw_bytes = path.read_bytes()
+            lines = decode_console_output(raw_bytes).splitlines()
+            status_text, content = self.summarize_log_view(path, lines)
+            self.log_status_var.set(status_text)
+        except Exception as exc:
+            content = f"\u8bfb\u53d6\u65e5\u5fd7\u5931\u8d25: {exc}"
+            self.log_status_var.set("\u65e5\u5fd7\u8bfb\u53d6\u5931\u8d25")
+    else:
+        content = f"\u65e5\u5fd7\u6587\u4ef6\u4e0d\u5b58\u5728: {path}"
+        self.log_status_var.set("\u65e5\u5fd7\u6587\u4ef6\u4e0d\u5b58\u5728")
+    self.log_text.configure(state="normal")
+    self.log_text.delete("1.0", tk.END)
+    self.log_text.insert("1.0", content)
+    self.log_text.configure(state="disabled")
+    self.log_text.see(tk.END)
+    self.schedule_log_refresh()
+
+
+def _ff_check_git_update(self: Any) -> None:
+    self.save_manager_state()
+    if not self.check_git_available():
+        messagebox.showerror("\u9519\u8bef", "\u672a\u627e\u5230 Git \u547d\u4ee4\uff0c\u8bf7\u5148\u5b89\u88c5 Git \u5e76\u52a0\u5165\u7cfb\u7edf PATH")
+        return
+
+    repo_url = self.ops_vars["git_repo_url"].get().strip()
+    if not repo_url:
+        messagebox.showerror("\u9519\u8bef", "\u8bf7\u5148\u914d\u7f6e Git \u4ed3\u5e93\u5730\u5740")
+        return
+
+    branch = self.ops_vars["git_branch"].get().strip() or "main"
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", "--heads", repo_url, branch],
+            cwd=ROOT_DIR,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception as exc:
+        messagebox.showerror("\u68c0\u67e5\u5931\u8d25", f"\u68c0\u67e5 Git \u66f4\u65b0\u65f6\u51fa\u9519\uff1a{exc}")
+        return
+
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "\u672a\u77e5\u9519\u8bef").strip()
+        messagebox.showerror("\u68c0\u67e5\u5931\u8d25", f"\u65e0\u6cd5\u8bbf\u95ee\u4ed3\u5e93\u6216\u5206\u652f\u4e0d\u5b58\u5728\uff1a\n{detail}")
+        return
+    if not result.stdout.strip():
+        messagebox.showinfo("\u68c0\u67e5\u7ed3\u679c", f"\u5206\u652f '{branch}' \u4e0d\u5b58\u5728\u4e8e\u4ed3\u5e93\u4e2d")
+        return
+    messagebox.showinfo("\u68c0\u67e5\u7ed3\u679c", f"\u5206\u652f '{branch}' \u53ef\u8bbf\u95ee\uff0c\u53ef\u4ee5\u6267\u884c\u62c9\u53d6\u66f4\u65b0")
+
+
+def _ff_git_pull_update(self: Any) -> None:
+    self.save_manager_state()
+    if not self.check_git_available():
+        messagebox.showerror("\u9519\u8bef", "\u672a\u68c0\u6d4b\u5230 Git\uff0c\u8bf7\u5148\u5b89\u88c5 Git \u5e76\u52a0\u5165\u7cfb\u7edf PATH")
+        return
+
+    repo_url = self.ops_vars["git_repo_url"].get().strip()
+    if not repo_url:
+        messagebox.showerror("\u9519\u8bef", "\u8bf7\u5148\u914d\u7f6e Git \u4ed3\u5e93\u5730\u5740")
+        return
+
+    branch = self.ops_vars["git_branch"].get().strip() or "main"
+    backend_was_running = self.backend.is_running()
+    frontend_was_running = self.frontend.is_running()
+
+    if not (ROOT_DIR / ".git").exists():
+        proceed = messagebox.askyesno(
+            "\u521d\u59cb\u5316 Git \u4ed3\u5e93",
+            "\u5f53\u524d\u76ee\u5f55\u5c1a\u672a\u521d\u59cb\u5316\u4e3a Git \u4ed3\u5e93\uff0c\u5c06\u6267\u884c clone\u3002\u662f\u5426\u7ee7\u7eed\uff1f",
+        )
+        if not proceed:
+            return
+        try:
+            clone_result = subprocess.run(
+                ["git", "clone", "--branch", branch, repo_url, str(ROOT_DIR)],
+                capture_output=True,
+                text=True,
+                timeout=300,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except Exception as exc:
+            messagebox.showerror("\u5931\u8d25", f"Git clone \u5931\u8d25\uff1a{exc}")
+            return
+        if clone_result.returncode != 0:
+            detail = (clone_result.stderr or clone_result.stdout or "\u672a\u77e5\u9519\u8bef").strip()
+            messagebox.showerror("\u5931\u8d25", f"Git clone \u5931\u8d25\uff1a\n{detail}")
+            return
+        post_ok, post_detail = self.run_git_post_update_tasks()
+        if not post_ok:
+            messagebox.showerror("\u5931\u8d25", f"Git \u4ed3\u5e93\u521d\u59cb\u5316\u5b8c\u6210\uff0c\u4f46\u540e\u7eed\u5904\u7406\u5931\u8d25\uff1a\n{post_detail}")
+            return
+        detail = "Git \u4ed3\u5e93\u521d\u59cb\u5316\u5b8c\u6210\uff0c\u4ee3\u7801\u5df2\u62c9\u53d6"
+        if self.manager_state.get("git_auto_build_frontend", True):
+            detail += f"\n\n{post_detail}"
+        messagebox.showinfo("\u6210\u529f", detail)
+        self.refresh_status()
+        self.notify_tray("Git \u66f4\u65b0\u5b8c\u6210", "\u9879\u76ee\u4ee3\u7801\u5df2\u521d\u59cb\u5316\u5e76\u62c9\u53d6")
+        return
+
+    try:
+        if frontend_was_running:
+            self.frontend.stop()
+        if backend_was_running:
+            self.backend.stop()
+
+        result = subprocess.run(
+            ["git", "pull", "origin", branch],
+            cwd=ROOT_DIR,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "\u672a\u77e5\u9519\u8bef").strip()
+            messagebox.showerror("\u62c9\u53d6\u5931\u8d25", f"Git pull \u5931\u8d25\uff1a\n{detail}")
+            return
+
+        stdout_text = result.stdout.strip()
+        if "Already up to date" in stdout_text:
+            messagebox.showinfo("\u63d0\u793a", "\u9879\u76ee\u5df2\u7ecf\u662f\u6700\u65b0\u7248\u672c")
+            return
+
+        post_ok, post_detail = self.run_git_post_update_tasks()
+        if not post_ok:
+            messagebox.showerror("\u62c9\u53d6\u540e\u5904\u7406\u5931\u8d25", f"Git pull \u5df2\u5b8c\u6210\uff0c\u4f46\u540e\u7eed\u5904\u7406\u5931\u8d25\uff1a\n{post_detail}")
+            return
+
+        detail = f"\u9879\u76ee\u5df2\u66f4\u65b0\n{stdout_text}"
+        if self.manager_state.get("git_auto_build_frontend", True):
+            detail += f"\n\n{post_detail}"
+        messagebox.showinfo("\u6210\u529f", detail)
+        self.refresh_status()
+        self.notify_tray("Git \u66f4\u65b0\u5b8c\u6210", "\u9879\u76ee\u5df2\u4ece\u8fdc\u7a0b\u4ed3\u5e93\u62c9\u53d6")
+    except Exception as exc:
+        messagebox.showerror("\u5931\u8d25", f"Git \u66f4\u65b0\u5f02\u5e38\uff1a{exc}")
+    finally:
+        if backend_was_running and not self.backend.is_running():
+            self.backend.start(self.get_effective_config())
+        if frontend_was_running and not self.frontend.is_running():
+            self.frontend.start(self.get_effective_config())
+
+
+def _ff_git_show_history(self: Any) -> None:
+    self.save_manager_state()
+    if not self.check_git_available():
+        messagebox.showerror("\u9519\u8bef", "\u672a\u627e\u5230 Git \u547d\u4ee4\uff0c\u8bf7\u5148\u5b89\u88c5 Git \u5e76\u52a0\u5165\u7cfb\u7edf PATH")
+        return
+    if not (ROOT_DIR / ".git").exists():
+        messagebox.showerror("\u9519\u8bef", "\u5f53\u524d\u9879\u76ee\u76ee\u5f55\u6ca1\u6709 Git \u4ed3\u5e93")
+        return
+
+    try:
+        result = subprocess.run(
+            ["git", "log", "-5", "--oneline"],
+            cwd=ROOT_DIR,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            messagebox.showinfo("\u63d0\u793a", "\u672c\u5730\u4ed3\u5e93\u6682\u65e0\u63d0\u4ea4\u5386\u53f2")
+            return
+
+        top_level = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=ROOT_DIR,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        repo_dir = top_level.stdout.strip() if top_level.returncode == 0 else str(ROOT_DIR)
+
+        history_window = tk.Toplevel(self.root)
+        history_window.title("Git \u63d0\u4ea4\u5386\u53f2")
+        history_window.geometry("600x400")
+
+        text_widget = scrolledtext.ScrolledText(history_window, wrap="word", font=("Consolas", 10))
+        text_widget.pack(fill="both", expand=True, padx=10, pady=10)
+        text_widget.insert("1.0", f"\u4ed3\u5e93\u76ee\u5f55\uff1a{repo_dir}\n\n{result.stdout.strip()}")
+        text_widget.configure(state="disabled")
+        ttk.Button(history_window, text="\u5173\u95ed", command=history_window.destroy).pack(pady=10)
+    except Exception as exc:
+        messagebox.showerror("\u9519\u8bef", f"\u67e5\u770b Git \u63d0\u4ea4\u5386\u53f2\u5931\u8d25\uff1a{exc}")
+
+
+def _ff_git_rollback(self: Any) -> None:
+    self.save_manager_state()
+    if not self.check_git_available():
+        messagebox.showerror("\u9519\u8bef", "\u672a\u627e\u5230 Git \u547d\u4ee4\uff0c\u8bf7\u5148\u5b89\u88c5 Git \u5e76\u52a0\u5165\u7cfb\u7edf PATH")
+        return
+    if not (ROOT_DIR / ".git").exists():
+        messagebox.showerror("\u9519\u8bef", "\u5f53\u524d\u9879\u76ee\u76ee\u5f55\u6ca1\u6709 Git \u4ed3\u5e93")
+        return
+
+    try:
+        result = subprocess.run(
+            ["git", "log", "--oneline", "-20"],
+            cwd=ROOT_DIR,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            messagebox.showinfo("\u63d0\u793a", "\u672c\u5730\u4ed3\u5e93\u6682\u65e0\u63d0\u4ea4\u5386\u53f2")
+            return
+
+        commits = []
+        for line in result.stdout.strip().splitlines():
+            if " " not in line:
+                continue
+            commit_hash, message = line.split(" ", 1)
+            commits.append((commit_hash, message))
+        if not commits:
+            messagebox.showinfo("\u63d0\u793a", "\u672c\u5730\u4ed3\u5e93\u6682\u65e0\u63d0\u4ea4\u5386\u53f2")
+            return
+
+        rollback_window = tk.Toplevel(self.root)
+        rollback_window.title("\u9009\u62e9\u56de\u6eda\u7248\u672c")
+        rollback_window.geometry("520x400")
+        ttk.Label(rollback_window, text="\u9009\u62e9\u8981\u56de\u6eda\u5230\u7684\u7248\u672c\uff1a").pack(pady=10)
+        listbox = tk.Listbox(rollback_window, height=15, font=("Consolas", 10))
+        listbox.pack(fill="both", expand=True, padx=10, pady=10)
+        for commit_hash, message in commits:
+            listbox.insert("end", f"{commit_hash} {message}")
+        ttk.Button(
+            rollback_window,
+            text="\u786e\u5b9a\u56de\u6eda",
+            command=lambda: self.execute_rollback(listbox, rollback_window),
+        ).pack(pady=10)
+    except Exception as exc:
+        messagebox.showerror("\u9519\u8bef", f"\u83b7\u53d6 Git \u63d0\u4ea4\u5386\u53f2\u5931\u8d25\uff1a{exc}")
+
+
+def _ff_execute_rollback(self: Any, listbox: tk.Listbox, window: tk.Toplevel) -> None:
+    selection = listbox.curselection()
+    if not selection:
+        messagebox.showwarning("\u8b66\u544a", "\u8bf7\u5148\u9009\u62e9\u4e00\u4e2a\u7248\u672c")
+        return
+
+    selected = listbox.get(selection[0])
+    commit_hash = selected.split(" ", 1)[0]
+    proceed = messagebox.askyesno(
+        "\u786e\u8ba4\u56de\u6eda",
+        f"\u786e\u5b9a\u8981\u56de\u6eda\u5230\u7248\u672c {commit_hash} \u5417\uff1f\n\n\u6ce8\u610f\uff1a\u8fd9\u4f1a\u8986\u76d6\u672c\u5730\u7684\u4ee3\u7801\u53d8\u66f4\u3002",
+    )
+    if not proceed:
+        return
+
+    backend_was_running = self.backend.is_running()
+    frontend_was_running = self.frontend.is_running()
+    try:
+        if frontend_was_running:
+            self.frontend.stop()
+        if backend_was_running:
+            self.backend.stop()
+        result = subprocess.run(
+            ["git", "reset", "--hard", commit_hash],
+            cwd=ROOT_DIR,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "\u672a\u77e5\u9519\u8bef").strip()
+            messagebox.showerror("\u56de\u6eda\u5931\u8d25", f"Git reset \u5931\u8d25\uff1a\n{detail}")
+            return
+        messagebox.showinfo("\u6210\u529f", f"\u5df2\u56de\u6eda\u5230\u7248\u672c {commit_hash}")
+        self.refresh_status()
+        self.notify_tray("Git \u56de\u6eda\u5b8c\u6210", f"\u5df2\u56de\u6eda\u5230\u7248\u672c {commit_hash}")
+    except Exception as exc:
+        messagebox.showerror("\u5931\u8d25", f"Git \u56de\u6eda\u65f6\u51fa\u9519\uff1a{exc}")
+    finally:
+        if backend_was_running and not self.backend.is_running():
+            self.backend.start(self.get_effective_config())
+        if frontend_was_running and not self.frontend.is_running():
+            self.frontend.start(self.get_effective_config())
+        window.destroy()
+
+
+def _ff_select_migration_file(self: Any) -> None:
+    path = filedialog.askopenfilename(
+        title="\u9009\u62e9 SQL \u811a\u672c",
+        filetypes=[("SQL \u6587\u4ef6", "*.sql"), ("\u6240\u6709\u6587\u4ef6", "*.*")],
+    )
+    if not path:
+        return
+
+    last_error: Exception | None = None
+    for encoding in ("utf-8", "utf-8-sig", "gbk"):
+        try:
+            content = Path(path).read_text(encoding=encoding)
+            self.migration_script_text.configure(state="normal")
+            self.migration_script_text.delete("1.0", tk.END)
+            self.migration_script_text.insert("1.0", content)
+            self.migration_script_text.configure(state="disabled")
+            return
+        except Exception as exc:
+            last_error = exc
+    messagebox.showerror("\u8bfb\u53d6\u5931\u8d25", f"\u65e0\u6cd5\u8bfb\u53d6 SQL \u6587\u4ef6\uff1a{last_error}")
+
+
+def _ff_execute_migration(self: Any) -> None:
+    self.save_manager_state()
+    sql_content = self.migration_script_text.get("1.0", tk.END).strip()
+    if not sql_content:
+        messagebox.showwarning("\u63d0\u793a", "\u8bf7\u5148\u8f93\u5165\u6216\u9009\u62e9 SQL \u811a\u672c\u5185\u5bb9")
+        return
+
+    sqlcmd = self.ops_vars["sqlcmd_path"].get().strip() or "sqlcmd"
+    config = self.get_effective_config()
+    proceed = messagebox.askyesno(
+        "\u786e\u8ba4\u6267\u884c",
+        "\u786e\u5b9a\u8981\u6267\u884c\u6b64 SQL \u811a\u672c\u5417\uff1f\n\u8bf7\u786e\u4fdd\u811a\u672c\u5185\u5bb9\u6b63\u786e\uff0c\u6267\u884c\u540e\u5c06\u76f4\u63a5\u4fee\u6539\u6570\u636e\u5e93\u3002",
+    )
+    if not proceed:
+        return
+
+    ok, detail = execute_sql_script_via_sqlcmd(sql_content, config, sqlcmd)
+    if ok:
+        messagebox.showinfo("\u6267\u884c\u6210\u529f", detail)
+        self.notify_tray("\u6570\u636e\u5e93\u8fc1\u79fb\u6210\u529f", "SQL \u811a\u672c\u5df2\u6267\u884c")
+    else:
+        messagebox.showerror("\u6267\u884c\u5931\u8d25", detail)
+
+
+def _ff_restore_database(self: Any) -> None:
+    self.save_manager_state()
+    sqlcmd = self.ops_vars["sqlcmd_path"].get().strip() or "sqlcmd"
+    backup_dir = Path(self.ops_vars["backup_dir"].get().strip() or str(BACKUP_DIR))
+    bak_files = sorted(backup_dir.glob("*.bak"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not bak_files:
+        messagebox.showerror("\u6062\u590d\u5931\u8d25", f"\u5907\u4efd\u76ee\u5f55\u4e2d\u672a\u627e\u5230 .bak \u6587\u4ef6\uff1a{backup_dir}")
+        return
+
+    file_list = [f"{f.name} ({f.stat().st_size / (1024 * 1024):.1f} MB)" for f in bak_files[:10]]
+    choice_window = tk.Toplevel(self.root)
+    choice_window.title("\u9009\u62e9\u6062\u590d\u6587\u4ef6")
+    choice_window.geometry("500x350")
+    ttk.Label(choice_window, text="\u9009\u62e9\u8981\u6062\u590d\u7684\u5907\u4efd\u6587\u4ef6\uff1a").pack(pady=10)
+    listbox = tk.Listbox(choice_window, height=12, font=("Consolas", 9))
+    listbox.pack(fill="both", expand=True, padx=10, pady=5)
+    for item in file_list:
+        listbox.insert("end", item)
+
+    def do_restore() -> None:
+        selection = listbox.curselection()
+        if not selection:
+            messagebox.showwarning("\u8b66\u544a", "\u8bf7\u5148\u9009\u62e9\u4e00\u4e2a\u5907\u4efd\u6587\u4ef6")
+            return
+        selected_file = bak_files[selection[0]]
+        proceed = messagebox.askyesno(
+            "\u786e\u8ba4\u6062\u590d",
+            f"\u786e\u5b9a\u8981\u4ece\u4ee5\u4e0b\u5907\u4efd\u6062\u590d\u6570\u636e\u5e93\u5417\uff1f\n{selected_file.name}\n\n\u8b66\u544a\uff1a\u8fd9\u5c06\u8986\u76d6\u5f53\u524d\u6570\u636e\u5e93\u4e2d\u7684\u6240\u6709\u6570\u636e\uff01",
+        )
+        if not proceed:
+            return
+        ok, detail = restore_database_from_backup(self.get_effective_config(), selected_file, sqlcmd)
+        choice_window.destroy()
+        if ok:
+            messagebox.showinfo("\u6062\u590d\u6210\u529f", f"\u6570\u636e\u5e93\u5df2\u4ece {selected_file.name} \u6062\u590d")
+            self.notify_tray("\u6570\u636e\u5e93\u6062\u590d\u6210\u529f", f"\u5df2\u4ece {selected_file.name} \u6062\u590d")
+        else:
+            messagebox.showerror("\u6062\u590d\u5931\u8d25", detail)
+
+    ttk.Button(choice_window, text="\u786e\u8ba4\u6062\u590d", command=do_restore).pack(pady=10)
 
 
 if __name__ == "__main__":
