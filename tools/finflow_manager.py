@@ -237,6 +237,8 @@ BACKEND_DIR = ROOT_DIR / "backend"
 FRONTEND_DIR = ROOT_DIR / "frontend"
 DIST_DIR = FRONTEND_DIR / "dist"
 LOG_DIR = BACKEND_DIR / "logs"
+BACKEND_VENV_DIR = BACKEND_DIR / ".venv_runtime"
+BACKEND_LEGACY_VENV_DIR = BACKEND_DIR / ".venv"
 ENV_PATH = BACKEND_DIR / ".env"
 ENV_EXAMPLE_PATH = BACKEND_DIR / ".env.example"
 FRONTEND_ENV_PATH = FRONTEND_DIR / ".env"
@@ -566,6 +568,18 @@ def load_effective_config_from_disk() -> Dict[str, str]:
     return values
 
 
+def get_backend_venv_candidates() -> List[Path]:
+    return [BACKEND_VENV_DIR, BACKEND_LEGACY_VENV_DIR]
+
+
+def get_backend_python_executable() -> Path:
+    for venv_dir in get_backend_venv_candidates():
+        python_exe = venv_dir / "Scripts" / "python.exe"
+        if python_exe.exists():
+            return python_exe
+    return BACKEND_VENV_DIR / "Scripts" / "python.exe"
+
+
 def load_manager_icon_image() -> Image.Image | None:
     ensure_gui_dependencies()
     for path in (MANAGER_ICON_PNG, MANAGER_ICON_ICO):
@@ -879,6 +893,48 @@ def build_node_process_env(base_env: Dict[str, str] | None = None) -> Dict[str, 
     return env
 
 
+def tail_text_file(path: Path, max_lines: int = 40) -> str:
+    if not path.exists():
+        return ""
+    try:
+        lines = sanitize_console_text(decode_console_output(path.read_bytes())).splitlines()
+    except Exception:
+        return ""
+    return "\n".join(lines[-max_lines:]).strip()
+
+
+def check_backend_runtime_requirements(config: Dict[str, str]) -> Tuple[bool, str]:
+    python_exe = get_backend_python_executable()
+    if not python_exe.exists():
+        return False, f"未找到后端虚拟环境，请先同步后端依赖：{python_exe}"
+    if not ENV_PATH.exists():
+        return False, "未找到 backend/.env，请先保存后端配置"
+    if not KEY_PATH.exists():
+        return False, "未找到 backend/.encryption.key，请先生成或放入正确密钥"
+
+    env = os.environ.copy()
+    env.update(config)
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        result = subprocess.run(
+            [str(python_exe), "-c", "import fastapi, uvicorn; print(fastapi.__version__); print(uvicorn.__version__)"],
+            cwd=BACKEND_DIR,
+            env=env,
+            capture_output=True,
+            text=False,
+            timeout=20,
+            creationflags=creationflags,
+        )
+    except Exception as exc:
+        return False, f"检查 FastAPI/uvicorn 运行环境失败：{exc}"
+    if result.returncode != 0:
+        detail = sanitize_console_text(decode_console_output(result.stderr or result.stdout or b"")).strip()
+        return False, f"后端运行环境不完整，请先同步后端依赖：{detail or '缺少 fastapi 或 uvicorn'}"
+    return True, "后端 FastAPI/uvicorn 运行环境正常"
+
+
 def _read_process_stream(stream: Any, stream_name: str, sink: queue.Queue[tuple[str, bytes | None]]) -> None:
     try:
         while True:
@@ -1156,7 +1212,7 @@ def describe_database_configuration_from_disk() -> Tuple[str, str]:
 
 
 def check_database_connectivity_via_backend_runtime(config: Dict[str, str]) -> Tuple[bool, str]:
-    python_exe = BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
+    python_exe = get_backend_python_executable()
     if not python_exe.exists():
         return False, f"未找到后端虚拟环境 Python：{python_exe}"
 
@@ -2632,6 +2688,7 @@ class FinFlowManagerApp:
         self.form_vars: Dict[str, tk.StringVar] = {}
         self.status_vars: Dict[str, tk.StringVar] = {}
         self.status_badges: Dict[str, tk.Label] = {}
+        self.service_action_buttons: Dict[str, ttk.Button] = {}
         self.manager_option_vars: Dict[str, tk.BooleanVar] = {}
         self.ops_vars: Dict[str, tk.StringVar] = {}
         self.init_ops_vars()
@@ -3745,7 +3802,7 @@ class FinFlowManagerApp:
 
         self.append_deploy_log(f"[1/{total_steps}] \u73af\u5883\u68c0\u67e5...")
 
-        python_exe = BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
+        python_exe = get_backend_python_executable()
         system_python = "python"
         try:
             result = subprocess.run(
@@ -3766,7 +3823,7 @@ class FinFlowManagerApp:
             self.append_deploy_log("  \u6b63\u5728\u521b\u5efa\u540e\u7aef\u865a\u62df\u73af\u5883...")
             try:
                 result = subprocess.run(
-                    [system_python, "-m", "venv", str(BACKEND_DIR / ".venv")],
+                    [system_python, "-m", "venv", str(BACKEND_VENV_DIR)],
                     cwd=BACKEND_DIR,
                     capture_output=True,
                     text=True,
@@ -3775,6 +3832,7 @@ class FinFlowManagerApp:
                 )
                 if result.returncode == 0:
                     self.append_deploy_log("  [OK] \u540e\u7aef\u865a\u62df\u73af\u5883\u5df2\u521b\u5efa")
+                    python_exe = get_backend_python_executable()
                 else:
                     error_msg = result.stderr or result.stdout or "\u521b\u5efa\u5931\u8d25"
                     self.append_deploy_log(f"  [FAIL] \u521b\u5efa\u865a\u62df\u73af\u5883\u5931\u8d25: {error_msg}")
@@ -4002,7 +4060,7 @@ class FinFlowManagerApp:
         if backend_dep_ok:
             self.append_deploy_log(f"  [OK] \u540e\u7aef\u4f9d\u8d56: {backend_dep_msg}")
         else:
-            self.append_deploy_log(f"  [WARN] \u540e\u7aef\u4f9d\u8d56: {backend_dep_msg}")
+            abort_deploy(f"\u540e\u7aef\u4f9d\u8d56\u540c\u6b65\u5931\u8d25: {backend_dep_msg}")
 
         self.append_deploy_log("  [RUN] \u5f00\u59cb\u540c\u6b65\u524d\u7aef Node.js \u4f9d\u8d56...")
         frontend_dep_ok, frontend_dep_msg = sync_frontend_dependencies(log_callback=self.append_deploy_log)
@@ -4271,7 +4329,7 @@ def describe_database_configuration_from_disk() -> Tuple[str, str]:
 
 
 def check_database_connectivity_via_backend_runtime(config: Dict[str, str]) -> Tuple[bool, str]:
-    python_exe = BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
+    python_exe = get_backend_python_executable()
     if not python_exe.exists():
         return False, f"\u672a\u627e\u5230\u540e\u7aef\u865a\u62df\u73af\u5883 Python: {python_exe}"
 
@@ -4552,9 +4610,24 @@ def _ff_build_status_tab(self: Any, parent: ttk.Frame) -> None:
                 for action_col in range(3):
                     group.columnconfigure(action_col, weight=1)
                 for idx, (button_text, command) in enumerate(action_specs):
-                    ttk.Button(group, text=button_text, command=command).grid(row=idx // 3, column=idx % 3, sticky="ew", padx=3, pady=3)
+                    button = ttk.Button(group, text=button_text, command=command)
+                    button.grid(row=idx // 3, column=idx % 3, sticky="ew", padx=3, pady=3)
+                    action_key = {
+                        "\u542f\u52a8\u5168\u90e8": "start_all",
+                        "\u505c\u6b62\u5168\u90e8": "stop_all",
+                        "\u91cd\u542f\u5168\u90e8": "restart_all",
+                        "\u542f\u52a8\u540e\u7aef": "start_backend",
+                        "\u505c\u6b62\u540e\u7aef": "stop_backend",
+                        "\u91cd\u542f\u540e\u7aef": "restart_backend",
+                        "\u542f\u52a8\u524d\u7aef": "start_frontend",
+                        "\u505c\u6b62\u524d\u7aef": "stop_frontend",
+                        "\u91cd\u542f\u524d\u7aef": "restart_frontend",
+                    }.get(button_text)
+                    if action_key:
+                        self.service_action_buttons[action_key] = button
 
     self.refresh_status_badges()
+    _update_service_action_buttons(self)
 
 
 def _ff_get_status_badge_palette(self: Any, key: str, value: str) -> Tuple[str, str]:
@@ -5351,7 +5424,7 @@ def _ff_refresh_environment_info(self: Any) -> None:
         except Exception as exc:
             manager_module_lines.append(f"[MISSING] {name}: {exc}")
 
-    backend_probe = {"ok": False, "error": "\u672a\u627e\u5230 backend/.venv/Scripts/python.exe"}
+    backend_probe = {"ok": False, "error": f"\u672a\u627e\u5230\u540e\u7aef\u865a\u62df\u73af\u5883 Python: {get_backend_python_executable()}"}
     if backend_python.exists():
         probe_code = (
             "import importlib.util, json, sys;"
@@ -5515,6 +5588,12 @@ def _ff_refresh_log_view(self: Any, force: bool = False) -> None:
         return
     path = self.resolve_log_path()
     content = ""
+    if path in {STDOUT_LOG, STDERR_LOG, FRONTEND_STDOUT_LOG, FRONTEND_STDERR_LOG, SERVICE_HOST_LOG} and not path.exists():
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch(exist_ok=True)
+        except Exception:
+            pass
     if path.exists():
         try:
             raw_bytes = path.read_bytes()
@@ -5896,12 +5975,68 @@ def sync_backend_dependencies(
     timeout_seconds: int = 900,
     log_callback: Callable[[str], None] | None = None,
 ) -> Tuple[bool, str]:
-    python_exe = BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
+    python_exe = get_backend_python_executable()
     requirements_path = BACKEND_DIR / "requirements.txt"
-    if not python_exe.exists():
-        return False, f"\u672a\u627e\u5230\u540e\u7aef\u865a\u62df\u73af\u5883\uff1a{python_exe}"
     if not requirements_path.exists():
         return False, f"\u672a\u627e\u5230\u4f9d\u8d56\u6e05\u5355\uff1a{requirements_path}"
+
+    def ensure_backend_venv() -> Tuple[bool, str]:
+        nonlocal python_exe
+        system_python = "python"
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        if not python_exe.exists():
+            if log_callback:
+                log_callback("    [RUN] 未检测到后端虚拟环境，正在重新创建...")
+            result = subprocess.run(
+                [system_python, "-m", "venv", str(BACKEND_VENV_DIR)],
+                cwd=BACKEND_DIR,
+                capture_output=True,
+                text=True,
+                timeout=180,
+                creationflags=creationflags,
+            )
+            if result.returncode != 0:
+                return False, (result.stderr or result.stdout or "创建后端虚拟环境失败").strip()
+            python_exe = BACKEND_VENV_DIR / "Scripts" / "python.exe"
+
+        pip_check = subprocess.run(
+            [str(python_exe), "-m", "pip", "--version"],
+            cwd=BACKEND_DIR,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            creationflags=creationflags,
+        )
+        if pip_check.returncode == 0:
+            return True, "后端虚拟环境可用"
+
+        if log_callback:
+            log_callback("    [WARN] 检测到后端虚拟环境缺少 pip，正在重建虚拟环境...")
+        try:
+            target_venv = python_exe.parents[1]
+            if target_venv.resolve() == BACKEND_LEGACY_VENV_DIR.resolve():
+                target_venv = BACKEND_VENV_DIR
+            shutil.rmtree(target_venv, ignore_errors=True)
+        except Exception:
+            pass
+        result = subprocess.run(
+            [system_python, "-m", "venv", str(BACKEND_VENV_DIR)],
+            cwd=BACKEND_DIR,
+            capture_output=True,
+            text=True,
+            timeout=180,
+            creationflags=creationflags,
+        )
+        if result.returncode != 0:
+            return False, (result.stderr or result.stdout or "重建后端虚拟环境失败").strip()
+        python_exe = BACKEND_VENV_DIR / "Scripts" / "python.exe"
+        return True, "后端虚拟环境已重建"
+
+    venv_ok, venv_msg = ensure_backend_venv()
+    if not venv_ok:
+        return False, venv_msg
+    if log_callback:
+        log_callback(f"    [OK] {venv_msg}")
 
     try:
         upgrade_code, upgrade_stdout, upgrade_stderr = run_command_with_live_output(
@@ -6043,13 +6178,11 @@ def _backend_process_start_override(self: BackendProcessController, config: Dict
     if self.is_running():
         return False, "后端已在运行"
 
-    python_exe = BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
-    if not python_exe.exists():
-        return False, "未找到后端虚拟环境，请先在 backend/.venv 安装 Python 依赖"
-    if not ENV_PATH.exists():
-        return False, "未找到 backend/.env，请先在配置页保存配置"
-    if not KEY_PATH.exists():
-        return False, "未找到 backend/.encryption.key，请先生成或放入正确密钥"
+    requirement_ok, requirement_msg = check_backend_runtime_requirements(config)
+    if not requirement_ok:
+        return False, requirement_msg
+
+    python_exe = get_backend_python_executable()
 
     ensure_log_dir()
     max_size = 20.0
@@ -6091,7 +6224,7 @@ def _backend_process_start_override(self: BackendProcessController, config: Dict
 
     try:
         self.process = subprocess.Popen(
-            [str(python_exe), "-m", "uvicorn", "main:app", "--host", host, "--port", port],
+            [str(python_exe), "-m", "uvicorn", "main:app", "--host", host, "--port", port, "--app-dir", str(BACKEND_DIR)],
             cwd=BACKEND_DIR,
             env=env,
             stdin=subprocess.DEVNULL,
@@ -6207,6 +6340,17 @@ def _managed_backend_start_override(self: ManagedBackendController, _config: Dic
         host_pid = int(state.get("service_host_pid") or 0)
         return False, f"服务宿主已在运行，PID={host_pid}"
 
+    runtime_config = dict(_config or load_effective_config_from_disk())
+    requirement_ok, requirement_msg = check_backend_runtime_requirements(runtime_config)
+    if not requirement_ok:
+        return False, requirement_msg
+    host = resolve_browser_host(runtime_config.get("APP_HOST", "127.0.0.1"))
+    port_text = (runtime_config.get("APP_PORT") or "8100").strip() or "8100"
+    if port_text.isdigit():
+        port_num = int(port_text)
+        if is_port_open(host, port_num):
+            return False, f"后端端口 {port_num} 已被占用，请先确认现有实例状态"
+
     ensure_runtime_dir()
     clear_stop_request()
     ensure_log_dir()
@@ -6226,6 +6370,12 @@ def _managed_backend_start_override(self: ManagedBackendController, _config: Dic
         )
 
     process_pid = safe_process_pid(process)
+    self.process = SimpleNamespace(pid=process_pid) if process_pid > 0 else None
+    write_runtime_state(service_host_pid=process_pid, backend_pid=0, user_stopped=False)
+    time.sleep(0.5)
+    if not safe_process_is_running(process):
+        log_tail = tail_text_file(SERVICE_HOST_LOG)
+        return False, f"服务宿主启动后立即退出。\n{log_tail or '请检查 manager.service.log'}"
     deadline = time.time() + 3
     while time.time() < deadline:
         try:
@@ -6235,6 +6385,9 @@ def _managed_backend_start_override(self: ManagedBackendController, _config: Dic
                 return True, f"服务宿主已启动，PID={host_pid}"
         except Exception:
             break
+        if not safe_process_is_running(process):
+            log_tail = tail_text_file(SERVICE_HOST_LOG)
+            return False, f"服务宿主启动失败。\n{log_tail or '请检查 manager.service.log'}"
         time.sleep(0.25)
     return True, f"已发送服务宿主启动命令，PID={process_pid}"
 
@@ -6253,6 +6406,33 @@ def _managed_backend_state_override(self: ManagedBackendController) -> Dict[str,
         backend_pid = 0
     self.process = SimpleNamespace(pid=backend_pid) if backend_pid > 0 else None
     return state
+
+
+def _backend_process_init_override(self: BackendProcessController) -> None:
+    self.process = None
+    self.stdout_handle = None
+    self.stderr_handle = None
+    self.user_stopped = False
+    self.last_start_attempt = 0.0
+    self.last_exit_code = None
+    self.last_exit_at = 0.0
+    self.last_started_at = 0.0
+    self.consecutive_failed_starts = 0
+    self.auto_restart_suppressed = False
+    self.last_session_marker = ""
+    self.last_session_started_label = ""
+    write_runtime_state(
+        backend_pid=0,
+        user_stopped=False,
+        last_start_attempt=0.0,
+        last_started_at=0.0,
+        last_exit_code=None,
+        last_exit_at=0.0,
+        consecutive_failed_starts=0,
+        auto_restart_suppressed=False,
+        last_session_marker="",
+        last_session_started_label="",
+    )
 
 
 def _ff_refresh_status_override(self: Any) -> None:
@@ -6285,6 +6465,126 @@ def _ff_refresh_status_override(self: Any) -> None:
     self.status_vars["frontend_status"].set(frontend_status)
     self.status_vars["frontend_port_owner"].set(frontend_owner_text)
     self.status_vars["frontend_url"].set(frontend_settings["frontend_url"])
+    _update_service_action_buttons(self)
+    self.refresh_status_badges()
+
+
+def _get_effective_config_override(self: Any) -> Dict[str, str]:
+    data = dict(getattr(self, "config_values", {}) or {})
+    try:
+        for key, var in self.form_vars.items():
+            data[key] = var.get().strip()
+    except Exception:
+        disk_values = read_env_file(ENV_PATH)
+        if disk_values:
+            data.update(disk_values)
+    data["APP_RELOAD"] = "false"
+    return data
+
+
+def _safe_save_config_before_service_action(self: Any) -> Tuple[bool, str]:
+    try:
+        self.save_config_values()
+        return True, ""
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _handle_start_backend_override(self: Any) -> None:
+    saved, save_error = _safe_save_config_before_service_action(self)
+    config = self.get_effective_config()
+    self.backend.clear_restart_failure_state()
+    ok, message = self.backend.start(config)
+    if ok:
+        self.log_status_var.set(f"当前显示：本次启动日志（自 {self.backend.last_session_started_label} 起）")
+        self.notify_tray("FinFlow 已启动", message)
+        if not saved and save_error:
+            message += f"\n\n注意：界面未保存的配置未能写入，已按最近一次有效配置启动。\n原因：{save_error}"
+        messagebox.showinfo("启动结果", message)
+    else:
+        warn_message = message
+        if not saved and save_error:
+            warn_message += f"\n\n界面未保存配置读取失败：{save_error}"
+        messagebox.showwarning("启动结果", warn_message)
+    self.refresh_status()
+
+
+def _handle_start_frontend_override(self: Any, show_dialog: bool = True) -> Tuple[bool, str]:
+    saved, save_error = _safe_save_config_before_service_action(self)
+    config = self.get_effective_config()
+    self.frontend.clear_restart_failure_state()
+    ok, message = self.frontend.start(config)
+    if ok:
+        self.log_status_var.set(f"当前显示：本次启动日志（前端，自 {self.frontend.last_session_started_label} 起）")
+        self.notify_tray("前端已启动", message)
+        if not saved and save_error:
+            message += f"\n\n注意：界面未保存的配置未能写入，已按最近一次有效配置启动。\n原因：{save_error}"
+        if show_dialog:
+            messagebox.showinfo("启动结果", message)
+    else:
+        if not saved and save_error:
+            message += f"\n\n界面未保存配置读取失败：{save_error}"
+        if show_dialog:
+            messagebox.showwarning("启动结果", message)
+    self.refresh_status()
+    return ok, message
+
+
+def _handle_start_all_override(self: Any, show_dialog: bool = True) -> Tuple[bool, str]:
+    saved, save_error = _safe_save_config_before_service_action(self)
+    config = self.get_effective_config()
+    self.backend.clear_restart_failure_state()
+    backend_started, backend_message = self.backend.start(config)
+    if not backend_started and self.backend.is_running():
+        backend_started = True
+        backend_message = backend_message or "后端已在运行"
+
+    frontend_ok = False
+    frontend_message = "后端启动失败，未继续启动前端"
+    if backend_started:
+        self.frontend.clear_restart_failure_state()
+        frontend_ok, frontend_message = self.frontend.start(config)
+        if frontend_ok:
+            self.log_status_var.set(f"当前显示：本次启动日志（前端，自 {self.frontend.last_session_started_label} 起）")
+
+    self.refresh_status()
+    message = f"后端：{backend_message}\n前端：{frontend_message}"
+    if not saved and save_error:
+        message += f"\n\n注意：界面未保存的配置未能写入，已按最近一次有效配置执行。\n原因：{save_error}"
+    if show_dialog:
+        dialog = messagebox.showinfo if (backend_started and frontend_ok) else messagebox.showwarning
+        dialog("启动结果", message)
+    return backend_started and frontend_ok, message
+
+
+def _update_service_action_buttons(self: Any) -> None:
+    buttons = getattr(self, "service_action_buttons", {}) or {}
+    if not buttons:
+        return
+    backend_running = bool(self.backend.is_running())
+    frontend_running = bool(self.frontend.is_running())
+    all_running = backend_running and frontend_running
+    any_running = backend_running or frontend_running
+
+    desired_states = {
+        "start_backend": "disabled" if backend_running else "normal",
+        "stop_backend": "normal" if backend_running else "disabled",
+        "restart_backend": "normal" if backend_running else "disabled",
+        "start_frontend": "disabled" if frontend_running else "normal",
+        "stop_frontend": "normal" if frontend_running else "disabled",
+        "restart_frontend": "normal" if frontend_running else "disabled",
+        "start_all": "disabled" if all_running else "normal",
+        "stop_all": "normal" if any_running else "disabled",
+        "restart_all": "normal" if any_running else "disabled",
+    }
+    for key, state in desired_states.items():
+        button = buttons.get(key)
+        if button is None:
+            continue
+        try:
+            button.configure(state=state)
+        except Exception:
+            pass
 
 
 def _handle_takeover_backend_override(self: Any) -> None:
@@ -6323,10 +6623,15 @@ def _handle_takeover_backend_override(self: Any) -> None:
     messagebox.showinfo("接管完成", f"已将 PID {owner_pid} 记录为当前后端实例")
 
 
+BackendProcessController.__init__ = _backend_process_init_override
 BackendProcessController.start = _backend_process_start_override
 FrontendProcessController.start = _frontend_process_start_override
 ManagedBackendController._state = _managed_backend_state_override
 ManagedBackendController.start = _managed_backend_start_override
+FinFlowManagerApp.get_effective_config = _get_effective_config_override
+FinFlowManagerApp.handle_start_backend = _handle_start_backend_override
+FinFlowManagerApp.handle_start_frontend = _handle_start_frontend_override
+FinFlowManagerApp.handle_start_all = _handle_start_all_override
 FinFlowManagerApp.handle_takeover_backend = _handle_takeover_backend_override
 _ff_refresh_status = _ff_refresh_status_override
 
