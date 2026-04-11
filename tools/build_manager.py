@@ -1,92 +1,123 @@
 # -*- coding: utf-8 -*-
-"""
-FinFlow 管理器打包脚本
-打包 finflow_manager.py 为独立的 EXE 文件
-"""
+from __future__ import annotations
+
+import os
+import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
-def main():
-    tools_dir = Path(__file__).parent.resolve()
+
+def remove_tree_with_retries(path: Path, attempts: int = 5, delay_seconds: float = 1.0) -> bool:
+    if not path.exists():
+        return True
+    for _ in range(attempts):
+        try:
+            shutil.rmtree(path, ignore_errors=False)
+            return True
+        except Exception:
+            time.sleep(delay_seconds)
+    return not path.exists()
+
+
+def main() -> int:
+    project_root = Path(__file__).resolve().parents[1]
+    tools_dir = project_root / "tools"
+    deploy_windows_dir = project_root / "deploy" / "windows"
     spec_file = tools_dir / "finflow_manager.spec"
-    
-    print("=" * 60)
-    print("FinFlow 管理器打包工具")
-    print("=" * 60)
-    print(f"工作目录：{tools_dir}")
-    print(f"Spec 文件：{spec_file}")
+    requirements_file = deploy_windows_dir / "manager_requirements.txt"
+    dist_dir = deploy_windows_dir / "dist"
+    build_dir = deploy_windows_dir / "build"
+
+    print("=" * 64)
+    print("FinFlowManager EXE Build")
+    print("=" * 64)
+    print(f"Project root : {project_root}")
+    print(f"Spec file    : {spec_file}")
+    print(f"Requirements : {requirements_file}")
+    print(f"Dist dir     : {dist_dir}")
+    print(f"Build dir    : {build_dir}")
     print()
-    
-    # 检查 PyInstaller 是否安装
+
+    if not spec_file.exists():
+        print(f"Missing spec file: {spec_file}")
+        return 1
+    if not requirements_file.exists():
+        print(f"Missing requirements file: {requirements_file}")
+        return 1
+
     try:
-        import PyInstaller
-        print(f"PyInstaller 版本：{PyInstaller.__version__}")
+        import PyInstaller  # noqa: F401
     except ImportError:
-        print("错误：未找到 PyInstaller")
-        print("请先安装：pip install pyinstaller")
-        sys.exit(1)
-    
-    print()
-    print("开始打包...")
-    print()
-    
-    # 运行 PyInstaller
-    cmd = [
+        print("PyInstaller is not installed.")
+        print(f"Run: {sys.executable} -m pip install pyinstaller")
+        return 1
+
+    print("Installing manager build dependencies...")
+    install_cmd = [
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "-r",
+        str(requirements_file),
+    ]
+    install_result = subprocess.run(install_cmd, cwd=project_root)
+    if install_result.returncode != 0:
+        print("Failed to install manager build dependencies.")
+        return install_result.returncode
+
+    if dist_dir.exists():
+        print(f"Cleaning dist directory: {dist_dir}")
+        remove_tree_with_retries(dist_dir)
+    if build_dir.exists():
+        print(f"Cleaning build directory: {build_dir}")
+        remove_tree_with_retries(build_dir)
+
+    dist_dir.mkdir(parents=True, exist_ok=True)
+    build_dir.mkdir(parents=True, exist_ok=True)
+
+    build_cmd = [
         sys.executable,
         "-m",
         "PyInstaller",
+        "--noconfirm",
         "--clean",
-        str(spec_file)
+        "--distpath",
+        str(dist_dir),
+        "--workpath",
+        str(build_dir),
+        str(spec_file),
     ]
-    
-    try:
-        result = subprocess.run(
-            cmd,
-            cwd=str(tools_dir),
-            check=True,
-            capture_output=False
-        )
-        
+    print("Running PyInstaller...")
+    print(" ".join(f'"{part}"' if " " in part else part for part in build_cmd))
+    print()
+
+    build_env = dict(os.environ)
+    build_env["PYTHONWARNINGS"] = "ignore"
+    result = subprocess.run(build_cmd, cwd=project_root, env=build_env)
+    if result.returncode != 0:
         print()
-        print("=" * 60)
-        print("打包完成！")
-        print("=" * 60)
-        
-        dist_dir = tools_dir / "dist" / "FinFlow 管理器"
-        if dist_dir.exists():
-            print(f"输出目录：{dist_dir}")
-            print()
-            print("打包产物：")
-            for file in dist_dir.iterdir():
-                size = file.stat().st_size
-                if size > 1024 * 1024:
-                    size_str = f"{size / (1024 * 1024):.2f} MB"
-                else:
-                    size_str = f"{size / 1024:.2f} KB"
-                print(f"  - {file.name}: {size_str}")
-        
-        print()
-        print("提示：打包后的程序包含以下文件：")
-        print("  - FinFlow 管理器.exe (主程序)")
-        print("  - finflow_manager_icon.png (图标文件)")
-        print("  - finflow_manager_icon.ico (ICO 图标)")
-        print()
-        
-    except subprocess.CalledProcessError as e:
-        print()
-        print("=" * 60)
-        print("打包失败！")
-        print("=" * 60)
-        print(f"错误代码：{e.returncode}")
-        sys.exit(1)
-    except Exception as e:
-        print()
-        print("=" * 60)
-        print("打包失败！")
-        print("=" * 60)
-        print(f"错误：{e}")
-        sys.exit(1)
+        print("Build failed.")
+        return result.returncode
+
+    exe_path = dist_dir / "FinFlowManager.exe"
+    print()
+    if not exe_path.exists():
+        print(f"Build finished but EXE was not found: {exe_path}")
+        return 1
+
+    size_mb = exe_path.stat().st_size / (1024 * 1024)
+    if build_dir.exists():
+        print(f"Cleaning intermediate build directory: {build_dir}")
+        if not remove_tree_with_retries(build_dir):
+            print(f"Warning: failed to fully remove intermediate build directory: {build_dir}")
+    print("Build succeeded.")
+    print(f"EXE path: {exe_path}")
+    print(f"EXE size: {size_mb:.2f} MB")
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

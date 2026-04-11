@@ -27,6 +27,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 import http.client
+import warnings
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 tk = None
 ttk = None
@@ -38,6 +41,8 @@ ImageDraw = None
 Icon = None
 Menu = None
 MenuItem = None
+
+warnings.filterwarnings("ignore", message="pkg_resources is deprecated as an API.*", category=UserWarning)
 
 def ensure_gui_dependencies() -> None:
     global tk, ttk, filedialog, messagebox, scrolledtext
@@ -84,6 +89,7 @@ def ensure_gui_dependencies() -> None:
 def build_cli_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="FinFlow manager CLI")
     parser.add_argument("--service-run", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--frontend-run", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--daemon", action="store_true", help="Run in daemon mode with console logging")
     parser.add_argument("--start", action="store_true", help="Start backend service host")
     parser.add_argument("--stop", action="store_true", help="Stop backend service host")
@@ -101,8 +107,23 @@ def build_cli_parser() -> argparse.ArgumentParser:
 
 def run_cli(args: argparse.Namespace) -> int:
     if args.service_run:
-        host = BackendServiceHost()
-        return host.run()
+        append_text_log(SERVICE_HOST_LOG, "===== Service Run Entry =====")
+        append_text_log(SERVICE_HOST_LOG, build_runtime_snapshot_text())
+        try:
+            host = BackendServiceHost()
+            return host.run()
+        except BaseException:
+            append_text_log(SERVICE_HOST_LOG, traceback.format_exc())
+            raise
+
+    if args.frontend_run:
+        append_text_log(FRONTEND_STDERR_LOG, "===== Frontend Run Entry =====")
+        append_text_log(FRONTEND_STDERR_LOG, build_runtime_snapshot_text())
+        try:
+            return run_frontend_static_host()
+        except BaseException:
+            append_text_log(FRONTEND_STDERR_LOG, traceback.format_exc())
+            raise
 
     if args.daemon:
         host = BackendServiceHost()
@@ -359,8 +380,6 @@ DEFAULT_STATE = {
     "enable_health_check": True,
     "enable_db_monitor": True,
     "git_auto_build_frontend": True,
-    "deploy_auto_start_services": False,
-    "deploy_restart_running_services": False,
     "frontend_deploy_source": "",
     "release_package_path": "",
     "backup_dir": str(BACKUP_DIR),
@@ -578,6 +597,38 @@ def get_backend_python_executable() -> Path:
         if python_exe.exists():
             return python_exe
     return BACKEND_VENV_DIR / "Scripts" / "python.exe"
+
+
+def get_backend_venv_dir() -> Path:
+    return get_backend_python_executable().parent.parent
+
+
+def evaluate_manager_runtime_layout() -> Tuple[bool, List[str]]:
+    issues: List[str] = []
+    if not BACKEND_DIR.exists():
+        issues.append(f"未找到 backend 目录：{BACKEND_DIR}")
+    if not (BACKEND_DIR / "main.py").exists():
+        issues.append(f"未找到后端入口文件：{BACKEND_DIR / 'main.py'}")
+    if not FRONTEND_DIR.exists():
+        issues.append(f"未找到 frontend 目录：{FRONTEND_DIR}")
+    if not DIST_DIR.exists():
+        issues.append(f"未找到前端构建目录：{DIST_DIR}")
+    if not (DIST_DIR / "index.html").exists():
+        issues.append(f"未找到前端首页文件：{DIST_DIR / 'index.html'}")
+    if not STATE_PATH.parent.exists():
+        issues.append(f"未找到部署状态目录：{STATE_PATH.parent}")
+    return len(issues) == 0, issues
+
+
+def format_manager_runtime_layout_issues(issues: List[str]) -> str:
+    if not issues:
+        return ""
+    joined = "\n".join(f"- {item}" for item in issues)
+    return (
+        "当前 EXE 运行目录不满足完整服务管理条件。\n"
+        "打包后的管理器不是独立业务程序，必须放在完整的 FinFlow 发布目录中运行。\n\n"
+        f"{joined}"
+    )
 
 
 def load_manager_icon_image() -> Image.Image | None:
@@ -870,6 +921,8 @@ def decode_console_output(data: bytes) -> str:
 
 
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+PYINSTALLER_WARNING_LINE_RE = re.compile(r"^PyInstaller\\loader\\pyimod02_importers\.py:\d+: UserWarning: pkg_resources is deprecated as an API\..*$", re.MULTILINE)
+PYINSTALLER_WARNING_FOLLOW_RE = re.compile(r"^as early as 2025-11-30\..*$", re.MULTILINE)
 
 
 def sanitize_console_text(text: str) -> str:
@@ -877,6 +930,22 @@ def sanitize_console_text(text: str) -> str:
         return ""
     text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\x00", "")
     text = ANSI_ESCAPE_RE.sub("", text)
+    lines = []
+    skip_followup = False
+    for raw_line in text.split("\n"):
+        line = raw_line.strip()
+        if skip_followup:
+            skip_followup = False
+            if line.startswith("as early as 2025-11-30."):
+                continue
+        if PYINSTALLER_WARNING_LINE_RE.match(line):
+            skip_followup = True
+            continue
+        if PYINSTALLER_WARNING_FOLLOW_RE.match(line):
+            continue
+        lines.append(raw_line)
+    text = "\n".join(lines)
+    text = re.sub(r"\n{3,}", "\n\n", text)
     return text
 
 
@@ -903,7 +972,74 @@ def tail_text_file(path: Path, max_lines: int = 40) -> str:
     return "\n".join(lines[-max_lines:]).strip()
 
 
+def read_log_since_marker(path: Path, marker: str, max_lines: int = 80) -> str:
+    if not path.exists():
+        return ""
+    try:
+        lines = sanitize_console_text(decode_console_output(path.read_bytes())).splitlines()
+    except Exception:
+        return ""
+    if marker:
+        for index in range(len(lines) - 1, -1, -1):
+            if lines[index].strip() == marker.strip():
+                lines = lines[index:]
+                break
+    return "\n".join(lines[-max_lines:]).strip()
+
+
+def append_text_log(path: Path, text: str) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8", errors="ignore") as handle:
+            handle.write(text.rstrip() + "\n")
+    except Exception:
+        pass
+
+
+def build_runtime_snapshot_text() -> str:
+    layout_ok, layout_issues = evaluate_manager_runtime_layout()
+    lines = [
+        f"time={datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"argv={sys.argv}",
+        f"frozen={getattr(sys, 'frozen', False)}",
+        f"cwd={Path.cwd()}",
+        f"sys.executable={sys.executable}",
+        f"ROOT_DIR={ROOT_DIR}",
+        f"BACKEND_DIR={BACKEND_DIR}",
+        f"FRONTEND_DIR={FRONTEND_DIR}",
+        f"DIST_DIR={DIST_DIR}",
+        f"RUNTIME_STATE_PATH={RUNTIME_STATE_PATH}",
+        f"STOP_REQUEST_PATH={STOP_REQUEST_PATH}",
+        f"layout_ok={layout_ok}",
+    ]
+    if layout_issues:
+        lines.extend([f"layout_issue={item}" for item in layout_issues])
+    return "\n".join(lines)
+
+
+def build_runtime_state_snapshot_text() -> str:
+    state = read_runtime_state()
+    keys = [
+        "service_host_pid",
+        "backend_pid",
+        "frontend_pid",
+        "user_stopped",
+        "last_start_attempt",
+        "last_exit_code",
+        "last_exit_at",
+        "last_started_at",
+        "consecutive_failed_starts",
+        "auto_restart_suppressed",
+        "last_session_started_label",
+    ]
+    return "\n".join(f"runtime_state.{key}={state.get(key)!r}" for key in keys)
+
+
 def check_backend_runtime_requirements(config: Dict[str, str]) -> Tuple[bool, str]:
+    layout_ok, layout_issues = evaluate_manager_runtime_layout()
+    if not layout_ok:
+        return False, format_manager_runtime_layout_issues(layout_issues)
+
     python_exe = get_backend_python_executable()
     if not python_exe.exists():
         return False, f"未找到后端虚拟环境，请先同步后端依赖：{python_exe}"
@@ -1271,7 +1407,7 @@ def evaluate_database_runtime_status(sqlcmd: str = "sqlcmd") -> Tuple[str, str]:
             if database_status and database_status != "ok":
                 return "error", str(database_status)
 
-    runtime_python = BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
+    runtime_python = get_backend_python_executable()
     if runtime_python.exists():
         ok, detail = check_database_connectivity_via_backend_runtime(config)
         if ok:
@@ -2330,6 +2466,10 @@ class FrontendProcessController:
 
 def resolve_service_host_launcher() -> List[str]:
     if getattr(sys, "frozen", False):
+        backend_python = get_backend_python_executable()
+        manager_script = ROOT_DIR / "tools" / "finflow_manager.py"
+        if backend_python.exists() and manager_script.exists():
+            return [str(backend_python), str(manager_script), "--service-run"]
         return [str(Path(sys.executable).resolve()), "--service-run"]
 
     python_exe = Path(sys.executable).resolve()
@@ -2338,6 +2478,98 @@ def resolve_service_host_launcher() -> List[str]:
         if candidate.exists():
             python_exe = candidate
     return [str(python_exe), str(Path(__file__).resolve()), "--service-run"]
+
+
+def resolve_frontend_host_launcher() -> List[str]:
+    if getattr(sys, "frozen", False):
+        backend_python = get_backend_python_executable()
+        manager_script = ROOT_DIR / "tools" / "finflow_manager.py"
+        if backend_python.exists() and manager_script.exists():
+            return [str(backend_python), str(manager_script), "--frontend-run"]
+        return [str(Path(sys.executable).resolve()), "--frontend-run"]
+
+    python_exe = Path(sys.executable).resolve()
+    if python_exe.name.lower() == "pythonw.exe":
+        candidate = python_exe.with_name("python.exe")
+        if candidate.exists():
+            python_exe = candidate
+    return [str(python_exe), str(Path(__file__).resolve()), "--frontend-run"]
+
+
+class FrontendStaticRequestHandler(SimpleHTTPRequestHandler):
+    def __init__(self, *args: Any, directory: str | None = None, **kwargs: Any) -> None:
+        super().__init__(*args, directory=directory, **kwargs)
+
+    def log_message(self, format: str, *args: Any) -> None:
+        try:
+            message = format % args
+        except Exception:
+            message = format
+        print(f"[frontend] {self.address_string()} - {message}")
+
+    def do_GET(self) -> None:
+        requested = self.translate_path(self.path)
+        if self.path.startswith("/api/"):
+            self.send_error(502, "Frontend static host cannot proxy /api directly")
+            return
+        if os.path.exists(requested) or self.path in {"/", "/index.html"}:
+            return super().do_GET()
+        original_path = self.path
+        self.path = "/index.html"
+        try:
+            return super().do_GET()
+        finally:
+            self.path = original_path
+
+
+def run_frontend_static_host() -> int:
+    ensure_log_dir()
+    layout_ok, layout_issues = evaluate_manager_runtime_layout()
+    if not layout_ok:
+        print(format_manager_runtime_layout_issues(layout_issues))
+        return 1
+    config = load_effective_config_from_disk()
+    settings = resolve_frontend_service_settings(config)
+    frontend_host = settings["frontend_host"]
+    frontend_port = settings["frontend_port"]
+    if not DIST_DIR.exists() or not (DIST_DIR / "index.html").exists():
+        print(f"前端静态资源不存在：{DIST_DIR}")
+        return 1
+    if not frontend_port.isdigit():
+        print(f"前端端口无效：{frontend_port}")
+        return 1
+
+    stop_event = threading.Event()
+
+    def _request_stop(*_args: Any) -> None:
+        stop_event.set()
+
+    for sig in (getattr(signal, "SIGTERM", None), getattr(signal, "SIGINT", None), getattr(signal, "SIGBREAK", None)):
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, _request_stop)
+        except Exception:
+            pass
+
+    handler = partial(FrontendStaticRequestHandler, directory=str(DIST_DIR))
+    try:
+        httpd = ThreadingHTTPServer((frontend_host, int(frontend_port)), handler)
+    except OSError as exc:
+        print(f"前端静态服务启动失败：{exc}")
+        return 1
+    httpd.timeout = 1.0
+    print(f"前端静态服务已启动：http://{frontend_host}:{frontend_port}/")
+    try:
+        while not stop_event.is_set():
+            httpd.handle_request()
+    finally:
+        try:
+            httpd.server_close()
+        except Exception:
+            pass
+    print("前端静态服务已停止")
+    return 0
 
 
 def read_managed_runtime_state() -> Dict[str, Any]:
@@ -2507,8 +2739,10 @@ class ManagedBackendController:
 
 class BackendServiceHost:
     def __init__(self) -> None:
+        append_text_log(SERVICE_HOST_LOG, "===== BackendServiceHost.__init__ =====")
         self.backend = BackendProcessController()
         self.stop_event = threading.Event()
+        append_text_log(SERVICE_HOST_LOG, "===== BackendServiceHost.__init__ ready =====")
 
     def request_stop(self, *_args: Any) -> None:
         self.stop_event.set()
@@ -2530,11 +2764,13 @@ class BackendServiceHost:
         )
 
     def run(self) -> int:
+        append_text_log(SERVICE_HOST_LOG, "===== BackendServiceHost.run begin =====")
         ensure_runtime_dir()
         ensure_log_dir()
         clear_stop_request()
         reset_runtime_state()
         write_runtime_state(service_host_pid=os.getpid(), user_stopped=False)
+        append_text_log(SERVICE_HOST_LOG, build_runtime_state_snapshot_text())
 
         for sig in (getattr(signal, "SIGTERM", None), getattr(signal, "SIGINT", None), getattr(signal, "SIGBREAK", None)):
             if sig is None:
@@ -2545,11 +2781,16 @@ class BackendServiceHost:
                 pass
 
         config = load_effective_config_from_disk()
+        append_text_log(SERVICE_HOST_LOG, "===== BackendServiceHost.run loaded config =====")
         ok, message = self.backend.start(config)
+        append_text_log(SERVICE_HOST_LOG, f"===== BackendServiceHost.run backend.start ok={ok} =====")
+        append_text_log(SERVICE_HOST_LOG, message)
         self._sync_runtime_state()
+        append_text_log(SERVICE_HOST_LOG, build_runtime_state_snapshot_text())
         if not ok:
             print(message)
 
+        append_text_log(SERVICE_HOST_LOG, "===== BackendServiceHost.run loop enter =====")
         while not self.stop_event.is_set():
             if STOP_REQUEST_PATH.exists():
                 self.backend.user_stopped = True
@@ -3621,9 +3862,6 @@ class FinFlowManagerApp:
         sqlcmd = self.ops_vars["sqlcmd_path"].get().strip() or "sqlcmd"
         release_package_path = self.ops_vars["release_package_path"].get().strip()
         config = self.get_effective_config()
-        auto_start_services = bool(self.manager_option_vars.get("deploy_auto_start_services").get()) if "deploy_auto_start_services" in self.manager_option_vars else False
-        restart_running_services = bool(self.manager_option_vars.get("deploy_restart_running_services").get()) if "deploy_restart_running_services" in self.manager_option_vars else False
-
         if mode == "git" and not repo_url:
             messagebox.showerror("\u9519\u8bef", "Git \u90e8\u7f72\u6a21\u5f0f\u9700\u8981\u5148\u914d\u7f6e\u4ed3\u5e93\u5730\u5740")
             return
@@ -3642,7 +3880,7 @@ class FinFlowManagerApp:
             "4. \u4f9d\u8d56\u540c\u6b65\uff08\u540e\u7aef + \u524d\u7aef\uff09\n"
             "5. \u8fd0\u884c\u914d\u7f6e\u5199\u5165\u3001\u524d\u7aef\u6784\u5efa\u4e0e\u8fd0\u884c\u914d\u7f6e\u540c\u6b65\n"
             "6. \u90e8\u7f72\u540e\u5065\u5eb7\u4e0e\u540e\u7f6e\u68c0\u67e5\n"
-            f"\n\u5f53\u524d\u9009\u9879\uff1a\u90e8\u7f72\u540e{' \u81ea\u52a8\u542f\u52a8\u524d\u540e\u7aef' if auto_start_services else ' \u4e0d\u81ea\u52a8\u542f\u52a8\u670d\u52a1'}\uff1b{' \u5c06\u81ea\u52a8\u91cd\u542f\u90e8\u7f72\u524d\u5df2\u8fd0\u884c\u7684\u670d\u52a1' if restart_running_services else ' \u4e0d\u81ea\u52a8\u91cd\u542f\u5df2\u8fd0\u884c\u670d\u52a1'}\n\n"
+            "\n\u8bf4\u660e\uff1a\u90e8\u7f72\u5b8c\u6210\u540e\u4ec5\u4fdd\u7559\u53ef\u8fd0\u884c\u4ea7\u7269\u4e0e\u914d\u7f6e\uff0c\u4e0d\u5728\u90e8\u7f72\u9636\u6bb5\u81ea\u52a8\u542f\u52a8\u4efb\u4f55\u670d\u52a1\u3002\n\n"
             "\u662f\u5426\u7ee7\u7eed\uff1f"
         )
         if not proceed:
@@ -3652,7 +3890,7 @@ class FinFlowManagerApp:
         self.deploy_running = True
         self.deploy_thread = threading.Thread(
             target=self._run_one_click_deploy_worker,
-            args=(mode, repo_url, branch, sqlcmd, config, release_package_path, auto_start_services, restart_running_services),
+            args=(mode, repo_url, branch, sqlcmd, config, release_package_path),
             daemon=True,
         )
         self.deploy_thread.start()
@@ -3666,8 +3904,6 @@ class FinFlowManagerApp:
         sqlcmd: str,
         config: Dict[str, str],
         release_package_path: str,
-        auto_start_services: bool,
-        restart_running_services: bool,
     ) -> None:
         original_showerror = messagebox.showerror
         original_showinfo = messagebox.showinfo
@@ -3710,7 +3946,7 @@ class FinFlowManagerApp:
         self.refresh_database_status = _safe_refresh_database_status
 
         try:
-            self._run_one_click_deploy(mode, repo_url, branch, sqlcmd, config, release_package_path, auto_start_services, restart_running_services)
+            self._run_one_click_deploy(mode, repo_url, branch, sqlcmd, config, release_package_path)
         except RuntimeError:
             pass
         except Exception as exc:
@@ -3740,16 +3976,12 @@ class FinFlowManagerApp:
         sqlcmd: str,
         config: Dict[str, str],
         release_package_path: str,
-        auto_start_services: bool,
-        restart_running_services: bool,
     ) -> None:
         steps_passed = 0
         total_steps = 6
         backend_was_running = self.backend.is_running()
         frontend_was_running = self.frontend.is_running()
         services_stopped = False
-        backend_started_after_deploy = False
-        frontend_started_after_deploy = False
 
         self.append_deploy_log(f"{'=' * 50}")
         self.append_deploy_log(
@@ -3773,13 +4005,6 @@ class FinFlowManagerApp:
 
         def abort_deploy(reason: str) -> None:
             restore_messages: List[str] = []
-
-            if frontend_started_after_deploy and not frontend_was_running and self.frontend.is_running():
-                ok, msg = self.frontend.stop()
-                restore_messages.append(f"\u6e05\u7406\u672c\u6b21\u542f\u52a8\u524d\u7aef\uff1a{msg}")
-            if backend_started_after_deploy and not backend_was_running and self.backend.is_running():
-                ok, msg = self.backend.stop()
-                restore_messages.append(f"\u6e05\u7406\u672c\u6b21\u542f\u52a8\u540e\u7aef\uff1a{msg}")
 
             if services_stopped:
                 if backend_was_running and not self.backend.is_running():
@@ -4096,47 +4321,8 @@ class FinFlowManagerApp:
         port = config.get("APP_PORT", "8100")
         backend_url = f"http://{host}:{port}"
         frontend_url = resolve_frontend_service_settings(config)["frontend_url"]
-        should_restart_existing = restart_running_services
-        should_auto_start_all = auto_start_services
-
-        if should_auto_start_all:
-            self.append_deploy_log("  [RUN] \u6309\u9009\u9879\u81ea\u52a8\u542f\u52a8\u524d\u540e\u7aef\u670d\u52a1...")
-            ok, msg = self.backend.start(config)
-            if ok or self.backend.is_running():
-                backend_started_after_deploy = True
-                self.append_deploy_log(f"  [OK] \u540e\u7aef: {msg}")
-            else:
-                abort_deploy(f"\u540e\u7aef\u542f\u52a8\u5931\u8d25: {msg}")
-
-            ok, msg = self.frontend.start(config)
-            if ok or self.frontend.is_running():
-                frontend_started_after_deploy = True
-                self.append_deploy_log(f"  [OK] \u524d\u7aef: {msg}")
-            else:
-                abort_deploy(f"\u524d\u7aef\u542f\u52a8\u5931\u8d25: {msg}")
-        elif should_restart_existing:
-            self.append_deploy_log("  [RUN] \u6309\u9009\u9879\u6062\u590d\u90e8\u7f72\u524d\u5df2\u5728\u8fd0\u884c\u7684\u670d\u52a1...")
-            if backend_was_running:
-                ok, msg = self.backend.start(config)
-                if ok or self.backend.is_running():
-                    backend_started_after_deploy = True
-                    self.append_deploy_log(f"  [OK] \u540e\u7aef: {msg}")
-                else:
-                    abort_deploy(f"\u540e\u7aef\u6062\u590d\u5931\u8d25: {msg}")
-            else:
-                self.append_deploy_log("  [SKIP] \u540e\u7aef\u5728\u90e8\u7f72\u524d\u672a\u8fd0\u884c")
-
-            if frontend_was_running:
-                ok, msg = self.frontend.start(config)
-                if ok or self.frontend.is_running():
-                    frontend_started_after_deploy = True
-                    self.append_deploy_log(f"  [OK] \u524d\u7aef: {msg}")
-                else:
-                    abort_deploy(f"\u524d\u7aef\u6062\u590d\u5931\u8d25: {msg}")
-            else:
-                self.append_deploy_log("  [SKIP] \u524d\u7aef\u5728\u90e8\u7f72\u524d\u672a\u8fd0\u884c")
-        else:
-            self.append_deploy_log("  [SKIP] \u6839\u636e\u5f53\u524d\u9009\u9879\uff0c\u90e8\u7f72\u9636\u6bb5\u4e0d\u81ea\u52a8\u542f\u52a8\u6216\u91cd\u542f\u670d\u52a1")
+        self.append_deploy_log("  [SKIP] \u90e8\u7f72\u9636\u6bb5\u4e0d\u81ea\u52a8\u542f\u52a8\u6216\u6062\u590d\u524d\u540e\u7aef\u670d\u52a1")
+        self.append_deploy_log("  [INFO] \u8bf7\u5728\u300c\u670d\u52a1\u72b6\u6001\u300d\u9875\u9762\u5355\u72ec\u542f\u52a8\u540e\u7aef\u3001\u524d\u7aef\uff0c\u518d\u6267\u884c\u5065\u5eb7\u9a8c\u8bc1")
 
         backend_health_ok = False
         backend_health_detail = "\u672a\u6267\u884c"
@@ -4387,7 +4573,7 @@ def evaluate_database_runtime_status(sqlcmd: str = "sqlcmd") -> Tuple[str, str]:
             if database_status and database_status != "ok":
                 return "error", f"\u540e\u7aef\u5065\u5eb7\u68c0\u67e5\u8fd4\u56de\u6570\u636e\u5e93\u72b6\u6001: {database_status}"
 
-    runtime_python = BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
+    runtime_python = get_backend_python_executable()
     if runtime_python.exists():
         ok, detail = check_database_connectivity_via_backend_runtime(config)
         if ok:
@@ -5171,24 +5357,12 @@ def _ff_build_ops_tab(self: Any, parent: ttk.Frame) -> None:
     self.deploy_mode = tk.StringVar(value="git")
     ttk.Radiobutton(deploy_type_frame, text="Git \u66f4\u65b0\u90e8\u7f72", variable=self.deploy_mode, value="git").pack(side="left", padx=20)
     ttk.Radiobutton(deploy_type_frame, text="ZIP \u53d1\u5e03\u5305\u90e8\u7f72", variable=self.deploy_mode, value="zip").pack(side="left", padx=20)
-    deploy_option_frame = ttk.Frame(one_click_frame)
-    deploy_option_frame.pack(fill="x", pady=(0, 10))
-    if "deploy_auto_start_services" not in self.manager_option_vars:
-        self.manager_option_vars["deploy_auto_start_services"] = tk.BooleanVar(value=self.manager_state.get("deploy_auto_start_services", False))
-    if "deploy_restart_running_services" not in self.manager_option_vars:
-        self.manager_option_vars["deploy_restart_running_services"] = tk.BooleanVar(value=self.manager_state.get("deploy_restart_running_services", False))
-    ttk.Checkbutton(
-        deploy_option_frame,
-        text="\u90e8\u7f72\u5b8c\u6210\u540e\u81ea\u52a8\u542f\u52a8\u524d\u540e\u7aef",
-        variable=self.manager_option_vars["deploy_auto_start_services"],
-        command=self.save_manager_state,
-    ).pack(anchor="w", pady=(0, 4))
-    ttk.Checkbutton(
-        deploy_option_frame,
-        text="\u90e8\u7f72\u5b8c\u6210\u540e\u81ea\u52a8\u91cd\u542f\u90e8\u7f72\u524d\u5df2\u5728\u8fd0\u884c\u7684\u670d\u52a1",
-        variable=self.manager_option_vars["deploy_restart_running_services"],
-        command=self.save_manager_state,
-    ).pack(anchor="w")
+    ttk.Label(
+        one_click_frame,
+        text="\u90e8\u7f72\u5b8c\u6210\u540e\u4e0d\u4f1a\u81ea\u52a8\u542f\u52a8\u524d\u540e\u7aef\uff0c\u8bf7\u5728\u300c\u670d\u52a1\u72b6\u6001\u300d\u9875\u9762\u5355\u72ec\u542f\u52a8\u5e76\u9a8c\u8bc1\u8fd0\u884c\u72b6\u6001\u3002",
+        justify="left",
+        wraplength=760,
+    ).pack(anchor="w", pady=(0, 10))
     deploy_log_frame = ttk.LabelFrame(one_click_frame, text="\u90e8\u7f72\u65e5\u5fd7", padding=10)
     deploy_log_frame.pack(fill="both", expand=True, pady=(0, 10))
     self.deploy_log_text = scrolledtext.ScrolledText(deploy_log_frame, wrap="word", font=("Consolas", 9), height=14)
@@ -5409,10 +5583,12 @@ def _ff_build_logs_tab(self: Any, parent: ttk.Frame) -> None:
 
 def _ff_refresh_environment_info(self: Any) -> None:
     config = self.get_effective_config()
+    layout_ok, layout_issues = evaluate_manager_runtime_layout()
     host = (config.get("APP_HOST") or "127.0.0.1").strip() or "127.0.0.1"
     browser_host = resolve_browser_host(host)
     port = (config.get("APP_PORT") or "8100").strip() or "8100"
-    backend_python = BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
+    backend_python = get_backend_python_executable()
+    backend_venv_dir = get_backend_venv_dir()
     owner = get_port_owner_info(int(port)) if port.isdigit() else {}
 
     manager_modules = ["tkinter", "pystray", "PIL", "cryptography"]
@@ -5439,6 +5615,7 @@ def _ff_refresh_environment_info(self: Any) -> None:
             "FinFlow \u73af\u5883\u603b\u89c8",
             "",
             f"\u9879\u76ee\u76ee\u5f55: {ROOT_DIR}",
+            f"\u6253\u5305 EXE \u5e03\u5c40: {'\u6b63\u5e38' if layout_ok else '\u7f3a\u5931\u5173\u952e\u76ee\u5f55'}",
             f"\u5e94\u7528\u5165\u53e3: {self.get_app_url()}",
             f"\u540e\u7aef\u72b6\u6001: {self.backend.poll_status()}",
             f"\u540e\u7aef\u7aef\u53e3\u5360\u7528: {self.status_vars.get('backend_port_owner').get() if self.status_vars.get('backend_port_owner') else '\u672a\u77e5'}",
@@ -5452,6 +5629,8 @@ def _ff_refresh_environment_info(self: Any) -> None:
             f"\u524d\u7aef\u5065\u5eb7\u72b6\u6001: {self.status_vars.get('frontend_health_status').get() if self.status_vars.get('frontend_health_status') else '\u672a\u68c0\u67e5'}",
         ]
     )
+    if not layout_ok:
+        overview_text += "\n\nEXE 运行布局问题:\n" + "\n".join(f"- {item}" for item in layout_issues)
 
     runtime_lines = [
         "\u7ba1\u7406\u5668\u8fd0\u884c\u65f6",
@@ -5483,13 +5662,13 @@ def _ff_refresh_environment_info(self: Any) -> None:
     else:
         deps_lines.append(f"\u65e0\u6cd5\u68c0\u67e5\u540e\u7aef\u4f9d\u8d56: {backend_probe.get('error', '\u672a\u77e5\u9519\u8bef')}")
     deps_lines.append("")
-    deps_lines.append("\u8bf4\u660e: \u82e5 `Crypto` \u7f3a\u5931\uff0c\u8bf7\u5728 backend/.venv \u4e2d\u5b89\u88c5 `pycryptodome`\u3002")
+    deps_lines.append(f"\u8bf4\u660e: \u82e5 `Crypto` \u7f3a\u5931\uff0c\u8bf7\u5728 {backend_venv_dir} \u4e2d\u5b89\u88c5 `pycryptodome`\u3002")
     deps_text = "\n".join(deps_lines)
 
     path_lines = [
         "\u5173\u952e\u8def\u5f84\u4e0e\u7aef\u53e3",
         "",
-        f"backend/.venv: {'\u5df2\u5b58\u5728' if backend_python.exists() else '\u4e0d\u5b58\u5728'}",
+        f"\u540e\u7aef\u865a\u62df\u73af\u5883: {backend_venv_dir} ({'\u5df2\u5b58\u5728' if backend_python.exists() else '\u4e0d\u5b58\u5728'})",
         f"backend/.env: {'\u5df2\u5b58\u5728' if ENV_PATH.exists() else '\u4e0d\u5b58\u5728'}",
         f"backend/.encryption.key: {'\u5df2\u5b58\u5728' if KEY_PATH.exists() else '\u4e0d\u5b58\u5728'}",
         f"frontend/dist/index.html: {'\u5df2\u5b58\u5728' if (DIST_DIR / 'index.html').exists() else '\u4e0d\u5b58\u5728'}",
@@ -6174,224 +6353,6 @@ def build_frontend(
     return True, f"\u524d\u7aef\u6784\u5efa\u6210\u529f\uff1a{dist_dir}"
 
 
-def _backend_process_start_override(self: BackendProcessController, config: Dict[str, str]) -> Tuple[bool, str]:
-    if self.is_running():
-        return False, "后端已在运行"
-
-    requirement_ok, requirement_msg = check_backend_runtime_requirements(config)
-    if not requirement_ok:
-        return False, requirement_msg
-
-    python_exe = get_backend_python_executable()
-
-    ensure_log_dir()
-    max_size = 20.0
-    try:
-        state = read_state_file(STATE_PATH)
-        max_size = float(state.get("log_max_size_mb", 20))
-    except Exception:
-        pass
-    for log_path in (STDOUT_LOG, STDERR_LOG):
-        rotate_log_file(log_path, max_size)
-
-    env = os.environ.copy()
-    env.update(config)
-    env["PYTHONUNBUFFERED"] = "1"
-    env["APP_RELOAD"] = "false"
-    env["PYTHONIOENCODING"] = "utf-8"
-    env["PYTHONUTF8"] = "1"
-
-    host = (config.get("APP_HOST") or "127.0.0.1").strip() or "127.0.0.1"
-    port = (config.get("APP_PORT") or "8100").strip() or "8100"
-    browser_host = resolve_browser_host(host)
-
-    if port.isdigit():
-        port_num = int(port)
-        if is_port_open(browser_host, port_num) or (host == "0.0.0.0" and is_port_open("127.0.0.1", port_num)):
-            if can_connect_http(browser_host, port_num):
-                return False, f"端口 {port} 已被现有服务占用，且页面可访问，请先停止旧实例后再启动"
-            return False, f"端口 {port} 已被其他进程占用，请先释放端口后再启动"
-
-    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    session_label = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    self.last_session_started_label = session_label
-    self.last_session_marker = f"===== FinFlowManager Session Start {session_label} ====="
-    for log_path in (STDOUT_LOG, STDERR_LOG):
-        with open(log_path, "a", encoding="utf-8", errors="ignore") as marker_handle:
-            marker_handle.write(f"\n{self.last_session_marker}\n")
-    self.stdout_handle = open(STDOUT_LOG, "a", encoding="utf-8", errors="ignore")
-    self.stderr_handle = open(STDERR_LOG, "a", encoding="utf-8", errors="ignore")
-
-    try:
-        self.process = subprocess.Popen(
-            [str(python_exe), "-m", "uvicorn", "main:app", "--host", host, "--port", port, "--app-dir", str(BACKEND_DIR)],
-            cwd=BACKEND_DIR,
-            env=env,
-            stdin=subprocess.DEVNULL,
-            stdout=self.stdout_handle,
-            stderr=self.stderr_handle,
-            creationflags=creationflags,
-        )
-    except Exception as exc:
-        self._close_handles()
-        self.process = None
-        return False, f"启动失败：{exc}"
-
-    self.user_stopped = False
-    self.last_start_attempt = time.time()
-    self.last_started_at = self.last_start_attempt
-    self.last_exit_code = None
-    self.auto_restart_suppressed = False
-    return True, f"已发送启动命令，PID={safe_process_pid(self.process)}"
-
-
-def _frontend_process_start_override(self: FrontendProcessController, config: Dict[str, str]) -> Tuple[bool, str]:
-    if self.is_running():
-        return False, "前端已在运行"
-
-    package_json = FRONTEND_DIR / "package.json"
-    vite_cli = FRONTEND_DIR / "node_modules" / "vite" / "bin" / "vite.js"
-    node_exe = "node.exe" if os.name == "nt" else "node"
-    if not package_json.exists():
-        return False, "未找到 frontend/package.json，请确认前端工程目录完整"
-    if not vite_cli.exists():
-        return False, "未找到前端运行依赖，请先执行“同步前端依赖”"
-    try:
-        subprocess.run(
-            [node_exe, "--version"],
-            capture_output=True,
-            timeout=5,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-    except FileNotFoundError:
-        return False, "未找到 Node.js，请先安装 Node.js 后再启动前端"
-    except Exception as exc:
-        return False, f"检查 Node.js 失败: {exc}"
-
-    ok, detail = sync_frontend_runtime_env(config)
-    if not ok:
-        return False, detail
-
-    ensure_log_dir()
-    max_size = 20.0
-    try:
-        state = read_state_file(STATE_PATH)
-        max_size = float(state.get("log_max_size_mb", 20))
-    except Exception:
-        pass
-    for log_path in (FRONTEND_STDOUT_LOG, FRONTEND_STDERR_LOG):
-        rotate_log_file(log_path, max_size)
-
-    settings = resolve_frontend_service_settings(config)
-    frontend_host = settings["frontend_host"]
-    frontend_port = settings["frontend_port"]
-    if frontend_port.isdigit():
-        port_num = int(frontend_port)
-        if is_port_open(frontend_host, port_num):
-            if can_connect_http(frontend_host, port_num):
-                return False, f"前端端口 {frontend_port} 已被现有服务占用，请先停止旧实例后再启动"
-            return False, f"前端端口 {frontend_port} 已被其他进程占用，请先释放端口后再启动"
-
-    env = build_node_process_env()
-    env.update(read_env_file(FRONTEND_ENV_EXAMPLE_PATH))
-    env.update(read_env_file(FRONTEND_ENV_PATH))
-    env["BROWSER"] = "none"
-
-    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    session_label = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    self.last_session_started_label = session_label
-    self.last_session_marker = f"===== FinFlowManager Frontend Session Start {session_label} ====="
-    for log_path in (FRONTEND_STDOUT_LOG, FRONTEND_STDERR_LOG):
-        with open(log_path, "a", encoding="utf-8", errors="ignore") as marker_handle:
-            marker_handle.write(f"\n{self.last_session_marker}\n")
-    self.stdout_handle = open(FRONTEND_STDOUT_LOG, "a", encoding="utf-8", errors="ignore")
-    self.stderr_handle = open(FRONTEND_STDERR_LOG, "a", encoding="utf-8", errors="ignore")
-
-    try:
-        self.process = subprocess.Popen(
-            [node_exe, str(vite_cli), "--host", "0.0.0.0", "--port", frontend_port],
-            cwd=FRONTEND_DIR,
-            env=env,
-            stdin=subprocess.DEVNULL,
-            stdout=self.stdout_handle,
-            stderr=self.stderr_handle,
-            creationflags=creationflags,
-        )
-    except Exception as exc:
-        self._close_handles()
-        self.process = None
-        return False, f"启动前端失败: {exc}"
-
-    self.user_stopped = False
-    self.last_start_attempt = time.time()
-    self.last_started_at = self.last_start_attempt
-    self.last_exit_code = None
-    self.auto_restart_suppressed = False
-    self._sync_runtime_state()
-    return True, f"前端已启动，PID={safe_process_pid(self.process)}，访问地址 {settings['frontend_url']}"
-
-
-def _managed_backend_start_override(self: ManagedBackendController, _config: Dict[str, str] | None = None) -> Tuple[bool, str]:
-    try:
-        state = self._state()
-    except Exception:
-        state = {"service_host_alive": False, "service_host_pid": 0}
-    if bool(state.get("service_host_alive")):
-        host_pid = int(state.get("service_host_pid") or 0)
-        return False, f"服务宿主已在运行，PID={host_pid}"
-
-    runtime_config = dict(_config or load_effective_config_from_disk())
-    requirement_ok, requirement_msg = check_backend_runtime_requirements(runtime_config)
-    if not requirement_ok:
-        return False, requirement_msg
-    host = resolve_browser_host(runtime_config.get("APP_HOST", "127.0.0.1"))
-    port_text = (runtime_config.get("APP_PORT") or "8100").strip() or "8100"
-    if port_text.isdigit():
-        port_num = int(port_text)
-        if is_port_open(host, port_num):
-            return False, f"后端端口 {port_num} 已被占用，请先确认现有实例状态"
-
-    ensure_runtime_dir()
-    clear_stop_request()
-    ensure_log_dir()
-    creationflags = 0
-    for flag_name in ("CREATE_NO_WINDOW", "DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP"):
-        creationflags |= getattr(subprocess, flag_name, 0)
-
-    launcher = resolve_service_host_launcher()
-    with open(SERVICE_HOST_LOG, "a", encoding="utf-8", errors="ignore") as service_log:
-        process = subprocess.Popen(
-            launcher,
-            cwd=ROOT_DIR,
-            stdin=subprocess.DEVNULL,
-            stdout=service_log,
-            stderr=service_log,
-            creationflags=creationflags,
-        )
-
-    process_pid = safe_process_pid(process)
-    self.process = SimpleNamespace(pid=process_pid) if process_pid > 0 else None
-    write_runtime_state(service_host_pid=process_pid, backend_pid=0, user_stopped=False)
-    time.sleep(0.5)
-    if not safe_process_is_running(process):
-        log_tail = tail_text_file(SERVICE_HOST_LOG)
-        return False, f"服务宿主启动后立即退出。\n{log_tail or '请检查 manager.service.log'}"
-    deadline = time.time() + 3
-    while time.time() < deadline:
-        try:
-            current = self._state()
-            if bool(current.get("service_host_alive")):
-                host_pid = int(current.get("service_host_pid") or process_pid)
-                return True, f"服务宿主已启动，PID={host_pid}"
-        except Exception:
-            break
-        if not safe_process_is_running(process):
-            log_tail = tail_text_file(SERVICE_HOST_LOG)
-            return False, f"服务宿主启动失败。\n{log_tail or '请检查 manager.service.log'}"
-        time.sleep(0.25)
-    return True, f"已发送服务宿主启动命令，PID={process_pid}"
-
-
 def _managed_backend_state_override(self: ManagedBackendController) -> Dict[str, Any]:
     try:
         state = read_managed_runtime_state()
@@ -6563,14 +6524,21 @@ def _update_service_action_buttons(self: Any) -> None:
         return
     backend_running = bool(self.backend.is_running())
     frontend_running = bool(self.frontend.is_running())
+    config = self.get_effective_config()
+    backend_port = (config.get("APP_PORT") or "8100").strip() or "8100"
+    frontend_settings = resolve_frontend_service_settings(config)
+    frontend_port = frontend_settings["frontend_port"]
+    backend_port_busy = backend_port.isdigit() and bool(get_port_owner_info(int(backend_port)))
+    frontend_port_busy = frontend_port.isdigit() and bool(get_port_owner_info(int(frontend_port)))
     all_running = backend_running and frontend_running
     any_running = backend_running or frontend_running
 
     desired_states = {
-        "start_backend": "disabled" if backend_running else "normal",
+        "start_backend": "disabled" if (backend_running or backend_port_busy) else "normal",
         "stop_backend": "normal" if backend_running else "disabled",
         "restart_backend": "normal" if backend_running else "disabled",
-        "start_frontend": "disabled" if frontend_running else "normal",
+        "takeover_backend": "normal" if (not backend_running and backend_port_busy) else "disabled",
+        "start_frontend": "disabled" if (frontend_running or frontend_port_busy) else "normal",
         "stop_frontend": "normal" if frontend_running else "disabled",
         "restart_frontend": "normal" if frontend_running else "disabled",
         "start_all": "disabled" if all_running else "normal",
@@ -6623,11 +6591,298 @@ def _handle_takeover_backend_override(self: Any) -> None:
     messagebox.showinfo("接管完成", f"已将 PID {owner_pid} 记录为当前后端实例")
 
 
+def _backend_process_start_verified(self: BackendProcessController, config: Dict[str, str]) -> Tuple[bool, str]:
+    if self.is_running():
+        return False, "后端已在运行"
+
+    requirement_ok, requirement_msg = check_backend_runtime_requirements(config)
+    if not requirement_ok:
+        return False, requirement_msg
+
+    python_exe = get_backend_python_executable()
+    ensure_log_dir()
+    max_size = 20.0
+    try:
+        state = read_state_file(STATE_PATH)
+        max_size = float(state.get("log_max_size_mb", 20))
+    except Exception:
+        pass
+    for log_path in (STDOUT_LOG, STDERR_LOG):
+        rotate_log_file(log_path, max_size)
+
+    env = os.environ.copy()
+    env.update(config)
+    env["PYTHONUNBUFFERED"] = "1"
+    env["APP_RELOAD"] = "false"
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+
+    host = (config.get("APP_HOST") or "127.0.0.1").strip() or "127.0.0.1"
+    port = (config.get("APP_PORT") or "8100").strip() or "8100"
+    browser_host = resolve_browser_host(host)
+    if port.isdigit():
+        port_num = int(port)
+        if is_port_open(browser_host, port_num) or (host == "0.0.0.0" and is_port_open("127.0.0.1", port_num)):
+            if can_connect_http(browser_host, port_num):
+                return False, f"端口 {port} 已被现有服务占用，且页面可访问，请先停止旧实例后再启动"
+            return False, f"端口 {port} 已被其他进程占用，请先释放端口后再启动"
+
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    session_label = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    self.last_session_started_label = session_label
+    self.last_session_marker = f"===== FinFlowManager Session Start {session_label} ====="
+    for log_path in (STDOUT_LOG, STDERR_LOG):
+        with open(log_path, "a", encoding="utf-8", errors="ignore") as marker_handle:
+            marker_handle.write(f"\n{self.last_session_marker}\n")
+    self.stdout_handle = open(STDOUT_LOG, "a", encoding="utf-8", errors="ignore")
+    self.stderr_handle = open(STDERR_LOG, "a", encoding="utf-8", errors="ignore")
+
+    try:
+        self.process = subprocess.Popen(
+            [str(python_exe), "-m", "uvicorn", "main:app", "--host", host, "--port", port, "--app-dir", str(BACKEND_DIR)],
+            cwd=BACKEND_DIR,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=self.stdout_handle,
+            stderr=self.stderr_handle,
+            creationflags=creationflags,
+        )
+    except Exception as exc:
+        self._close_handles()
+        self.process = None
+        return False, f"启动失败：{exc}"
+
+    self.user_stopped = False
+    self.last_start_attempt = time.time()
+    self.last_started_at = self.last_start_attempt
+    self.last_exit_code = None
+    self.auto_restart_suppressed = False
+
+    deadline = time.time() + 8
+    while time.time() < deadline:
+        exit_code = self.capture_exit()
+        if exit_code is not None:
+            log_tail = tail_text_file(STDERR_LOG) or tail_text_file(STDOUT_LOG)
+            detail = log_tail or f"后端进程已退出，code={exit_code}"
+            return False, f"后端启动失败：{detail}"
+        if port.isdigit():
+            port_num = int(port)
+            if is_port_open(browser_host, port_num) or (host == "0.0.0.0" and is_port_open("127.0.0.1", port_num)):
+                return True, f"后端已启动，PID={safe_process_pid(self.process)}，监听 {browser_host}:{port}"
+        time.sleep(0.25)
+
+    return True, f"后端进程已启动，PID={safe_process_pid(self.process)}，正在等待端口 {port} 就绪"
+
+
+def _frontend_process_start_verified(self: FrontendProcessController, config: Dict[str, str]) -> Tuple[bool, str]:
+    if self.is_running():
+        return False, "前端已在运行"
+
+    package_json = FRONTEND_DIR / "package.json"
+    vite_cli = FRONTEND_DIR / "node_modules" / "vite" / "bin" / "vite.js"
+    node_exe = "node.exe" if os.name == "nt" else "node"
+    ok, detail = sync_frontend_runtime_env(config)
+    if not ok:
+        return False, detail
+
+    ensure_log_dir()
+    max_size = 20.0
+    try:
+        state = read_state_file(STATE_PATH)
+        max_size = float(state.get("log_max_size_mb", 20))
+    except Exception:
+        pass
+    for log_path in (FRONTEND_STDOUT_LOG, FRONTEND_STDERR_LOG):
+        rotate_log_file(log_path, max_size)
+
+    settings = resolve_frontend_service_settings(config)
+    frontend_host = settings["frontend_host"]
+    frontend_port = settings["frontend_port"]
+    if frontend_port.isdigit():
+        port_num = int(frontend_port)
+        if is_port_open(frontend_host, port_num):
+            if can_connect_http(frontend_host, port_num):
+                return False, f"前端端口 {frontend_port} 已被现有服务占用，请先停止旧实例后再启动"
+            return False, f"前端端口 {frontend_port} 已被其他进程占用，请先释放端口后再启动"
+
+    use_vite_dev_server = package_json.exists() and vite_cli.exists()
+    env = os.environ.copy()
+    env["PYTHONWARNINGS"] = "ignore"
+    if use_vite_dev_server:
+        try:
+            subprocess.run(
+                [node_exe, "--version"],
+                capture_output=True,
+                timeout=5,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except FileNotFoundError:
+            return False, "未找到 Node.js，请先安装 Node.js 后再启动前端"
+        except Exception as exc:
+            return False, f"检查 Node.js 失败: {exc}"
+
+        env = build_node_process_env(env)
+        env.update(read_env_file(FRONTEND_ENV_EXAMPLE_PATH))
+        env.update(read_env_file(FRONTEND_ENV_PATH))
+        env["BROWSER"] = "none"
+
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    session_label = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    self.last_session_started_label = session_label
+    self.last_session_marker = f"===== FinFlowManager Frontend Session Start {session_label} ====="
+    for log_path in (FRONTEND_STDOUT_LOG, FRONTEND_STDERR_LOG):
+        with open(log_path, "a", encoding="utf-8", errors="ignore") as marker_handle:
+            marker_handle.write(f"\n{self.last_session_marker}\n")
+    self.stdout_handle = open(FRONTEND_STDOUT_LOG, "a", encoding="utf-8", errors="ignore")
+    self.stderr_handle = open(FRONTEND_STDERR_LOG, "a", encoding="utf-8", errors="ignore")
+
+    try:
+        self.process = subprocess.Popen(
+            ([node_exe, str(vite_cli), "--host", "0.0.0.0", "--port", frontend_port] if use_vite_dev_server else resolve_frontend_host_launcher()),
+            cwd=FRONTEND_DIR,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=self.stdout_handle,
+            stderr=self.stderr_handle,
+            creationflags=creationflags,
+        )
+    except Exception as exc:
+        self._close_handles()
+        self.process = None
+        return False, f"启动前端失败: {exc}"
+
+    self.user_stopped = False
+    self.last_start_attempt = time.time()
+    self.last_started_at = self.last_start_attempt
+    self.last_exit_code = None
+    self.auto_restart_suppressed = False
+    self._sync_runtime_state()
+
+    deadline = time.time() + 8
+    while time.time() < deadline:
+        exit_code = self.capture_exit()
+        if exit_code is not None:
+            log_tail = tail_text_file(FRONTEND_STDERR_LOG) or tail_text_file(FRONTEND_STDOUT_LOG)
+            detail = log_tail or f"前端进程已退出，code={exit_code}"
+            return False, f"前端启动失败: {detail}"
+        if frontend_port.isdigit() and is_port_open(frontend_host, int(frontend_port)):
+            self._sync_runtime_state()
+            mode_text = "Vite 开发服务" if use_vite_dev_server else "静态前端服务"
+            return True, f"前端已启动（{mode_text}），PID={safe_process_pid(self.process)}，访问地址 {settings['frontend_url']}"
+        time.sleep(0.25)
+
+    self._sync_runtime_state()
+    return True, f"前端进程已启动，PID={safe_process_pid(self.process)}，正在等待 {settings['frontend_url']} 就绪"
+
+
+def _managed_backend_start_sessioned(self: ManagedBackendController, _config: Dict[str, str] | None = None) -> Tuple[bool, str]:
+    try:
+        state = self._state()
+    except Exception:
+        state = {"service_host_alive": False, "service_host_pid": 0}
+    if bool(state.get("service_host_alive")):
+        host_pid = int(state.get("service_host_pid") or 0)
+        return False, f"服务宿主已在运行，PID={host_pid}"
+
+    runtime_config = dict(_config or load_effective_config_from_disk())
+    requirement_ok, requirement_msg = check_backend_runtime_requirements(runtime_config)
+    if not requirement_ok:
+        return False, requirement_msg
+
+    host = resolve_browser_host(runtime_config.get("APP_HOST", "127.0.0.1"))
+    port_text = (runtime_config.get("APP_PORT") or "8100").strip() or "8100"
+    if port_text.isdigit() and is_port_open(host, int(port_text)):
+        return False, f"后端端口 {port_text} 已被占用，请先确认现有实例状态"
+
+    ensure_runtime_dir()
+    clear_stop_request()
+    ensure_log_dir()
+    max_size = 20.0
+    try:
+        state_config = read_state_file(STATE_PATH)
+        max_size = float(state_config.get("log_max_size_mb", 20))
+    except Exception:
+        pass
+    rotate_log_file(SERVICE_HOST_LOG, max_size)
+
+    creationflags = 0
+    for flag_name in ("CREATE_NO_WINDOW", "DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP"):
+        creationflags |= getattr(subprocess, flag_name, 0)
+
+    launcher = resolve_service_host_launcher()
+    child_env = os.environ.copy()
+    child_env["PYTHONWARNINGS"] = "ignore"
+    session_label = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    session_marker = f"===== FinFlowManager Service Host Session Start {session_label} ====="
+
+    with open(SERVICE_HOST_LOG, "a", encoding="utf-8", errors="ignore") as service_log:
+        service_log.write(f"\n{session_marker}\n")
+        service_log.flush()
+        process = subprocess.Popen(
+            launcher,
+            cwd=ROOT_DIR,
+            env=child_env,
+            stdin=subprocess.DEVNULL,
+            stdout=service_log,
+            stderr=service_log,
+            creationflags=creationflags,
+        )
+
+    process_pid = safe_process_pid(process)
+    self.process = SimpleNamespace(pid=process_pid) if process_pid > 0 else None
+    write_runtime_state(service_host_pid=process_pid, backend_pid=0, user_stopped=False)
+    if process_pid <= 0:
+        log_tail = read_log_since_marker(SERVICE_HOST_LOG, session_marker)
+        return False, f"服务宿主启动失败：未获取到有效进程 PID。\n{log_tail or '请检查 manager.service.log'}"
+
+    deadline = time.time() + 12
+    while time.time() < deadline:
+        try:
+            current = self._state()
+            if bool(current.get("service_host_alive")):
+                host_pid = int(current.get("service_host_pid") or process_pid)
+                if bool(current.get("backend_alive")):
+                    backend_pid = int(current.get("backend_pid") or 0)
+                    return True, f"服务宿主已启动，PID={host_pid}，后端 PID={backend_pid}"
+                return True, f"服务宿主已启动，PID={host_pid}"
+        except Exception:
+            pass
+        if not is_process_alive(process_pid):
+            log_tail = read_log_since_marker(SERVICE_HOST_LOG, session_marker)
+            runtime_state_text = build_runtime_state_snapshot_text()
+            detail = log_tail or "请检查 manager.service.log"
+            return False, f"服务宿主启动失败。\n{detail}\n{runtime_state_text}"
+        time.sleep(0.25)
+
+    if is_process_alive(process_pid):
+        current = self._state()
+        if bool(current.get("backend_alive")) or bool(current.get("service_host_alive")):
+            host_pid = int(current.get("service_host_pid") or process_pid)
+            backend_pid = int(current.get("backend_pid") or 0)
+            if backend_pid > 0:
+                return True, f"服务宿主已启动，PID={host_pid}，后端 PID={backend_pid}"
+            return True, f"服务宿主进程已启动，PID={host_pid}，正在等待状态同步"
+
+    log_tail = read_log_since_marker(SERVICE_HOST_LOG, session_marker)
+    if not log_tail or log_tail.strip() == session_marker.strip():
+        child_alive = is_process_alive(process_pid)
+        diagnostics = [
+            f"child_pid={process_pid}",
+            f"child_alive={child_alive}",
+            f"runtime_state_exists={RUNTIME_STATE_PATH.exists()}",
+            f"backend_main_exists={(BACKEND_DIR / 'main.py').exists()}",
+            f"backend_python={get_backend_python_executable()}",
+            f"backend_python_exists={get_backend_python_executable().exists()}",
+        ]
+        log_tail = session_marker + "\n" + "\n".join(diagnostics)
+    return False, f"服务宿主在等待时间内未报告就绪。\n{log_tail or '请检查 manager.service.log'}\n{build_runtime_state_snapshot_text()}"
+
+
 BackendProcessController.__init__ = _backend_process_init_override
-BackendProcessController.start = _backend_process_start_override
-FrontendProcessController.start = _frontend_process_start_override
+BackendProcessController.start = _backend_process_start_verified
+FrontendProcessController.start = _frontend_process_start_verified
 ManagedBackendController._state = _managed_backend_state_override
-ManagedBackendController.start = _managed_backend_start_override
+ManagedBackendController.start = _managed_backend_start_sessioned
 FinFlowManagerApp.get_effective_config = _get_effective_config_override
 FinFlowManagerApp.handle_start_backend = _handle_start_backend_override
 FinFlowManagerApp.handle_start_frontend = _handle_start_frontend_override
