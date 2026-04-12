@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 import argparse
@@ -242,15 +242,36 @@ def ensure_tcl_tk_environment() -> None:
 
 def discover_root_dir() -> Path:
     if getattr(sys, "frozen", False):
+        # 打包后的 EXE：使用 sys._MEIPASS 作为临时解压目录
+        if hasattr(sys, "_MEIPASS"):
+            # _MEIPASS 是 PyInstaller 运行时解压的临时目录
+            frozen_dir = Path(sys._MEIPASS)
+        else:
+            frozen_dir = Path(sys.executable).resolve().parent
+        
+        # 在打包环境中，项目目录被包含在 _MEIPASS 下
+        # 检查 _MEIPASS 下是否有 backend 和 frontend 目录
+        if (frozen_dir / "backend" / "main.py").is_file() and (frozen_dir / "frontend").is_dir():
+            return frozen_dir
+        
+        # 如果 _MEIPASS 下没有项目目录，尝试从 EXE 所在目录查找
         start_dir = Path(sys.executable).resolve().parent
+        candidates = [start_dir, *start_dir.parents]
+        for candidate in candidates:
+            if (candidate / "backend" / "main.py").is_file() and (candidate / "frontend").is_dir():
+                return candidate
+        
+        # 最后使用 _MEIPASS 作为根目录（项目文件应该在这里）
+        return frozen_dir
     else:
+        # 开发环境：使用脚本所在目录的父目录
         start_dir = Path(__file__).resolve().parents[1]
 
-    candidates = [start_dir, *start_dir.parents]
-    for candidate in candidates:
-        if (candidate / "backend" / "main.py").is_file() and (candidate / "frontend").is_dir():
-            return candidate
-    return start_dir
+        candidates = [start_dir, *start_dir.parents]
+        for candidate in candidates:
+            if (candidate / "backend" / "main.py").is_file() and (candidate / "frontend").is_dir():
+                return candidate
+        return start_dir
 
 
 ROOT_DIR = discover_root_dir()
@@ -3366,133 +3387,315 @@ class FinFlowManagerApp:
         return self.get_backend_url()
 
     def handle_start_backend(self) -> None:
+        """启动后端服务 - 高可用性设计"""
+        self.log_status_var.set("正在启动后端服务...")
+        self.root.update_idletasks()
+        
         try:
             self.save_config_values()
         except Exception as exc:
-            messagebox.showerror("无法启动", str(exc))
+            error_msg = f"保存配置失败：{exc}"
+            self.log_status_var.set(error_msg)
+            messagebox.showerror("无法启动", error_msg)
             return
+        
         self.backend.clear_restart_failure_state()
+        
+        if self.backend.is_running():
+            info_msg = "后端服务已在运行中"
+            self.log_status_var.set(info_msg)
+            messagebox.showinfo("服务状态", info_msg)
+            self.refresh_status()
+            return
+        
         ok, message = self.backend.start(self.get_effective_config())
-        if not ok:
-            messagebox.showwarning("启动结果", message)
-        else:
+        
+        if ok:
+            success_msg = f"后端服务启动成功\n{message}"
             self.log_status_var.set(f"当前显示：本次启动日志（自 {self.backend.last_session_started_label} 起）")
-            self.notify_tray("FinFlow 已启动", message)
-        self.refresh_status()
+            self.notify_tray("FinFlow 后端已启动", message)
+            self.refresh_status()
+            messagebox.showinfo("启动成功", success_msg)
+            self.log_choice.set(FF_LOG_CHOICES[1])
+            self.refresh_log_view(force=True)
+        else:
+            error_msg = f"后端服务启动失败\n{message}"
+            self.log_status_var.set(error_msg)
+            self.refresh_status()
+            messagebox.showerror("启动失败", error_msg)
 
     def handle_stop_backend(self) -> None:
-        _, message = self.backend.stop()
+        """停止后端服务 - 高可用性设计"""
+        if not self.backend.is_running():
+            info_msg = "后端服务未运行"
+            self.log_status_var.set(info_msg)
+            messagebox.showinfo("服务状态", info_msg)
+            return
+        
+        self.log_status_var.set("正在停止后端服务...")
+        self.root.update_idletasks()
+        
+        ok, message = self.backend.stop()
         self.backend.clear_restart_failure_state()
         self.last_health_state = "unknown"
+        
+        if ok:
+            success_msg = f"后端服务已停止\n{message}"
+            self.log_status_var.set(success_msg)
+            self.notify_tray("FinFlow 后端已停止", "后端服务已正常停止")
+        else:
+            error_msg = f"后端服务停止失败\n{message}"
+            self.log_status_var.set(error_msg)
+        
         self.refresh_status()
-        messagebox.showinfo("停止结果", message)
+        self.log_choice.set(FF_LOG_CHOICES[1])
+        self.refresh_log_view(force=True)
+        messagebox.showinfo("停止结果", ok and f"后端服务已停止\n{message}" or f"停止失败\n{message}")
 
     def handle_restart_backend(self) -> None:
+        """重启后端服务 - 高可用性设计"""
+        self.log_status_var.set("正在重启后端服务...")
+        self.root.update_idletasks()
+        
         try:
             self.save_config_values()
         except Exception as exc:
-            messagebox.showerror("无法重启", str(exc))
+            error_msg = f"保存配置失败：{exc}"
+            self.log_status_var.set(error_msg)
+            messagebox.showerror("无法重启", error_msg)
             return
+        
         self.backend.clear_restart_failure_state()
+        
         ok, message = self.backend.restart(self.get_effective_config())
         self.last_health_state = "unknown"
-        self.refresh_status()
+        
         if ok:
+            success_msg = f"后端服务重启成功\n{message}"
             self.log_status_var.set(f"当前显示：本次启动日志（自 {self.backend.last_session_started_label} 起）")
-            self.notify_tray("FinFlow 已重启", message)
-        messagebox.showinfo("重启结果", message)
+            self.notify_tray("FinFlow 后端已重启", message)
+            self.refresh_status()
+            self.log_choice.set(FF_LOG_CHOICES[1])
+            self.refresh_log_view(force=True)
+            messagebox.showinfo("重启成功", success_msg)
+        else:
+            error_msg = f"后端服务重启失败\n{message}"
+            self.log_status_var.set(error_msg)
+            self.refresh_status()
+            messagebox.showerror("重启失败", error_msg)
 
     def handle_start_frontend(self, show_dialog: bool = True) -> Tuple[bool, str]:
+        """启动前端服务 - 高可用性设计"""
+        self.log_status_var.set("正在启动前端服务...")
+        self.root.update_idletasks()
+        
         try:
             self.save_config_values()
         except Exception as exc:
+            error_msg = f"保存配置失败：{exc}"
+            self.log_status_var.set(error_msg)
             if show_dialog:
-                messagebox.showerror("无法启动", str(exc))
-            return False, str(exc)
+                messagebox.showerror("无法启动", error_msg)
+            return False, error_msg
+        
         self.frontend.clear_restart_failure_state()
-        ok, message = self.frontend.start(self.get_effective_config())
-        if not ok:
+        
+        if self.frontend.is_running():
+            info_msg = "前端服务已在运行中"
+            self.log_status_var.set(info_msg)
             if show_dialog:
-                messagebox.showwarning("启动结果", message)
-        else:
+                messagebox.showinfo("服务状态", info_msg)
+            self.refresh_status()
+            return True, info_msg
+        
+        ok, message = self.frontend.start(self.get_effective_config())
+        
+        if ok:
+            success_msg = f"前端服务启动成功\n{message}"
             self.log_status_var.set(f"当前显示：本次启动日志（前端，自 {self.frontend.last_session_started_label} 起）")
             self.notify_tray("前端已启动", message)
-        self.refresh_status()
+            self.refresh_status()
+            self.log_choice.set(FF_LOG_CHOICES[3])
+            self.refresh_log_view(force=True)
+            if show_dialog:
+                messagebox.showinfo("启动成功", success_msg)
+        else:
+            error_msg = f"前端服务启动失败\n{message}"
+            self.log_status_var.set(error_msg)
+            self.refresh_status()
+            if show_dialog:
+                messagebox.showerror("启动失败", error_msg)
+        
         return ok, message
 
     def handle_stop_frontend(self, show_dialog: bool = True) -> Tuple[bool, str]:
+        """停止前端服务 - 高可用性设计"""
+        if not self.frontend.is_running():
+            info_msg = "前端服务未运行"
+            self.log_status_var.set(info_msg)
+            if show_dialog:
+                messagebox.showinfo("服务状态", info_msg)
+            return True, info_msg
+        
+        self.log_status_var.set("正在停止前端服务...")
+        self.root.update_idletasks()
+        
         ok, message = self.frontend.stop()
         self.frontend.clear_restart_failure_state()
         self.last_frontend_health_state = "unknown"
+        
+        if ok:
+            success_msg = f"前端服务已停止\n{message}"
+            self.log_status_var.set(success_msg)
+            self.notify_tray("前端已停止", "前端服务已正常停止")
+        else:
+            error_msg = f"前端服务停止失败\n{message}"
+            self.log_status_var.set(error_msg)
+        
         self.refresh_status()
+        self.log_choice.set(FF_LOG_CHOICES[3])
+        self.refresh_log_view(force=True)
+        result_msg = ok and f"前端服务已停止\n{message}" or f"停止失败\n{message}"
         if show_dialog:
-            messagebox.showinfo("停止结果", message)
+            messagebox.showinfo("停止结果", result_msg)
         return ok, message
 
     def handle_restart_frontend(self, show_dialog: bool = True) -> Tuple[bool, str]:
+        """重启前端服务 - 高可用性设计"""
+        self.log_status_var.set("正在重启前端服务...")
+        self.root.update_idletasks()
+        
         try:
             self.save_config_values()
         except Exception as exc:
+            error_msg = f"保存配置失败：{exc}"
+            self.log_status_var.set(error_msg)
             if show_dialog:
-                messagebox.showerror("无法重启", str(exc))
-            return False, str(exc)
+                messagebox.showerror("无法重启", error_msg)
+            return False, error_msg
+        
         self.frontend.clear_restart_failure_state()
+        
         ok, message = self.frontend.restart(self.get_effective_config())
         self.last_frontend_health_state = "unknown"
-        self.refresh_status()
+        
         if ok:
+            success_msg = f"前端服务重启成功\n{message}"
             self.log_status_var.set(f"当前显示：本次启动日志（前端，自 {self.frontend.last_session_started_label} 起）")
             self.notify_tray("前端已重启", message)
-        if show_dialog:
-            messagebox.showinfo("重启结果", message)
+            self.refresh_status()
+            self.log_choice.set(FF_LOG_CHOICES[3])
+            self.refresh_log_view(force=True)
+            if show_dialog:
+                messagebox.showinfo("重启成功", success_msg)
+        else:
+            error_msg = f"前端服务重启失败\n{message}"
+            self.log_status_var.set(error_msg)
+            self.refresh_status()
+            if show_dialog:
+                messagebox.showerror("重启失败", error_msg)
+        
         return ok, message
 
     def handle_start_all(self, show_dialog: bool = True) -> Tuple[bool, str]:
+        """启动所有服务 - 高可用性设计"""
+        self.log_status_var.set("正在启动所有服务...")
+        self.root.update_idletasks()
+        
         backend_started = False
         backend_message = ""
+        
         try:
             self.save_config_values()
             self.backend.clear_restart_failure_state()
-            backend_started, backend_message = self.backend.start(self.get_effective_config())
+            
+            if self.backend.is_running():
+                backend_started = True
+                backend_message = "后端服务已在运行中"
+            else:
+                backend_started, backend_message = self.backend.start(self.get_effective_config())
         except Exception as exc:
-            backend_message = str(exc)
-        if not backend_started and self.backend.is_running():
-            backend_started = True
-            backend_message = backend_message or "后端已在运行"
-
+            backend_message = f"启动后端异常：{exc}"
+            backend_started = False
+        
         frontend_ok = False
         frontend_message = "后端启动失败，未继续启动前端"
+        
         if backend_started:
             frontend_ok, frontend_message = self.handle_start_frontend(show_dialog=False)
+        
         self.refresh_status()
+        
         message = f"后端：{backend_message}\n前端：{frontend_message}"
-        if show_dialog:
-            messagebox.showinfo("启动结果", message)
-        return backend_started and frontend_ok, message
+        self.log_status_var.set(message)
+        
+        all_started = backend_started and frontend_ok
+        if all_started:
+            self.notify_tray("所有服务已启动", "后端和前端服务均已正常启动")
+            if show_dialog:
+                messagebox.showinfo("启动成功", f"所有服务启动成功\n\n{message}")
+        else:
+            if show_dialog:
+                messagebox.showwarning("启动结果", f"部分服务启动失败\n\n{message}")
+        
+        return all_started, message
 
     def handle_stop_all(self, show_dialog: bool = True) -> Tuple[bool, str]:
+        """停止所有服务 - 高可用性设计"""
+        self.log_status_var.set("正在停止所有服务...")
+        self.root.update_idletasks()
+        
         frontend_ok, frontend_message = self.handle_stop_frontend(show_dialog=False)
+        
         backend_ok = False
         backend_message = ""
         try:
-            backend_ok, backend_message = self.backend.stop()
+            if self.backend.is_running():
+                backend_ok, backend_message = self.backend.stop()
+            else:
+                backend_ok = True
+                backend_message = "后端服务未运行"
         except Exception as exc:
-            backend_message = str(exc)
+            backend_message = f"停止后端异常：{exc}"
+            backend_ok = False
+        
         self.backend.clear_restart_failure_state()
         self.refresh_status()
+        
         message = f"前端：{frontend_message}\n后端：{backend_message}"
-        if show_dialog:
-            messagebox.showinfo("停止结果", message)
-        return frontend_ok or backend_ok, message
+        self.log_status_var.set(message)
+        
+        all_stopped = frontend_ok and backend_ok
+        if all_stopped:
+            self.notify_tray("所有服务已停止", "后端和前端服务均已正常停止")
+            if show_dialog:
+                messagebox.showinfo("停止成功", f"所有服务已停止\n\n{message}")
+        else:
+            if show_dialog:
+                messagebox.showwarning("停止结果", f"部分服务停止失败\n\n{message}")
+        
+        return all_stopped, message
 
     def handle_restart_all(self, show_dialog: bool = True) -> Tuple[bool, str]:
+        """重启所有服务 - 高可用性设计"""
+        self.log_status_var.set("正在重启所有服务...")
+        self.root.update_idletasks()
+        
         self.handle_stop_all(show_dialog=False)
         time.sleep(1)
+        
         ok, message = self.handle_start_all(show_dialog=False)
         self.last_backend_health_state = "unknown"
         self.last_frontend_health_state = "unknown"
-        if show_dialog:
-            messagebox.showinfo("重启结果", message)
+        
+        if ok:
+            self.notify_tray("所有服务已重启", "后端和前端服务均已重启成功")
+            if show_dialog:
+                messagebox.showinfo("重启成功", f"所有服务重启成功\n\n{message}")
+        else:
+            if show_dialog:
+                messagebox.showwarning("重启结果", f"部分服务重启失败\n\n{message}")
+        
         return ok, message
 
     def handle_takeover_backend(self) -> None:
@@ -5132,6 +5335,7 @@ FF_CONFIG_SECTIONS: List[Tuple[str, List[Tuple[str, str, bool]]]] = [
 ]
 
 FF_LOG_CHOICES = [
+    "\u670d\u52a1\u5bbf\u4e3b\u65e5\u5fd7",
     "\u540e\u7aef\u6807\u51c6\u8f93\u51fa",
     "\u540e\u7aef\u6807\u51c6\u9519\u8bef",
     "\u524d\u7aef\u6807\u51c6\u8f93\u51fa",
@@ -5715,13 +5919,14 @@ def _ff_create_tray_icon(self: Any) -> None:
 
 def _ff_resolve_log_path(self: Any) -> Path:
     mapping = {
-        FF_LOG_CHOICES[0]: STDOUT_LOG,
-        FF_LOG_CHOICES[1]: STDERR_LOG,
-        FF_LOG_CHOICES[2]: FRONTEND_STDOUT_LOG,
-        FF_LOG_CHOICES[3]: FRONTEND_STDERR_LOG,
-        FF_LOG_CHOICES[4]: PROJECT_SYNC_LOG,
+        FF_LOG_CHOICES[0]: SERVICE_HOST_LOG,
+        FF_LOG_CHOICES[1]: STDOUT_LOG,
+        FF_LOG_CHOICES[2]: STDERR_LOG,
+        FF_LOG_CHOICES[3]: FRONTEND_STDOUT_LOG,
+        FF_LOG_CHOICES[4]: FRONTEND_STDERR_LOG,
+        FF_LOG_CHOICES[5]: PROJECT_SYNC_LOG,
     }
-    return mapping.get(self.log_choice.get(), STDOUT_LOG)
+    return mapping.get(self.log_choice.get(), SERVICE_HOST_LOG)
 
 
 def _ff_clear_current_log(self: Any) -> None:
