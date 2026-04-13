@@ -8774,6 +8774,171 @@ def _ff_build_status_tab_compact_v2(self: Any, parent: ttk.Frame) -> None:
 _ff_build_status_tab = _ff_build_status_tab_compact_v2
 
 
+def _frontend_process_start_production_only(self: FrontendProcessController, config: Dict[str, str]) -> Tuple[bool, str]:
+    if self.is_running():
+        return False, "前端服务已在运行"
+
+    ok, detail = sync_frontend_runtime_env(config)
+    if not ok:
+        return False, detail
+    if not DIST_DIR.exists() or not (DIST_DIR / "index.html").exists():
+        return False, "未找到 frontend/dist 构建产物，请先执行一键部署或前端构建"
+
+    ensure_log_dir()
+    max_size = 20.0
+    try:
+        state = read_state_file(STATE_PATH)
+        max_size = float(state.get("log_max_size_mb", 20))
+    except Exception:
+        pass
+    for log_path in (FRONTEND_STDOUT_LOG, FRONTEND_STDERR_LOG):
+        rotate_log_file(log_path, max_size)
+
+    settings = resolve_frontend_service_settings(config)
+    frontend_host = settings["frontend_host"]
+    frontend_port = settings["frontend_port"]
+    if frontend_port.isdigit():
+        port_num = int(frontend_port)
+        if is_port_open(frontend_host, port_num):
+            if can_connect_http(frontend_host, port_num):
+                return False, f"前端端口 {frontend_port} 已被可访问服务占用，请先停止现有服务"
+            return False, f"前端端口 {frontend_port} 已被其他进程占用，请先释放端口"
+
+    env = os.environ.copy()
+    env["PYTHONWARNINGS"] = "ignore"
+
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    session_label = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    self.last_session_started_label = session_label
+    self.last_session_marker = f"===== FinFlowManager Frontend Session Start {session_label} ====="
+    for log_path in (FRONTEND_STDOUT_LOG, FRONTEND_STDERR_LOG):
+        with open(log_path, "a", encoding="utf-8", errors="ignore") as marker_handle:
+            marker_handle.write(f"\n{self.last_session_marker}\n")
+    self.stdout_handle = open(FRONTEND_STDOUT_LOG, "a", encoding="utf-8", errors="ignore")
+    self.stderr_handle = open(FRONTEND_STDERR_LOG, "a", encoding="utf-8", errors="ignore")
+
+    try:
+        self.process = subprocess.Popen(
+            resolve_frontend_host_launcher(),
+            cwd=FRONTEND_DIR,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=self.stdout_handle,
+            stderr=self.stderr_handle,
+            creationflags=creationflags,
+        )
+    except Exception as exc:
+        self._close_handles()
+        self.process = None
+        return False, f"前端服务启动失败: {exc}"
+
+    self.user_stopped = False
+    self.last_start_attempt = time.time()
+    self.last_started_at = self.last_start_attempt
+    self.last_exit_code = None
+    self.auto_restart_suppressed = False
+    self._sync_runtime_state()
+
+    deadline = time.time() + 8
+    while time.time() < deadline:
+        exit_code = self.capture_exit()
+        if exit_code is not None:
+            log_tail = tail_text_file(FRONTEND_STDERR_LOG) or tail_text_file(FRONTEND_STDOUT_LOG)
+            detail = log_tail or f"frontend exited early, code={exit_code}"
+            return False, f"前端服务启动失败: {detail}"
+        if frontend_port.isdigit() and is_port_open(frontend_host, int(frontend_port)):
+            self._sync_runtime_state()
+            return True, f"前端静态服务已启动 PID={safe_process_pid(self.process)} 地址 {settings['frontend_url']}"
+        time.sleep(0.25)
+
+    self._sync_runtime_state()
+    return True, f"前端静态服务已启动 PID={safe_process_pid(self.process)}，等待端口稳定：{settings['frontend_url']}"
+
+
+FrontendProcessController.start = _frontend_process_start_production_only
+
+
+def _handle_start_frontend_production_override(self: Any, show_dialog: bool = True) -> Tuple[bool, str]:
+    saved, save_error = _safe_save_config_before_service_action(self)
+    config = self.get_effective_config()
+    self.frontend.clear_restart_failure_state()
+    ok, message = self.frontend.start(config)
+    if ok:
+        self.log_status_var.set(f"当前显示：本次启动日志（前端静态服务，自 {self.frontend.last_session_started_label} 起）")
+        self.notify_tray("前端静态服务已启动", message)
+        if not saved and save_error:
+            message += f"\n\n注意：配置自动保存失败，已使用当前磁盘配置继续启动。\n详情：{save_error}"
+        if show_dialog:
+            messagebox.showinfo("启动成功", f"前端静态服务启动成功\n{message}")
+    else:
+        if not saved and save_error:
+            message += f"\n\n注意：配置自动保存失败。\n详情：{save_error}"
+        if show_dialog:
+            messagebox.showwarning("启动失败", f"前端静态服务启动失败\n{message}")
+    self.refresh_status()
+    return ok, message
+
+
+def _handle_stop_frontend_production_override(self: Any, show_dialog: bool = True) -> Tuple[bool, str]:
+    if not self.frontend.is_running():
+        info_msg = "前端静态服务未运行"
+        self.log_status_var.set(info_msg)
+        if show_dialog:
+            messagebox.showinfo("服务状态", info_msg)
+        return True, info_msg
+
+    self.log_status_var.set("正在停止前端静态服务...")
+    self.root.update_idletasks()
+
+    ok, message = self.frontend.stop()
+    self.frontend.clear_restart_failure_state()
+    self.last_frontend_health_state = "unknown"
+    self.refresh_status()
+    self.log_choice.set(FF_LOG_CHOICES[3])
+    self.refresh_log_view(force=True)
+
+    if ok:
+        self.log_status_var.set(f"前端静态服务已停止\n{message}")
+        self.notify_tray("前端静态服务已停止", "前端静态资源托管已正常停止")
+        if show_dialog:
+            messagebox.showinfo("停止成功", f"前端静态服务已停止\n{message}")
+    else:
+        self.log_status_var.set(f"前端静态服务停止失败\n{message}")
+        if show_dialog:
+            messagebox.showwarning("停止失败", f"前端静态服务停止失败\n{message}")
+    return ok, message
+
+
+def _handle_restart_frontend_production_override(self: Any, show_dialog: bool = True) -> Tuple[bool, str]:
+    saved, save_error = _safe_save_config_before_service_action(self)
+    config = self.get_effective_config()
+    self.frontend.clear_restart_failure_state()
+    self.log_status_var.set("正在重启前端静态服务...")
+    self.root.update_idletasks()
+
+    ok, message = self.frontend.restart(config)
+    self.last_frontend_health_state = "unknown"
+    if ok:
+        self.log_status_var.set(f"当前显示：本次启动日志（前端静态服务，自 {self.frontend.last_session_started_label} 起）")
+        self.notify_tray("前端静态服务已重启", message)
+        if not saved and save_error:
+            message += f"\n\n注意：配置自动保存失败，已使用当前磁盘配置继续重启。\n详情：{save_error}"
+        if show_dialog:
+            messagebox.showinfo("重启成功", f"前端静态服务重启成功\n{message}")
+    else:
+        if not saved and save_error:
+            message += f"\n\n注意：配置自动保存失败。\n详情：{save_error}"
+        if show_dialog:
+            messagebox.showwarning("重启失败", f"前端静态服务重启失败\n{message}")
+    self.refresh_status()
+    return ok, message
+
+
+FinFlowManagerApp.handle_start_frontend = _handle_start_frontend_production_override
+FinFlowManagerApp.handle_stop_frontend = _handle_stop_frontend_production_override
+FinFlowManagerApp.handle_restart_frontend = _handle_restart_frontend_production_override
+
+
 if __name__ == "__main__":
     cli_parser = build_cli_parser()
     cli_args = cli_parser.parse_args()

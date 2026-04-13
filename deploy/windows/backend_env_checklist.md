@@ -51,3 +51,12 @@ Kingdee integration:
 ## 5. Important note
 
 `backend/.env` is intentionally ignored by Git, so `git pull` will not sync your real server configuration.
+
+## 6. Production-only service management
+
+On the server, FinFlow Manager should start:
+
+- backend in production runtime mode
+- frontend as built static files from `frontend/dist`
+
+Do not use Vite dev server or any hot-reload workflow in server-side service management.

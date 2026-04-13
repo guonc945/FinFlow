@@ -119,6 +119,8 @@ def main() -> int:
     print()
     print("Note: this EXE packages the manager app itself and required assets.")
     print("Keep it inside a FinFlow runtime layout, or alongside backend/frontend/deploy so project discovery works.")
+    print("Production note: server-side service management uses production mode only.")
+    print("Backend is started as FastAPI/ASGI runtime, and frontend is served from frontend/dist static assets.")
     return 0
 
 
