@@ -117,8 +117,8 @@ def main() -> int:
     print(f"EXE path: {exe_path}")
     print(f"EXE size: {size_mb:.2f} MB")
     print()
-    print("注意：打包后的 EXE 已包含完整的项目文件（backend、frontend、deploy）")
-    print("可以将 EXE 部署到服务器上任意位置运行，无需额外项目文件")
+    print("Note: this EXE packages the manager app itself and required assets.")
+    print("Keep it inside a FinFlow runtime layout, or alongside backend/frontend/deploy so project discovery works.")
     return 0
 
 

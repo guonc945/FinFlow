@@ -1,21 +1,26 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
 from pathlib import Path
+
 from PyInstaller.utils.hooks import collect_all
 
-# 获取项目根目录：spec 文件所在目录的父目录
-# 在 PyInstaller 执行 spec 文件时，使用特殊方式获取路径
-try:
-    # PyInstaller 执行时会设置 __file__
-    spec_file = eval('__file__')
-    tools_dir = Path(spec_file).resolve().parent
-except:
-    # 回退方案：使用当前工作目录
-    tools_dir = Path(os.getcwd()).resolve()
 
+def resolve_tools_dir() -> Path:
+    try:
+        return Path(__file__).resolve().parent
+    except Exception:
+        cwd = Path(os.getcwd()).resolve()
+        candidate = cwd / "tools"
+        if candidate.exists():
+            return candidate
+        return cwd
+
+
+tools_dir = resolve_tools_dir()
 project_root = tools_dir.parent
 
-# 只包含图标文件，不包含项目代码（项目文件在服务器上已经存在）
+# Package only the manager executable and required assets.
+# Runtime project discovery is still handled by finflow_manager.py itself.
 datas = [
     (str(tools_dir / "finflow_manager_icon.png"), "."),
     (str(tools_dir / "finflow_manager_icon.ico"), "."),

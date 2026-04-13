@@ -88,8 +88,10 @@ def ensure_gui_dependencies() -> None:
 
 def build_cli_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="FinFlow manager CLI")
+    parser.add_argument("--host", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--service-run", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--frontend-run", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--minimized", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--daemon", action="store_true", help="Run in daemon mode with console logging")
     parser.add_argument("--start", action="store_true", help="Start backend service host")
     parser.add_argument("--stop", action="store_true", help="Stop backend service host")
@@ -106,6 +108,16 @@ def build_cli_parser() -> argparse.ArgumentParser:
 
 
 def run_cli(args: argparse.Namespace) -> int:
+    if args.host:
+        append_text_log(SERVICE_HOST_LOG, "===== Unified Host Run Entry =====")
+        append_text_log(SERVICE_HOST_LOG, build_runtime_snapshot_text())
+        try:
+            host = FinFlowRuntimeHost()
+            return host.run()
+        except BaseException:
+            append_text_log(SERVICE_HOST_LOG, traceback.format_exc())
+            raise
+
     if args.service_run:
         append_text_log(SERVICE_HOST_LOG, "===== Service Run Entry =====")
         append_text_log(SERVICE_HOST_LOG, build_runtime_snapshot_text())
@@ -132,7 +144,7 @@ def run_cli(args: argparse.Namespace) -> int:
     mode_flags = [args.start, args.stop, args.restart, args.backup, args.restore, args.status, args.health, args.sync_deps]
     if not any(mode_flags):
         try:
-            app = FinFlowManagerApp()
+            app = FinFlowManagerApp(start_minimized=args.minimized)
             app.run()
             return 0
         except Exception as exc:
@@ -300,10 +312,12 @@ UPGRADE_BACKUP_DIR = ROOT_DIR / "deploy" / "windows" / "upgrade_backups"
 LOG_ARCHIVE_DIR = LOG_DIR / "archive"
 STARTUP_DIR = Path(os.environ.get("APPDATA") or str(ROOT_DIR)) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
 STARTUP_SCRIPT_PATH = STARTUP_DIR / "FinFlowManager.cmd"
+STARTUP_TASK_NAME = "FinFlowManager"
 RUNTIME_DIR = ROOT_DIR / "deploy" / "windows" / "runtime"
 RUNTIME_STATE_PATH = RUNTIME_DIR / "service_runtime.json"
 STOP_REQUEST_PATH = RUNTIME_DIR / "service.stop"
 SERVICE_HOST_LOG = LOG_DIR / "manager.service.log"
+ACTIONS_AUDIT_LOG = LOG_DIR / "manager.audit.jsonl"
 STATUS_REFRESH_INTERVAL_MS = 2000
 LOG_REFRESH_INTERVAL_MS = 2500
 HEALTH_CHECK_INTERVAL_MS = 5000
@@ -412,6 +426,9 @@ DEFAULT_STATE = {
     "log_max_size_mb": "20",
     "log_archive_retention_days": "90",
     "webhook_url": "",
+    "startup_last_result": "",
+    "startup_last_error": "",
+    "startup_last_sync_at": "",
 }
 
 OPS_STATE_KEYS = (
@@ -453,15 +470,85 @@ def read_env_file(path: Path) -> Dict[str, str]:
 def write_env_file(path: Path, values: Dict[str, str], extra_values: Dict[str, str]) -> None:
     ordered_keys = list(DEFAULT_ENV.keys())
     lines: List[str] = []
+    seen: set[str] = set()
     for key in ordered_keys:
         value = values.get(key, "")
         lines.append(f"{key}={value}")
+        seen.add(key)
+
+    for key in sorted(values.keys()):
+        if key not in seen:
+            lines.append(f"{key}={values[key]}")
+            seen.add(key)
 
     for key in sorted(extra_values.keys()):
-        if key not in values:
+        if key not in seen:
             lines.append(f"{key}={extra_values[key]}")
+            seen.add(key)
 
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def build_backend_env_payload(runtime_config: Dict[str, str], extra_values: Dict[str, str] | None = None) -> Dict[str, str]:
+    payload = read_env_file(ENV_EXAMPLE_PATH)
+    payload.update(read_env_file(ENV_PATH))
+    payload.update(DEFAULT_ENV)
+    payload.update(read_env_file(ENV_EXAMPLE_PATH))
+    payload.update(extra_values or {})
+    payload.update(runtime_config)
+    payload["APP_RELOAD"] = "false"
+    return payload
+
+
+def validate_backend_env_payload(payload: Dict[str, str]) -> List[str]:
+    issues: List[str] = []
+
+    app_host = (payload.get("APP_HOST") or "").strip()
+    app_port = (payload.get("APP_PORT") or "").strip()
+    token_minutes = (payload.get("ACCESS_TOKEN_EXPIRE_MINUTES") or "").strip()
+    secret_key = (payload.get("SECRET_KEY") or "").strip()
+    encryption_key = (payload.get("ENCRYPTION_KEY") or "").strip()
+    encryption_key_file = (payload.get("ENCRYPTION_KEY_FILE") or "").strip()
+    database_url = (payload.get("DATABASE_URL") or "").strip()
+    db_dialect = (payload.get("DB_DIALECT") or "").strip()
+
+    if not app_host:
+        issues.append("APP_HOST 未配置")
+    if not app_port:
+        issues.append("APP_PORT 未配置")
+    elif not app_port.isdigit():
+        issues.append("APP_PORT 必须是数字")
+
+    if token_minutes and not token_minutes.isdigit():
+        issues.append("ACCESS_TOKEN_EXPIRE_MINUTES 必须是数字")
+
+    if not secret_key:
+        issues.append("SECRET_KEY 未配置")
+
+    if not encryption_key and not encryption_key_file:
+        issues.append("ENCRYPTION_KEY 与 ENCRYPTION_KEY_FILE 至少需要配置一个")
+
+    if not database_url:
+        if not db_dialect:
+            issues.append("DB_DIALECT 未配置")
+        for key in ("DB_HOST", "DB_PORT", "DB_NAME", "DB_USER"):
+            if not (payload.get(key) or "").strip():
+                issues.append(f"{key} 未配置")
+        db_port = (payload.get("DB_PORT") or "").strip()
+        if db_port and not db_port.isdigit():
+            issues.append("DB_PORT 必须是数字")
+
+    return issues
+
+
+def save_backend_env_config(runtime_config: Dict[str, str], extra_values: Dict[str, str] | None = None) -> Tuple[Dict[str, str], bool]:
+    payload = build_backend_env_payload(runtime_config, extra_values)
+    issues = validate_backend_env_payload(payload)
+    if issues:
+        raise ValueError("；".join(issues))
+    existed = ENV_PATH.exists()
+    write_env_file(ENV_PATH, payload, extra_values or {})
+    return payload, existed
 
 
 def write_key_value_env_file(path: Path, ordered_keys: List[str], values: Dict[str, str]) -> None:
@@ -500,10 +587,22 @@ def write_state_file(path: Path, state: Dict[str, Any]) -> None:
     path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def build_startup_sync_label(result: str, detail: str) -> str:
+    result_text = (result or "").strip() or "unknown"
+    detail_text = (detail or "").strip()
+    if detail_text:
+        return f"{result_text}: {detail_text}"
+    return result_text
+
+
 DEFAULT_RUNTIME_STATE = {
     "service_host_pid": 0,
     "backend_pid": 0,
     "frontend_pid": 0,
+    "host_started_at": 0.0,
+    "host_last_heartbeat_at": 0.0,
+    "host_last_transition": "",
+    "host_stop_reason": "",
     "user_stopped": False,
     "last_start_attempt": 0.0,
     "last_exit_code": None,
@@ -559,6 +658,146 @@ def write_runtime_state(**updates: Any) -> Dict[str, Any]:
     state.update(updates)
     RUNTIME_STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
     return state
+
+
+def append_audit_log(action: str, status: str, detail: str = "", **extra: Any) -> None:
+    try:
+        ensure_log_dir()
+        entry: Dict[str, Any] = {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "action": (action or "").strip() or "unknown",
+            "status": (status or "").strip() or "unknown",
+        }
+        detail_text = (detail or "").strip()
+        if detail_text:
+            entry["detail"] = detail_text
+        for key, value in extra.items():
+            if value is None:
+                continue
+            entry[str(key)] = value
+        with open(ACTIONS_AUDIT_LOG, "a", encoding="utf-8", errors="ignore") as handle:
+            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def format_runtime_timestamp(timestamp: Any) -> str:
+    try:
+        value = float(timestamp or 0.0)
+    except Exception:
+        value = 0.0
+    if value <= 0:
+        return "-"
+    try:
+        return datetime.fromtimestamp(value).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return "-"
+
+
+def get_last_audit_summary() -> str:
+    if not ACTIONS_AUDIT_LOG.exists():
+        return "-"
+    try:
+        with open(ACTIONS_AUDIT_LOG, "r", encoding="utf-8", errors="ignore") as handle:
+            lines = handle.readlines()
+    except Exception:
+        return "audit log unreadable"
+    for raw_line in reversed(lines):
+        raw_line = raw_line.strip()
+        if not raw_line:
+            continue
+        try:
+            payload = json.loads(raw_line)
+        except Exception:
+            continue
+        timestamp = str(payload.get("timestamp", "") or "").strip()
+        action = str(payload.get("action", "") or "").strip()
+        status = str(payload.get("status", "") or "").strip()
+        detail = str(payload.get("detail", "") or "").strip()
+        summary = " ".join(part for part in (timestamp, action, status) if part)
+        if detail:
+            summary = f"{summary}: {detail}" if summary else detail
+        return summary or "-"
+    return "-"
+
+
+def is_command_available(command: str) -> bool:
+    candidate = (command or "").strip()
+    if not candidate:
+        return False
+    path_candidate = Path(candidate)
+    if path_candidate.suffix:
+        return path_candidate.exists()
+    return shutil.which(candidate) is not None
+
+
+def build_takeover_check_summary(app: Any) -> str:
+    config = app.get_effective_config()
+    lines: List[str] = ["FinFlow 首装 / 环境接管检查", ""]
+
+    layout_ok, layout_issues = evaluate_manager_runtime_layout()
+    lines.append(f"[{'OK' if layout_ok else 'WARN'}] 项目布局: {'正常' if layout_ok else '存在缺失'}")
+    if layout_issues:
+        lines.extend([f"  - {item}" for item in layout_issues[:6]])
+
+    backend_python = get_backend_python_executable()
+    lines.append(f"[{'OK' if backend_python.exists() else 'WARN'}] 后端虚拟环境: {backend_python}")
+    lines.append(f"[{'OK' if ENV_PATH.exists() else 'WARN'}] 后端配置文件 backend/.env")
+    lines.append(f"[{'OK' if KEY_PATH.exists() else 'WARN'}] 加密密钥 backend/.encryption.key")
+    lines.append(f"[{'OK' if (DIST_DIR / 'index.html').exists() else 'WARN'}] 前端构建产物 frontend/dist")
+
+    git_ok = app.check_git_available()
+    lines.append(f"[{'OK' if git_ok else 'WARN'}] Git 命令")
+
+    node_ok = is_command_available("node")
+    lines.append(f"[{'OK' if node_ok else 'WARN'}] Node.js")
+
+    sqlcmd_value = app.ops_vars.get("sqlcmd_path").get().strip() if app.ops_vars.get("sqlcmd_path") else "sqlcmd"
+    sqlcmd_ok = is_command_available(sqlcmd_value or "sqlcmd")
+    lines.append(f"[{'OK' if sqlcmd_ok else 'WARN'}] sqlcmd: {sqlcmd_value or 'sqlcmd'}")
+
+    startup_enabled = bool(app.manager_state.get("launch_manager_on_startup", False))
+    startup_ready = startup_task_exists() or STARTUP_SCRIPT_PATH.exists()
+    lines.append(f"[{'OK' if (startup_enabled and startup_ready) else 'WARN'}] 开机自启: {app.get_startup_status_text()}")
+
+    runtime_state = read_managed_runtime_state()
+    host_alive = bool(runtime_state.get("service_host_alive"))
+    lines.append(f"[{'OK' if host_alive else 'WARN'}] 后台宿主: {app.get_host_status_text()}")
+
+    port = (config.get("APP_PORT") or "8100").strip() or "8100"
+    if port.isdigit():
+        owner = get_port_owner_info(int(port))
+        if owner:
+            lines.append(f"[WARN] 后端端口占用: {build_port_owner_label(owner)}")
+        else:
+            lines.append(f"[OK] 后端端口 {port}: 未检测到冲突")
+    else:
+        lines.append(f"[WARN] APP_PORT 无效: {port}")
+
+    db_state, db_detail = describe_database_configuration(config)
+    lines.append(f"[{'OK' if db_state == 'ready' else 'WARN'}] 数据库配置: {db_detail}")
+
+    recommendations: List[str] = []
+    if not ENV_PATH.exists():
+        recommendations.append("先在“系统配置”页保存 backend/.env")
+    if not KEY_PATH.exists():
+        recommendations.append("生成或放入 backend/.encryption.key")
+    if not backend_python.exists():
+        recommendations.append("执行“同步后端依赖”以创建虚拟环境")
+    if not (DIST_DIR / "index.html").exists():
+        recommendations.append("执行“同步前端依赖”并构建前端")
+    if not startup_ready:
+        recommendations.append("启用开机自启，让服务器重启后自动拉起后台宿主")
+    if not host_alive:
+        recommendations.append("启动后台宿主，进入无人值守运行模式")
+
+    lines.append("")
+    lines.append("建议下一步:")
+    if recommendations:
+        lines.extend([f"- {item}" for item in recommendations])
+    else:
+        lines.append("- 当前接管条件基本齐备，可直接进入运行与验活")
+    return "\n".join(lines)
 
 
 def reset_runtime_state() -> None:
@@ -1780,20 +2019,125 @@ def restore_database_from_backup(config: Dict[str, str], bak_file: Path, sqlcmd:
     return execute_sql_script_via_sqlcmd(restore_sql, config, sqlcmd)
 
 
-def resolve_manager_launcher() -> List[str]:
+def resolve_manager_launcher(start_minimized: bool = False) -> List[str]:
     if getattr(sys, "frozen", False):
-        return [str(Path(sys.executable).resolve())]
+        launcher = [str(Path(sys.executable).resolve())]
+        if start_minimized:
+            launcher.append("--minimized")
+        return launcher
 
     python_exe = Path(sys.executable).resolve()
     pythonw_exe = python_exe.with_name("pythonw.exe")
     if pythonw_exe.exists():
         python_exe = pythonw_exe
-    return [str(python_exe), str(Path(__file__).resolve())]
+    launcher = [str(python_exe), str(Path(__file__).resolve())]
+    if start_minimized:
+        launcher.append("--minimized")
+    return launcher
 
 
 def render_startup_script() -> str:
-    launch_parts = " ".join(f'"{part}"' for part in resolve_manager_launcher())
+    launch_parts = " ".join(f'"{part}"' for part in resolve_manager_launcher(start_minimized=True))
     return f'@echo off\ncd /d "{ROOT_DIR}"\nstart "" {launch_parts}\n'
+
+
+def _run_windows_command(command: List[str], timeout: int = 15) -> subprocess.CompletedProcess:
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    return subprocess.run(
+        command,
+        capture_output=True,
+        text=False,
+        timeout=timeout,
+        creationflags=creationflags,
+    )
+
+
+def get_startup_task_commandline() -> str:
+    return subprocess.list2cmdline(resolve_background_host_launcher())
+
+
+def startup_task_exists() -> bool:
+    if os.name != "nt":
+        return False
+    try:
+        result = _run_windows_command(["schtasks", "/Query", "/TN", STARTUP_TASK_NAME], timeout=10)
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def create_startup_task() -> Tuple[bool, str]:
+    if os.name != "nt":
+        return False, "Task Scheduler is only supported on Windows"
+    commandline = get_startup_task_commandline()
+    command = [
+        "schtasks",
+        "/Create",
+        "/TN",
+        STARTUP_TASK_NAME,
+        "/TR",
+        commandline,
+        "/SC",
+        "ONLOGON",
+        "/RL",
+        "HIGHEST",
+        "/F",
+    ]
+    try:
+        result = _run_windows_command(command, timeout=20)
+    except Exception as exc:
+        return False, str(exc)
+    if result.returncode == 0:
+        return True, "scheduled task"
+    detail = sanitize_console_text(
+        decode_console_output(result.stderr or b"") or decode_console_output(result.stdout or b"")
+    ).strip()
+    return False, detail or f"schtasks exited with code {result.returncode}"
+
+
+def delete_startup_task() -> Tuple[bool, str]:
+    if os.name != "nt":
+        return False, "Task Scheduler is only supported on Windows"
+    if not startup_task_exists():
+        return True, "scheduled task not found"
+    try:
+        result = _run_windows_command(["schtasks", "/Delete", "/TN", STARTUP_TASK_NAME, "/F"], timeout=15)
+    except Exception as exc:
+        return False, str(exc)
+    if result.returncode == 0:
+        return True, "scheduled task removed"
+    detail = sanitize_console_text(
+        decode_console_output(result.stderr or b"") or decode_console_output(result.stdout or b"")
+    ).strip()
+    return False, detail or f"schtasks exited with code {result.returncode}"
+
+
+def get_startup_mode_label() -> str:
+    if startup_task_exists():
+        return "Task Scheduler"
+    if STARTUP_SCRIPT_PATH.exists():
+        return "Startup Folder"
+    return "Disabled"
+
+
+def get_startup_task_detail() -> str:
+    if os.name != "nt":
+        return "Task Scheduler is only supported on Windows"
+    if not startup_task_exists():
+        return "Task Scheduler entry was not found"
+    try:
+        result = _run_windows_command(
+            ["schtasks", "/Query", "/TN", STARTUP_TASK_NAME, "/V", "/FO", "LIST"],
+            timeout=20,
+        )
+    except Exception as exc:
+        return str(exc)
+    detail = sanitize_console_text(
+        decode_console_output(result.stdout or b"") or decode_console_output(result.stderr or b"")
+    ).strip()
+    if not detail:
+        return f"schtasks exited with code {result.returncode}"
+    return detail
 
 
 def detect_release_root(extract_dir: Path) -> Path:
@@ -1836,7 +2180,21 @@ def backup_existing_path(target: Path, backup_root: Path) -> None:
         shutil.copy2(target, backup_target)
 
 
-def overlay_directory(source_dir: Path, target_dir: Path, backup_root: Path) -> int:
+def record_backup_change(change_log: Dict[str, List[str]] | None, bucket: str, path: Path) -> None:
+    if change_log is None:
+        return
+    change_log.setdefault(bucket, [])
+    normalized = path.as_posix()
+    if normalized not in change_log[bucket]:
+        change_log[bucket].append(normalized)
+
+
+def overlay_directory(
+    source_dir: Path,
+    target_dir: Path,
+    backup_root: Path,
+    change_log: Dict[str, List[str]] | None = None,
+) -> int:
     copied = 0
     for source_file in source_dir.rglob("*"):
         if source_file.is_dir():
@@ -1845,24 +2203,41 @@ def overlay_directory(source_dir: Path, target_dir: Path, backup_root: Path) -> 
         relative_to_root = destination.relative_to(ROOT_DIR)
         if should_skip_release_path(relative_to_root):
             continue
-        if destination.exists():
+        existed = destination.exists()
+        if existed:
             backup_existing_path(destination, backup_root)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_file, destination)
+        record_backup_change(change_log, "updated_files" if existed else "created_files", relative_to_root)
         copied += 1
     return copied
 
 
-def replace_directory(source_dir: Path, target_dir: Path, backup_root: Path) -> int:
-    if target_dir.exists():
+def replace_directory(
+    source_dir: Path,
+    target_dir: Path,
+    backup_root: Path,
+    change_log: Dict[str, List[str]] | None = None,
+) -> int:
+    existed = target_dir.exists()
+    if existed:
         backup_existing_path(target_dir, backup_root)
         remove_path(target_dir)
     target_dir.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(source_dir, target_dir)
+    record_backup_change(
+        change_log,
+        "replaced_dirs" if existed else "created_dirs",
+        target_dir.relative_to(ROOT_DIR),
+    )
     return sum(1 for item in source_dir.rglob("*") if item.is_file())
 
 
-def copy_release_root_files(release_root: Path, backup_root: Path) -> int:
+def copy_release_root_files(
+    release_root: Path,
+    backup_root: Path,
+    change_log: Dict[str, List[str]] | None = None,
+) -> int:
     copied = 0
     for item in release_root.iterdir():
         if not item.is_file():
@@ -1871,12 +2246,122 @@ def copy_release_root_files(release_root: Path, backup_root: Path) -> int:
         if should_skip_release_path(relative_path):
             continue
         target = ROOT_DIR / relative_path
-        if target.exists():
+        existed = target.exists()
+        if existed:
             backup_existing_path(target, backup_root)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(item, target)
+        record_backup_change(change_log, "updated_files" if existed else "created_files", relative_path)
         copied += 1
     return copied
+
+
+def write_upgrade_backup_manifest(
+    backup_root: Path,
+    action: str,
+    package_label: str,
+    change_log: Dict[str, List[str]] | None = None,
+) -> None:
+    try:
+        backup_root.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "action": action,
+            "package_label": package_label,
+            "changes": change_log or {},
+        }
+        (backup_root / "_manifest.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def read_upgrade_backup_manifest(backup_root: Path) -> Dict[str, Any]:
+    manifest_path = backup_root / "_manifest.json"
+    if not manifest_path.exists():
+        return {}
+    try:
+        return json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def list_upgrade_backups() -> List[Path]:
+    if not UPGRADE_BACKUP_DIR.exists():
+        return []
+    return sorted([item for item in UPGRADE_BACKUP_DIR.iterdir() if item.is_dir()], key=lambda p: p.name, reverse=True)
+
+
+def summarize_upgrade_backup(backup_root: Path) -> str:
+    manifest = read_upgrade_backup_manifest(backup_root)
+    label = str(manifest.get("package_label", "") or backup_root.name).strip()
+    action = str(manifest.get("action", "") or "backup").strip()
+    created_at = str(manifest.get("created_at", "") or "").strip()
+    changes = manifest.get("changes", {}) or {}
+    total_items = 0
+    if isinstance(changes, dict):
+        total_items = sum(len(value or []) for value in changes.values() if isinstance(value, list))
+    if total_items <= 0:
+        try:
+            total_items = sum(1 for item in backup_root.rglob("*") if item.is_file() and item.name != "_manifest.json")
+        except Exception:
+            total_items = 0
+    summary = label
+    if created_at:
+        summary += f" | {created_at}"
+    if action:
+        summary += f" | {action}"
+    summary += f" | items={total_items}"
+    return summary
+
+
+def rollback_from_upgrade_backup(backup_root: Path) -> Tuple[bool, str]:
+    if not backup_root.exists() or not backup_root.is_dir():
+        return False, f"备份目录不存在: {backup_root}"
+
+    manifest = read_upgrade_backup_manifest(backup_root)
+    changes = manifest.get("changes", {}) if isinstance(manifest, dict) else {}
+    created_files = [Path(item) for item in changes.get("created_files", []) if item]
+    created_dirs = [Path(item) for item in changes.get("created_dirs", []) if item]
+    replaced_dirs = [Path(item) for item in changes.get("replaced_dirs", []) if item]
+
+    for relative_path in created_files:
+        target = ROOT_DIR / relative_path
+        if target.exists():
+            remove_path(target)
+
+    for relative_path in created_dirs:
+        target = ROOT_DIR / relative_path
+        if target.exists():
+            remove_path(target)
+
+    for relative_path in replaced_dirs:
+        target = ROOT_DIR / relative_path
+        if target.exists():
+            remove_path(target)
+
+    restored = 0
+    for source in backup_root.rglob("*"):
+        if source.name == "_manifest.json":
+            continue
+        relative_path = source.relative_to(backup_root)
+        if source.is_dir():
+            continue
+        target = ROOT_DIR / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        restored += 1
+
+    detail = f"已从备份恢复 {restored} 个文件: {backup_root}"
+    if created_files or created_dirs or replaced_dirs:
+        detail += (
+            f"\n移除新增文件 {len(created_files)} 个"
+            f"\n移除新增目录 {len(created_dirs)} 个"
+            f"\n恢复替换目录 {len(replaced_dirs)} 个"
+        )
+    return True, detail
 
 
 def archive_log_file(path: Path, reason: str) -> Path | None:
@@ -2486,19 +2971,23 @@ class FrontendProcessController:
 
 
 def resolve_service_host_launcher() -> List[str]:
+    return resolve_background_host_launcher()
+
+
+def resolve_background_host_launcher() -> List[str]:
     if getattr(sys, "frozen", False):
         backend_python = get_backend_python_executable()
         manager_script = ROOT_DIR / "tools" / "finflow_manager.py"
         if backend_python.exists() and manager_script.exists():
-            return [str(backend_python), str(manager_script), "--service-run"]
-        return [str(Path(sys.executable).resolve()), "--service-run"]
+            return [str(backend_python), str(manager_script), "--host"]
+        return [str(Path(sys.executable).resolve()), "--host"]
 
     python_exe = Path(sys.executable).resolve()
     if python_exe.name.lower() == "pythonw.exe":
         candidate = python_exe.with_name("python.exe")
         if candidate.exists():
             python_exe = candidate
-    return [str(python_exe), str(Path(__file__).resolve()), "--service-run"]
+    return [str(python_exe), str(Path(__file__).resolve()), "--host"]
 
 
 def resolve_frontend_host_launcher() -> List[str]:
@@ -2922,10 +3411,174 @@ class BackendServiceHost:
         return 0
 
 
-class FinFlowManagerApp:
+class FinFlowRuntimeHost:
     def __init__(self) -> None:
+        append_text_log(SERVICE_HOST_LOG, "===== FinFlowRuntimeHost.__init__ =====")
+        self.backend = BackendProcessController()
+        self.frontend = FrontendProcessController()
+        self.stop_event = threading.Event()
+        append_text_log(SERVICE_HOST_LOG, "===== FinFlowRuntimeHost.__init__ ready =====")
+
+    def request_stop(self, *_args: Any) -> None:
+        write_runtime_state(host_stop_reason="signal")
+        self.stop_event.set()
+
+    def _initialize_runtime_state(self) -> None:
+        ensure_runtime_dir()
+        ensure_log_dir()
+        clear_stop_request()
+        now = time.time()
+        state = dict(DEFAULT_RUNTIME_STATE)
+        state["service_host_pid"] = os.getpid()
+        state["host_started_at"] = now
+        state["host_last_heartbeat_at"] = now
+        state["host_last_transition"] = "starting"
+        state["host_stop_reason"] = ""
+        state["user_stopped"] = False
+        state["frontend_user_stopped"] = False
+        RUNTIME_STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _sync_runtime_state(self) -> None:
+        write_runtime_state(
+            service_host_pid=os.getpid(),
+            backend_pid=safe_process_pid(self.backend.process) if self.backend.is_running() else 0,
+            frontend_pid=safe_process_pid(self.frontend.process) if self.frontend.is_running() else 0,
+            host_last_heartbeat_at=time.time(),
+            host_last_transition="running",
+            user_stopped=self.backend.user_stopped,
+            last_start_attempt=self.backend.last_start_attempt,
+            last_exit_code=self.backend.last_exit_code,
+            last_exit_at=self.backend.last_exit_at,
+            last_started_at=self.backend.last_started_at,
+            consecutive_failed_starts=self.backend.consecutive_failed_starts,
+            auto_restart_suppressed=self.backend.auto_restart_suppressed,
+            last_session_marker=self.backend.last_session_marker,
+            last_session_started_label=self.backend.last_session_started_label,
+            frontend_user_stopped=self.frontend.user_stopped,
+            frontend_last_start_attempt=self.frontend.last_start_attempt,
+            frontend_last_exit_code=self.frontend.last_exit_code,
+            frontend_last_exit_at=self.frontend.last_exit_at,
+            frontend_last_started_at=self.frontend.last_started_at,
+            frontend_consecutive_failed_starts=self.frontend.consecutive_failed_starts,
+            frontend_auto_restart_suppressed=self.frontend.auto_restart_suppressed,
+            frontend_last_session_marker=self.frontend.last_session_marker,
+            frontend_last_session_started_label=self.frontend.last_session_started_label,
+        )
+
+    def _start_initial_services(self, config: Dict[str, str], state: Dict[str, Any]) -> None:
+        if state.get("start_backend_on_launch", False):
+            ok, message = self.backend.start(config)
+            append_text_log(SERVICE_HOST_LOG, f"[host] backend initial start: {message}")
+            if not ok:
+                append_text_log(SERVICE_HOST_LOG, f"[host] backend initial start failed: {message}")
+        if state.get("start_frontend_on_launch", False):
+            ok, message = self.frontend.start(config)
+            append_text_log(SERVICE_HOST_LOG, f"[host] frontend initial start: {message}")
+            if not ok:
+                append_text_log(SERVICE_HOST_LOG, f"[host] frontend initial start failed: {message}")
+
+    def _maintain_backend(self, config: Dict[str, str], state: Dict[str, Any]) -> None:
+        self.backend.capture_exit()
+        if (
+            state.get("auto_restart_backend", True)
+            and not self.backend.is_running()
+            and not self.backend.user_stopped
+            and not self.backend.auto_restart_suppressed
+            and time.time() - self.backend.last_start_attempt > 8
+            and self.backend.last_start_attempt > 0
+        ):
+            self.backend.register_failed_start_if_needed()
+            ok, message = self.backend.start(config)
+            append_text_log(SERVICE_HOST_LOG, f"[host] backend restart: {message}")
+            if not ok:
+                append_text_log(SERVICE_HOST_LOG, f"[host] backend restart failed: {message}")
+        if self.backend.is_running():
+            self.backend.consecutive_failed_starts = 0
+
+    def _maintain_frontend(self, config: Dict[str, str], state: Dict[str, Any]) -> None:
+        self.frontend.capture_exit()
+        if (
+            state.get("auto_restart_frontend", True)
+            and not self.frontend.is_running()
+            and not self.frontend.user_stopped
+            and not self.frontend.auto_restart_suppressed
+            and time.time() - self.frontend.last_start_attempt > 8
+            and self.frontend.last_start_attempt > 0
+        ):
+            self.frontend.register_failed_start_if_needed()
+            ok, message = self.frontend.start(config)
+            append_text_log(SERVICE_HOST_LOG, f"[host] frontend restart: {message}")
+            if not ok:
+                append_text_log(SERVICE_HOST_LOG, f"[host] frontend restart failed: {message}")
+        if self.frontend.is_running():
+            self.frontend.consecutive_failed_starts = 0
+            self.frontend._sync_runtime_state(frontend_consecutive_failed_starts=0)
+
+    def _stop_managed_services(self) -> None:
+        if self.frontend.is_running():
+            self.frontend.stop()
+        self.frontend.capture_exit()
+        if self.backend.is_running():
+            self.backend.stop()
+        self.backend.capture_exit()
+
+    def run(self) -> int:
+        append_text_log(SERVICE_HOST_LOG, "===== FinFlowRuntimeHost.run begin =====")
+        self._initialize_runtime_state()
+        append_text_log(SERVICE_HOST_LOG, build_runtime_state_snapshot_text())
+
+        for sig in (getattr(signal, "SIGTERM", None), getattr(signal, "SIGINT", None), getattr(signal, "SIGBREAK", None)):
+            if sig is None:
+                continue
+            try:
+                signal.signal(sig, self.request_stop)
+            except Exception:
+                pass
+
+        config = load_effective_config_from_disk()
+        state = read_state_file(STATE_PATH)
+        self._start_initial_services(config, state)
+        self._sync_runtime_state()
+        append_text_log(SERVICE_HOST_LOG, "===== FinFlowRuntimeHost.run loop enter =====")
+
+        while not self.stop_event.is_set():
+            if STOP_REQUEST_PATH.exists():
+                self.backend.user_stopped = True
+                self.frontend.user_stopped = True
+                write_runtime_state(host_stop_reason="stop_requested")
+                self.stop_event.set()
+                break
+
+            config = load_effective_config_from_disk()
+            state = read_state_file(STATE_PATH)
+            self._maintain_backend(config, state)
+            self._maintain_frontend(config, state)
+            self._sync_runtime_state()
+            time.sleep(1)
+
+        self._stop_managed_services()
+        clear_stop_request()
+        previous_started_at = read_runtime_state().get("host_started_at", 0.0)
+        previous_stop_reason = str(read_runtime_state().get("host_stop_reason", "") or "stopped")
+        self._initialize_runtime_state()
+        write_runtime_state(
+            service_host_pid=0,
+            backend_pid=0,
+            frontend_pid=0,
+            host_started_at=previous_started_at,
+            host_last_heartbeat_at=time.time(),
+            host_last_transition="stopped",
+            host_stop_reason=previous_stop_reason,
+        )
+        append_text_log(SERVICE_HOST_LOG, "===== FinFlowRuntimeHost.run end =====")
+        return 0
+
+
+class FinFlowManagerApp:
+    def __init__(self, start_minimized: bool = False) -> None:
         ensure_gui_dependencies()
         ensure_tcl_tk_environment()
+        self.start_minimized = start_minimized
         self.root = tk.Tk()
         self.root.title("FinFlow 管理器")
         self.root.geometry("980x760")
@@ -2978,6 +3631,8 @@ class FinFlowManagerApp:
         self.config_nav_items: Dict[str, Dict[str, Any]] = {}
         self.ops_nav_items: Dict[str, Dict[str, Any]] = {}
         self.env_nav_items: Dict[str, Dict[str, Any]] = {}
+        self.status_nav_items: Dict[str, Dict[str, Any]] = {}
+        self.status_section_frames: Dict[str, ttk.Frame] = {}
         self.env_section_frames: Dict[str, ttk.Frame] = {}
         self.env_text_widgets: Dict[str, scrolledtext.ScrolledText] = {}
 
@@ -2991,6 +3646,8 @@ class FinFlowManagerApp:
         self.schedule_health_refresh(1800)
         self.schedule_db_refresh(2200)
         self.schedule_ui_queue_refresh(150)
+        if self.start_minimized:
+            self.root.after(300, self.hide_to_tray)
         self.root.after(1500, self.maybe_start_services_on_launch)
 
     def init_ops_vars(self) -> None:
@@ -3008,17 +3665,8 @@ class FinFlowManagerApp:
 
     def save_config_values(self) -> None:
         data = {key: var.get().strip() for key, var in self.form_vars.items()}
-        data["APP_RELOAD"] = "false"
-
-        port = data.get("APP_PORT", "")
-        if not port.isdigit():
-            raise ValueError("APP_PORT \u5fc5\u987b\u662f\u6570\u5b57")
-        token_minutes = data.get("ACCESS_TOKEN_EXPIRE_MINUTES", "")
-        if token_minutes and not token_minutes.isdigit():
-            raise ValueError("ACCESS_TOKEN_EXPIRE_MINUTES \u5fc5\u987b\u662f\u6570\u5b57")
-
-        write_env_file(ENV_PATH, data, self.extra_env_values)
-        self.config_values = data
+        payload, _existed = save_backend_env_config(data, self.extra_env_values)
+        self.config_values = payload
 
     def build_ui(self) -> None:
         _ff_build_ui(self)
@@ -3123,6 +3771,15 @@ class FinFlowManagerApp:
                 frame.pack_forget()
         self.refresh_side_nav_styles(self.env_nav_items, active_key)
 
+    def show_status_section(self) -> None:
+        active_key = getattr(self, "status_section_var", tk.StringVar(value="overview")).get()
+        for section_key, frame in self.status_section_frames.items():
+            if section_key == active_key:
+                frame.pack(fill="both", expand=True)
+            else:
+                frame.pack_forget()
+        self.refresh_side_nav_styles(self.status_nav_items, active_key)
+
     def show_config_section(self) -> None:
         active_key = getattr(self, "config_section_var", tk.StringVar(value="应用配置")).get()
         for section_key, frame in self.config_section_frames.items():
@@ -3151,6 +3808,14 @@ class FinFlowManagerApp:
     def refresh_environment_info(self) -> None:
         _ff_refresh_environment_info(self)
 
+    def refresh_takeover_guide(self) -> None:
+        summary = build_takeover_check_summary(self)
+        if hasattr(self, "takeover_summary_text"):
+            self.set_readonly_text(self.takeover_summary_text, summary)
+        if hasattr(self, "takeover_status_var"):
+            self.takeover_status_var.set(f"最近检查: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        append_audit_log("takeover_check", "success", "environment takeover checklist refreshed")
+
     def create_tray_icon(self) -> None:
         _ff_create_tray_icon(self)
 
@@ -3173,33 +3838,208 @@ class FinFlowManagerApp:
 
     def get_startup_status_text(self) -> str:
         enabled = bool(self.manager_state.get("launch_manager_on_startup", False))
+        task_exists = startup_task_exists()
         exists = STARTUP_SCRIPT_PATH.exists()
+        if enabled and task_exists:
+            return "\u5df2\u542f\u7528\uff08\u8ba1\u5212\u4efb\u52a1\uff09"
         if enabled and exists:
-            return "\u5df2\u542f\u7528"
-        if enabled and not exists:
+            return "\u5df2\u542f\u7528\uff08\u542f\u52a8\u76ee\u5f55\uff09"
+        if enabled and not exists and not task_exists:
             return "\u5f85\u5199\u5165"
+        if task_exists:
+            return "\u5df2\u5b58\u5728\u8ba1\u5212\u4efb\u52a1"
         if exists:
             return "\u5df2\u5b58\u5728\u811a\u672c"
         return "\u672a\u542f\u7528"
+
+    def get_host_status_text(self) -> str:
+        state = read_managed_runtime_state()
+        host_pid = int(state.get("service_host_pid") or 0)
+        backend_pid = int(state.get("backend_pid") or 0)
+        frontend_pid = int(state.get("frontend_pid") or 0)
+        if state.get("service_host_alive"):
+            details: List[str] = [f"PID {host_pid}"]
+            if backend_pid > 0:
+                details.append(f"backend {backend_pid}")
+            if frontend_pid > 0:
+                details.append(f"frontend {frontend_pid}")
+            return "\u8fd0\u884c\u4e2d (" + ", ".join(details) + ")"
+        if backend_pid > 0 or frontend_pid > 0:
+            fragments: List[str] = []
+            if backend_pid > 0:
+                fragments.append(f"backend {backend_pid}")
+            if frontend_pid > 0:
+                fragments.append(f"frontend {frontend_pid}")
+            return "\u5bbf\u4e3b\u672a\u8fd0\u884c\uff0c\u4f46\u5b50\u8fdb\u7a0b\u5b58\u6d3b (" + ", ".join(fragments) + ")"
+        return "\u672a\u8fd0\u884c"
+
+    def get_host_diagnostics_text(self) -> str:
+        state = read_managed_runtime_state()
+        parts = [
+            f"started={format_runtime_timestamp(state.get('host_started_at'))}",
+            f"heartbeat={format_runtime_timestamp(state.get('host_last_heartbeat_at'))}",
+            f"transition={str(state.get('host_last_transition', '') or '-').strip() or '-'}",
+            f"stop={str(state.get('host_stop_reason', '') or '-').strip() or '-'}",
+            f"backend_failures={int(state.get('consecutive_failed_starts', 0) or 0)}",
+            f"frontend_failures={int(state.get('frontend_consecutive_failed_starts', 0) or 0)}",
+        ]
+        return " | ".join(parts)
+
+    def get_audit_status_text(self) -> str:
+        return get_last_audit_summary()
+
+    def get_startup_mode_text(self) -> str:
+        return get_startup_mode_label()
+
+    def get_startup_detail_text(self) -> str:
+        if startup_task_exists():
+            return "Task Scheduler entry is active"
+        if STARTUP_SCRIPT_PATH.exists():
+            return str(STARTUP_SCRIPT_PATH)
+        return "-"
+
+    def get_startup_last_result_text(self) -> str:
+        result = str(self.manager_state.get("startup_last_result", "") or "").strip()
+        detail = str(self.manager_state.get("startup_last_sync_at", "") or "").strip()
+        if result and detail:
+            return f"{result} @ {detail}"
+        return result or "-"
+
+    def get_startup_last_error_text(self) -> str:
+        return str(self.manager_state.get("startup_last_error", "") or "").strip() or "-"
+
+    def get_manager_runtime_mode_text(self) -> str:
+        runtime_state = read_managed_runtime_state()
+        host_pid = int(runtime_state.get("service_host_pid") or 0)
+        if runtime_state.get("service_host_alive"):
+            return f"\u540e\u53f0\u5bbf\u4e3b\u6a21\u5f0f (PID {host_pid})"
+        if self.start_minimized:
+            return "\u540e\u53f0\u6258\u76d8\u6a21\u5f0f"
+        return "\u684c\u9762\u7ba1\u7406\u6a21\u5f0f"
+
+    def handle_start_host(self, show_dialog: bool = True) -> Tuple[bool, str]:
+        ok, message = self.backend.start(self.get_effective_config())
+        append_audit_log("host_start", "success" if ok else "failed", message)
+        self.refresh_status()
+        if show_dialog:
+            dialog = messagebox.showinfo if ok else messagebox.showwarning
+            dialog("\u540e\u53f0\u5bbf\u4e3b", message)
+        return ok, message
+
+    def handle_stop_host(self, show_dialog: bool = True) -> Tuple[bool, str]:
+        ok, message = self.backend.stop()
+        append_audit_log("host_stop", "success" if ok else "failed", message)
+        self.refresh_status()
+        if show_dialog:
+            dialog = messagebox.showinfo if ok else messagebox.showwarning
+            dialog("\u540e\u53f0\u5bbf\u4e3b", message)
+        return ok, message
+
+    def handle_restart_host(self, show_dialog: bool = True) -> Tuple[bool, str]:
+        ok, message = self.backend.restart(self.get_effective_config())
+        append_audit_log("host_restart", "success" if ok else "failed", message)
+        self.refresh_status()
+        if show_dialog:
+            dialog = messagebox.showinfo if ok else messagebox.showwarning
+            dialog("\u540e\u53f0\u5bbf\u4e3b", message)
+        return ok, message
+
+    def open_host_log(self) -> None:
+        if not SERVICE_HOST_LOG.exists():
+            messagebox.showwarning("\u540e\u53f0\u5bbf\u4e3b\u65e5\u5fd7", "\u5c1a\u672a\u751f\u6210\u5bbf\u4e3b\u65e5\u5fd7")
+            return
+        try:
+            os.startfile(str(SERVICE_HOST_LOG))
+        except Exception as exc:
+            messagebox.showerror("\u6253\u5f00\u65e5\u5fd7\u5931\u8d25", str(exc))
+
+    def open_audit_log(self) -> None:
+        if not ACTIONS_AUDIT_LOG.exists():
+            messagebox.showwarning("审计日志", "尚未生成审计日志")
+            return
+        try:
+            os.startfile(str(ACTIONS_AUDIT_LOG))
+        except Exception as exc:
+            messagebox.showerror("打开审计日志失败", str(exc))
+
+    def record_startup_sync_result(self, result: str, detail: str = "", error: str = "") -> None:
+        self.manager_state["startup_last_result"] = build_startup_sync_label(result, detail)
+        self.manager_state["startup_last_error"] = (error or "").strip()
+        self.manager_state["startup_last_sync_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        write_state_file(STATE_PATH, self.manager_state)
+
+    def enable_startup_now(self) -> None:
+        self.manager_state["launch_manager_on_startup"] = True
+        if "launch_manager_on_startup" in self.manager_option_vars:
+            self.manager_option_vars["launch_manager_on_startup"].set(True)
+        write_state_file(STATE_PATH, self.manager_state)
+        self.sync_startup_entry(show_message=True)
+        self.refresh_status()
+
+    def disable_startup_now(self) -> None:
+        self.manager_state["launch_manager_on_startup"] = False
+        if "launch_manager_on_startup" in self.manager_option_vars:
+            self.manager_option_vars["launch_manager_on_startup"].set(False)
+        write_state_file(STATE_PATH, self.manager_state)
+        self.sync_startup_entry(show_message=True)
+        self.refresh_status()
+
+    def rebuild_startup_now(self) -> None:
+        self.manager_state["launch_manager_on_startup"] = True
+        if "launch_manager_on_startup" in self.manager_option_vars:
+            self.manager_option_vars["launch_manager_on_startup"].set(True)
+        write_state_file(STATE_PATH, self.manager_state)
+        delete_startup_task()
+        if STARTUP_SCRIPT_PATH.exists():
+            STARTUP_SCRIPT_PATH.unlink(missing_ok=True)
+        self.sync_startup_entry(show_message=True)
+        self.refresh_status()
+
+    def show_startup_detail(self) -> None:
+        if startup_task_exists():
+            detail = get_startup_task_detail()
+            title = "\u8ba1\u5212\u4efb\u52a1\u8be6\u60c5"
+        elif STARTUP_SCRIPT_PATH.exists():
+            detail = render_startup_script()
+            title = "\u542f\u52a8\u76ee\u5f55\u811a\u672c"
+        else:
+            detail = "\u5f53\u524d\u672a\u914d\u7f6e\u5f00\u673a\u81ea\u542f"
+            title = "\u5f00\u673a\u81ea\u542f\u8be6\u60c5"
+        messagebox.showinfo(title, detail)
 
     def sync_startup_entry(self, show_message: bool = False) -> None:
         enabled = bool(self.manager_state.get("launch_manager_on_startup", False))
         try:
             if enabled:
-                STARTUP_DIR.mkdir(parents=True, exist_ok=True)
-                STARTUP_SCRIPT_PATH.write_text(render_startup_script(), encoding="utf-8")
-            elif STARTUP_SCRIPT_PATH.exists():
-                STARTUP_SCRIPT_PATH.unlink()
+                task_ok, task_detail = create_startup_task()
+                if task_ok:
+                    if STARTUP_SCRIPT_PATH.exists():
+                        STARTUP_SCRIPT_PATH.unlink()
+                    self.record_startup_sync_result("\u8ba1\u5212\u4efb\u52a1\u5df2\u751f\u6548", task_detail, "")
+                else:
+                    STARTUP_DIR.mkdir(parents=True, exist_ok=True)
+                    STARTUP_SCRIPT_PATH.write_text(render_startup_script(), encoding="utf-8")
+                    self.record_startup_sync_result("\u5df2\u56de\u9000\u542f\u52a8\u76ee\u5f55", str(STARTUP_SCRIPT_PATH), task_detail)
+                    task_detail = f"\u8ba1\u5212\u4efb\u52a1\u521b\u5efa\u5931\u8d25\uff0c\u5df2\u56de\u9000\u5230\u542f\u52a8\u76ee\u5f55\uff1a{task_detail}"
+            else:
+                task_ok, task_detail = delete_startup_task()
+                if STARTUP_SCRIPT_PATH.exists():
+                    STARTUP_SCRIPT_PATH.unlink()
+                self.record_startup_sync_result("\u5df2\u5173\u95ed\u5f00\u673a\u81ea\u542f", task_detail, "")
         except Exception as exc:
             self.manager_state["launch_manager_on_startup"] = False
             if "launch_manager_on_startup" in self.manager_option_vars:
                 self.manager_option_vars["launch_manager_on_startup"].set(False)
+            self.record_startup_sync_result("\u81ea\u542f\u540c\u6b65\u5931\u8d25", "", str(exc))
             write_state_file(STATE_PATH, self.manager_state)
             if show_message:
                 messagebox.showerror("\u5f00\u673a\u81ea\u542f\u8bbe\u7f6e\u5931\u8d25", str(exc))
             return
         if show_message:
-            messagebox.showinfo("\u8bbe\u7f6e\u6210\u529f", "\u5df2\u66f4\u65b0\u7ba1\u7406\u5668\u5f00\u673a\u81ea\u542f\u8bbe\u7f6e")
+            if enabled:
+                messagebox.showinfo("\u8bbe\u7f6e\u6210\u529f", f"\u5df2\u66f4\u65b0\u7ba1\u7406\u5668\u5f00\u673a\u81ea\u542f\u8bbe\u7f6e\u3002\n{task_detail}")
+            else:
+                messagebox.showinfo("\u8bbe\u7f6e\u6210\u529f", "\u5df2\u5173\u95ed\u7ba1\u7406\u5668\u5f00\u673a\u81ea\u542f\u8bbe\u7f6e")
 
     def schedule_status_refresh(self, delay_ms: int = STATUS_REFRESH_INTERVAL_MS) -> None:
         if self.exiting:
@@ -3630,6 +4470,7 @@ class FinFlowManagerApp:
         self.log_status_var.set(message)
         
         all_started = backend_started and frontend_ok
+        append_audit_log("services_start_all", "success" if all_started else "failed", message)
         if all_started:
             self.notify_tray("所有服务已启动", "后端和前端服务均已正常启动")
             if show_dialog:
@@ -3666,6 +4507,7 @@ class FinFlowManagerApp:
         self.log_status_var.set(message)
         
         all_stopped = frontend_ok and backend_ok
+        append_audit_log("services_stop_all", "success" if all_stopped else "failed", message)
         if all_stopped:
             self.notify_tray("所有服务已停止", "后端和前端服务均已正常停止")
             if show_dialog:
@@ -3687,6 +4529,7 @@ class FinFlowManagerApp:
         ok, message = self.handle_start_all(show_dialog=False)
         self.last_backend_health_state = "unknown"
         self.last_frontend_health_state = "unknown"
+        append_audit_log("services_restart_all", "success" if ok else "failed", message)
         
         if ok:
             self.notify_tray("所有服务已重启", "后端和前端服务均已重启成功")
@@ -3891,20 +4734,23 @@ class FinFlowManagerApp:
                 self.backend.stop()
 
             copied_counts: Dict[str, int] = {}
+            change_log: Dict[str, List[str]] = {}
             if has_backend:
-                copied_counts["backend"] = overlay_directory(release_root / "backend", ROOT_DIR / "backend", backup_root)
+                copied_counts["backend"] = overlay_directory(release_root / "backend", ROOT_DIR / "backend", backup_root, change_log)
             if has_tools:
-                copied_counts["tools"] = overlay_directory(release_root / "tools", ROOT_DIR / "tools", backup_root)
+                copied_counts["tools"] = overlay_directory(release_root / "tools", ROOT_DIR / "tools", backup_root, change_log)
             if has_deploy:
-                copied_counts["deploy"] = overlay_directory(release_root / "deploy", ROOT_DIR / "deploy", backup_root)
+                copied_counts["deploy"] = overlay_directory(release_root / "deploy", ROOT_DIR / "deploy", backup_root, change_log)
             if has_root_files:
-                copied_counts["root"] = copy_release_root_files(release_root, backup_root)
+                copied_counts["root"] = copy_release_root_files(release_root, backup_root, change_log)
             if has_frontend_dist:
                 copied_counts["frontend_dist"] = replace_directory(
                     release_root / "frontend" / "dist",
                     ROOT_DIR / "frontend" / "dist",
                     backup_root,
+                    change_log,
                 )
+            write_upgrade_backup_manifest(backup_root, "release_package", package_path.name, change_log)
 
             restart_messages: List[str] = []
             if backend_was_running:
@@ -3953,6 +4799,129 @@ class FinFlowManagerApp:
             shutil.rmtree(extract_dir, ignore_errors=True)
             refresh_status_async()
 
+    def open_upgrade_backup_folder(self) -> None:
+        UPGRADE_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        os.startfile(str(UPGRADE_BACKUP_DIR))
+
+    def rollback_release_backup(self) -> None:
+        self.save_manager_state()
+        backups = list_upgrade_backups()
+        if not backups:
+            messagebox.showinfo("回滚备份", f"未找到升级备份目录：{UPGRADE_BACKUP_DIR}")
+            return
+
+        rollback_window = tk.Toplevel(self.root)
+        rollback_window.title("选择升级回滚点")
+        rollback_window.geometry("780x420")
+        ttk.Label(
+            rollback_window,
+            text="选择要恢复的升级备份。回滚会停止当前前后端，按备份内容恢复被覆盖文件，并尝试恢复先前运行状态。",
+            justify="left",
+            wraplength=740,
+        ).pack(anchor="w", padx=12, pady=(12, 8))
+
+        listbox = tk.Listbox(rollback_window, height=14, font=("Consolas", 9))
+        listbox.pack(fill="both", expand=True, padx=12, pady=8)
+        backup_map: List[Path] = []
+        for backup_root in backups:
+            backup_map.append(backup_root)
+            listbox.insert("end", summarize_upgrade_backup(backup_root))
+
+        detail_var = tk.StringVar(value="请选择一个备份目录")
+        ttk.Label(rollback_window, textvariable=detail_var, justify="left", wraplength=740).pack(
+            anchor="w", padx=12, pady=(0, 8)
+        )
+
+        def _update_detail(_event: Any = None) -> None:
+            selection = listbox.curselection()
+            if not selection:
+                detail_var.set("请选择一个备份目录")
+                return
+            backup_root = backup_map[selection[0]]
+            manifest = read_upgrade_backup_manifest(backup_root)
+            package_label = str(manifest.get("package_label", "") or backup_root.name)
+            action = str(manifest.get("action", "") or "backup")
+            created_at = str(manifest.get("created_at", "") or "-")
+            detail_var.set(f"目录：{backup_root} | 时间：{created_at} | 来源：{action} | 标签：{package_label}")
+
+        listbox.bind("<<ListboxSelect>>", _update_detail)
+
+        actions = ttk.Frame(rollback_window)
+        actions.pack(fill="x", padx=12, pady=(0, 12))
+        ttk.Button(
+            actions,
+            text="执行回滚",
+            command=lambda: self.execute_release_rollback(backup_map, listbox, rollback_window),
+        ).pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="打开备份目录", command=self.open_upgrade_backup_folder).pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="关闭", command=rollback_window.destroy).pack(side="right")
+
+    def execute_release_rollback(self, backup_map: List[Path], listbox: tk.Listbox, window: tk.Toplevel) -> None:
+        selection = listbox.curselection()
+        if not selection:
+            messagebox.showwarning("回滚备份", "请先选择一个升级备份")
+            return
+
+        backup_root = backup_map[selection[0]]
+        proceed = messagebox.askyesno(
+            "确认回滚",
+            f"确定要从以下备份回滚当前项目吗？\n\n{backup_root}\n\n这会停止当前前后端服务，并恢复备份中的旧版本文件。",
+        )
+        if not proceed:
+            append_audit_log("release_rollback", "cancelled", str(backup_root))
+            return
+
+        backend_was_running = self.backend.is_running()
+        frontend_was_running = self.frontend.is_running()
+        restart_messages: List[str] = []
+        try:
+            if frontend_was_running:
+                self.frontend.stop()
+            if backend_was_running:
+                self.backend.stop()
+
+            ok, detail = rollback_from_upgrade_backup(backup_root)
+            if not ok:
+                append_audit_log("release_rollback", "failed", detail, backup_root=str(backup_root))
+                messagebox.showerror("回滚失败", detail)
+                return
+
+            if backend_was_running:
+                backend_ok, backend_msg = self.backend.start(self.get_effective_config())
+                restart_messages.append(f"后端：{backend_msg}")
+                if not backend_ok:
+                    raise RuntimeError(f"回滚后后端恢复失败：{backend_msg}")
+            if frontend_was_running:
+                frontend_ok, frontend_msg = self.frontend.start(self.get_effective_config())
+                restart_messages.append(f"前端：{frontend_msg}")
+                if not frontend_ok:
+                    raise RuntimeError(f"回滚后前端恢复失败：{frontend_msg}")
+
+            self.last_backend_health_state = "unknown"
+            self.last_frontend_health_state = "unknown"
+            self.refresh_status()
+            final_detail = detail
+            if restart_messages:
+                final_detail += "\n服务恢复：\n" + "\n".join(restart_messages)
+            append_audit_log("release_rollback", "success", final_detail, backup_root=str(backup_root))
+            self.notify_tray("升级回滚完成", backup_root.name)
+            messagebox.showinfo("回滚完成", final_detail)
+            window.destroy()
+        except Exception as exc:
+            recovery_messages: List[str] = []
+            if backend_was_running and not self.backend.is_running():
+                _, msg = self.backend.start(self.get_effective_config())
+                recovery_messages.append(f"后端：{msg}")
+            if frontend_was_running and not self.frontend.is_running():
+                _, msg = self.frontend.start(self.get_effective_config())
+                recovery_messages.append(f"前端：{msg}")
+            self.refresh_status()
+            detail = str(exc)
+            if recovery_messages:
+                detail += "\n恢复结果：\n" + "\n".join(recovery_messages)
+            append_audit_log("release_rollback", "failed", detail, backup_root=str(backup_root))
+            messagebox.showerror("回滚失败", detail)
+
     def backup_database(self) -> None:
         self.save_manager_state()
         backup_dir = Path(self.ops_vars["backup_dir"].get().strip() or str(BACKUP_DIR))
@@ -3963,6 +4932,7 @@ class FinFlowManagerApp:
 
         config = self.get_effective_config()
         ok, detail = run_database_backup_with_cleanup(config, backup_dir, sqlcmd, retention_days, retention_count)
+        append_audit_log("database_backup", "success" if ok else "failed", detail, backup_dir=str(backup_dir))
         if ok:
             messagebox.showinfo("备份成功", f"数据库已备份到：{detail}")
         else:
@@ -4054,6 +5024,7 @@ class FinFlowManagerApp:
 
     def start_one_click_deploy(self) -> None:
         if self.deploy_running:
+            append_audit_log("one_click_deploy", "ignored", "deploy already running")
             messagebox.showinfo("\u63d0\u793a", "\u4e00\u952e\u90e8\u7f72\u6b63\u5728\u8fd0\u884c\uff0c\u8bf7\u7a0d\u5019")
             return
         self.save_manager_state()
@@ -4066,11 +5037,13 @@ class FinFlowManagerApp:
         release_package_path = self.ops_vars["release_package_path"].get().strip()
         config = self.get_effective_config()
         if mode == "git" and not repo_url:
+            append_audit_log("one_click_deploy", "failed", "missing git repo", mode=mode)
             messagebox.showerror("\u9519\u8bef", "Git \u90e8\u7f72\u6a21\u5f0f\u9700\u8981\u5148\u914d\u7f6e\u4ed3\u5e93\u5730\u5740")
             return
         if mode == "zip":
             pkg = Path(release_package_path)
             if not pkg.exists():
+                append_audit_log("one_click_deploy", "failed", "missing zip package", mode=mode)
                 messagebox.showerror("\u9519\u8bef", "ZIP \u90e8\u7f72\u6a21\u5f0f\u9700\u8981\u5148\u9009\u62e9\u53d1\u5e03\u5305\u6587\u4ef6")
                 return
 
@@ -4087,10 +5060,12 @@ class FinFlowManagerApp:
             "\u662f\u5426\u7ee7\u7eed\uff1f"
         )
         if not proceed:
+            append_audit_log("one_click_deploy", "cancelled", f"mode={mode}")
             return
 
         self.root.config(cursor="watch")
         self.deploy_running = True
+        append_audit_log("one_click_deploy", "started", f"mode={mode}", mode=mode)
         self.deploy_thread = threading.Thread(
             target=self._run_one_click_deploy_worker,
             args=(mode, repo_url, branch, sqlcmd, config, release_package_path),
@@ -4196,15 +5171,12 @@ class FinFlowManagerApp:
             self.call_on_ui_thread(self.refresh_status)
 
         def save_runtime_config(runtime_config: Dict[str, str]) -> None:
-            port = (runtime_config.get("APP_PORT") or "").strip()
-            if not port.isdigit():
-                raise ValueError("APP_PORT must be numeric")
-            token_minutes = (runtime_config.get("ACCESS_TOKEN_EXPIRE_MINUTES") or "").strip()
-            if token_minutes and not token_minutes.isdigit():
-                raise ValueError("ACCESS_TOKEN_EXPIRE_MINUTES must be numeric")
-            runtime_config["APP_RELOAD"] = "false"
-            write_env_file(ENV_PATH, runtime_config, self.extra_env_values)
-            self.config_values = dict(runtime_config)
+            payload, existed = save_backend_env_config(runtime_config, self.extra_env_values)
+            self.config_values = dict(payload)
+            if existed:
+                self.append_deploy_log("  [INFO] 检测到已有 backend/.env，已在保留现有扩展项的基础上同步更新")
+            else:
+                self.append_deploy_log("  [INFO] 未检测到 backend/.env，已根据模板和当前配置自动创建")
 
         def abort_deploy(reason: str) -> None:
             restore_messages: List[str] = []
@@ -4225,6 +5197,7 @@ class FinFlowManagerApp:
             if restore_messages:
                 detail += "\n\n\u6062\u590d\u7ed3\u679c\uff1a\n" + "\n".join(restore_messages)
             self.append_deploy_log(f"[FAIL] {reason}")
+            append_audit_log("one_click_deploy", "failed", detail, mode=mode)
             messagebox.showerror("\u4e00\u952e\u90e8\u7f72\u5931\u8d25", detail)
             raise RuntimeError(reason)
 
@@ -4399,10 +5372,12 @@ class FinFlowManagerApp:
                         abort_deploy(f"Git \u514b\u9686\u5931\u8d25: {result.stderr.strip()}")
 
                     backup_root = UPGRADE_BACKUP_DIR / datetime.now().strftime("%Y%m%d_%H%M%S_oneclick")
+                    change_log: Dict[str, List[str]] = {}
                     for item_name in ("backend", "frontend", "tools", "deploy"):
                         src = temp_clone_dir / item_name
                         if src.exists():
-                            overlay_directory(src, ROOT_DIR / item_name, backup_root)
+                            overlay_directory(src, ROOT_DIR / item_name, backup_root, change_log)
+                    write_upgrade_backup_manifest(backup_root, "one_click_deploy_git_clone", repo_url, change_log)
 
                     self.append_deploy_log("  [OK] \u4ee3\u7801\u5df2\u514b\u9686\u5e76\u8986\u76d6")
                 finally:
@@ -4467,14 +5442,16 @@ class FinFlowManagerApp:
                     archive.extractall(extract_dir)
 
                 release_root = detect_release_root(extract_dir)
+                change_log: Dict[str, List[str]] = {}
                 if (release_root / "backend").exists():
-                    overlay_directory(release_root / "backend", ROOT_DIR / "backend", backup_root)
+                    overlay_directory(release_root / "backend", ROOT_DIR / "backend", backup_root, change_log)
                 if (release_root / "frontend" / "dist").exists():
-                    replace_directory(release_root / "frontend" / "dist", ROOT_DIR / "frontend" / "dist", backup_root)
+                    replace_directory(release_root / "frontend" / "dist", ROOT_DIR / "frontend" / "dist", backup_root, change_log)
                 if (release_root / "tools").exists():
-                    overlay_directory(release_root / "tools", ROOT_DIR / "tools", backup_root)
+                    overlay_directory(release_root / "tools", ROOT_DIR / "tools", backup_root, change_log)
                 if (release_root / "deploy").exists():
-                    overlay_directory(release_root / "deploy", ROOT_DIR / "deploy", backup_root)
+                    overlay_directory(release_root / "deploy", ROOT_DIR / "deploy", backup_root, change_log)
+                write_upgrade_backup_manifest(backup_root, "one_click_deploy_zip", package_path.name, change_log)
 
                 self.append_deploy_log("  [OK] ZIP \u53d1\u5e03\u5305\u5df2\u5e94\u7528")
             finally:
@@ -4609,6 +5586,7 @@ class FinFlowManagerApp:
             deploy_lines.append(f"\u6570\u636e\u5e93\u540e\u7f6e\u68c0\u67e5\uff1a\u5f02\u5e38\uff0c{db_detail}")
 
         self.notify_tray(deploy_title, deploy_notice)
+        append_audit_log("one_click_deploy", "success", "\n".join(deploy_lines), mode=mode, title=deploy_title)
         if deploy_title == "\u4e00\u952e\u90e8\u7f72\u5b8c\u6210":
             messagebox.showinfo(deploy_title, "\n".join(deploy_lines))
         else:
@@ -4658,10 +5636,6 @@ class FinFlowManagerApp:
                 except Exception:
                     pass
                 setattr(self, job_name, None)
-        if self.frontend.is_running():
-            self.frontend.stop()
-        if self.backend.is_running():
-            self.backend.stop()
         if self.tray_icon:
             try:
                 self.tray_icon.stop()
@@ -4920,6 +5894,14 @@ def _ff_build_status_tab(self: Any, parent: ttk.Frame) -> None:
         "env_file": "\u5df2\u5b58\u5728" if ENV_PATH.exists() else "\u4e0d\u5b58\u5728",
         "key_file": "\u5df2\u5b58\u5728" if KEY_PATH.exists() else "\u4e0d\u5b58\u5728",
         "dist_dir": "\u5df2\u5b58\u5728" if (DIST_DIR / "index.html").exists() else "\u4e0d\u5b58\u5728",
+        "host_status": self.get_host_status_text(),
+        "manager_runtime_mode": self.get_manager_runtime_mode_text(),
+        "startup_mode": self.get_startup_mode_text(),
+        "startup_detail": self.get_startup_detail_text(),
+        "startup_last_result": self.get_startup_last_result_text(),
+        "startup_last_error": self.get_startup_last_error_text(),
+        "host_diagnostics": self.get_host_diagnostics_text(),
+        "audit_status": self.get_audit_status_text(),
         "backend_status": self.backend.poll_status(),
         "backend_port_owner": "\u672a\u68c0\u6d4b",
         "backend_health_status": "\u672a\u68c0\u67e5",
@@ -4950,6 +5932,14 @@ def _ff_build_status_tab(self: Any, parent: ttk.Frame) -> None:
         ("\u5bc6\u94a5\u6587\u4ef6", "key_file", 1, 2, 180),
         ("\u524d\u7aef\u6784\u5efa", "dist_dir", 2, 0, 180),
         ("\u542f\u52a8\u72b6\u6001", "startup_status", 2, 2, 180),
+        ("\u81ea\u542f\u65b9\u5f0f", "startup_mode", 3, 0, 180),
+        ("\u7ba1\u7406\u6a21\u5f0f", "manager_runtime_mode", 3, 2, 180),
+        ("\u81ea\u542f\u8be6\u60c5", "startup_detail", 4, 0, 420),
+        ("\u4e0a\u6b21\u81ea\u542f\u7ed3\u679c", "startup_last_result", 5, 0, 420),
+        ("\u4e0a\u6b21\u9519\u8bef\u6458\u8981", "startup_last_error", 6, 0, 420),
+        ("\u540e\u53f0\u5bbf\u4e3b", "host_status", 7, 0, 420),
+        ("Host诊断", "host_diagnostics", 8, 0, 760),
+        ("最近审计", "audit_status", 9, 0, 760),
     ]
     for label_text, key, row, col, wrap_length in overview_fields:
         ttk.Label(overview, text=f"{label_text}\uff1a").grid(row=row, column=col, sticky="w", padx=(0, 6), pady=4)
@@ -4991,6 +5981,7 @@ def _ff_build_status_tab(self: Any, parent: ttk.Frame) -> None:
                 ("\u5168\u90e8\u670d\u52a1", [("\u542f\u52a8\u5168\u90e8", self.handle_start_all), ("\u505c\u6b62\u5168\u90e8", self.handle_stop_all), ("\u91cd\u542f\u5168\u90e8", self.handle_restart_all), ("\u6253\u5f00\u524d\u7aef", self.open_frontend), ("\u6253\u5f00\u65e5\u5fd7\u76ee\u5f55", self.open_logs_folder), ("\u6700\u5c0f\u5316\u5230\u6258\u76d8", self.hide_to_tray)]),
                 ("\u540e\u7aef\u670d\u52a1", [("\u542f\u52a8\u540e\u7aef", self.handle_start_backend), ("\u505c\u6b62\u540e\u7aef", self.handle_stop_backend), ("\u91cd\u542f\u540e\u7aef", self.handle_restart_backend), ("\u63a5\u7ba1\u540e\u7aef", self.handle_takeover_backend), ("\u91ca\u653e\u7aef\u53e3", self.handle_force_release_port)]),
                 ("\u524d\u7aef\u4e0e\u6570\u636e\u5e93", [("\u542f\u52a8\u524d\u7aef", self.handle_start_frontend), ("\u505c\u6b62\u524d\u7aef", self.handle_stop_frontend), ("\u91cd\u542f\u524d\u7aef", self.handle_restart_frontend), ("\u68c0\u67e5\u6570\u636e\u5e93", self.check_database_connection)]),
+                ("\u7ba1\u7406\u5668", [("\u542f\u52a8\u540e\u53f0\u5bbf\u4e3b", self.handle_start_host), ("\u505c\u6b62\u540e\u53f0\u5bbf\u4e3b", self.handle_stop_host), ("\u91cd\u542f\u540e\u53f0\u5bbf\u4e3b", self.handle_restart_host), ("\u6253\u5f00\u5bbf\u4e3b\u65e5\u5fd7", self.open_host_log), ("\u542f\u7528\u5f00\u673a\u81ea\u542f", self.enable_startup_now), ("\u5173\u95ed\u5f00\u673a\u81ea\u542f", self.disable_startup_now), ("\u91cd\u5efa\u5f00\u673a\u81ea\u542f", self.rebuild_startup_now), ("\u67e5\u770b\u81ea\u542f\u8be6\u60c5", self.show_startup_detail), ("\u6253\u5f00\u7ba1\u7406\u5668", self.show_window)]),
             ]
             frame.columnconfigure(0, weight=1)
             for group_row, (group_title, action_specs) in enumerate(action_groups):
@@ -5113,6 +6104,30 @@ def _ff_refresh_status(self: Any) -> None:
     self.status_vars["env_file"].set("\u5df2\u5b58\u5728" if ENV_PATH.exists() else "\u4e0d\u5b58\u5728")
     self.status_vars["key_file"].set("\u5df2\u5b58\u5728" if KEY_PATH.exists() else "\u4e0d\u5b58\u5728")
     self.status_vars["dist_dir"].set("\u5df2\u5b58\u5728" if (DIST_DIR / "index.html").exists() else "\u4e0d\u5b58\u5728")
+    self.status_vars["host_status"].set(self.get_host_status_text())
+    self.status_vars["manager_runtime_mode"].set(self.get_manager_runtime_mode_text())
+    self.status_vars["startup_mode"].set(self.get_startup_mode_text())
+    self.status_vars["startup_detail"].set(self.get_startup_detail_text())
+    self.status_vars["startup_last_result"].set(self.get_startup_last_result_text())
+    self.status_vars["startup_last_error"].set(self.get_startup_last_error_text())
+    self.status_vars["host_diagnostics"].set(self.get_host_diagnostics_text())
+    self.status_vars["audit_status"].set(self.get_audit_status_text())
+    if "host_status" in self.status_vars:
+        self.status_vars["host_status"].set(self.get_host_status_text())
+    if "manager_runtime_mode" in self.status_vars:
+        self.status_vars["manager_runtime_mode"].set(self.get_manager_runtime_mode_text())
+    if "startup_mode" in self.status_vars:
+        self.status_vars["startup_mode"].set(self.get_startup_mode_text())
+    if "startup_detail" in self.status_vars:
+        self.status_vars["startup_detail"].set(self.get_startup_detail_text())
+    if "startup_last_result" in self.status_vars:
+        self.status_vars["startup_last_result"].set(self.get_startup_last_result_text())
+    if "startup_last_error" in self.status_vars:
+        self.status_vars["startup_last_error"].set(self.get_startup_last_error_text())
+    if "host_diagnostics" in self.status_vars:
+        self.status_vars["host_diagnostics"].set(self.get_host_diagnostics_text())
+    if "audit_status" in self.status_vars:
+        self.status_vars["audit_status"].set(self.get_audit_status_text())
     self.status_vars["backend_status"].set(backend_status)
     self.status_vars["backend_port_owner"].set(backend_owner_text)
     self.status_vars["backend_url"].set(self.get_backend_url())
@@ -5406,6 +6421,31 @@ def _ff_build_manager_tab(self: Any, parent: ttk.Frame) -> None:
             row=idx // 2, column=idx % 2, padx=10, pady=6, sticky="w"
         )
 
+    startup_actions = ttk.Frame(options)
+    startup_actions.grid(row=(len(option_items) + 1) // 2, column=0, columnspan=2, sticky="w", padx=10, pady=(10, 0))
+    ttk.Button(startup_actions, text="\u542f\u52a8\u540e\u53f0\u5bbf\u4e3b", command=self.handle_start_host).pack(side="left", padx=(0, 8))
+    ttk.Button(startup_actions, text="\u505c\u6b62\u540e\u53f0\u5bbf\u4e3b", command=self.handle_stop_host).pack(side="left", padx=(0, 8))
+    ttk.Button(startup_actions, text="\u91cd\u542f\u540e\u53f0\u5bbf\u4e3b", command=self.handle_restart_host).pack(side="left", padx=(0, 8))
+    ttk.Button(startup_actions, text="\u6253\u5f00\u5bbf\u4e3b\u65e5\u5fd7", command=self.open_host_log).pack(side="left", padx=(0, 8))
+    ttk.Button(startup_actions, text="打开审计日志", command=self.open_audit_log).pack(side="left", padx=(0, 8))
+    ttk.Label(startup_actions, textvariable=self.status_vars["host_status"]).pack(side="left", padx=(8, 12))
+
+    startup_actions_2 = ttk.Frame(options)
+    startup_actions_2.grid(row=(len(option_items) + 3) // 2, column=0, columnspan=2, sticky="w", padx=10, pady=(8, 0))
+    ttk.Button(startup_actions_2, text="\u7acb\u5373\u542f\u7528\u5f00\u673a\u81ea\u542f", command=self.enable_startup_now).pack(side="left", padx=(0, 8))
+    ttk.Button(startup_actions_2, text="\u7acb\u5373\u5173\u95ed\u5f00\u673a\u81ea\u542f", command=self.disable_startup_now).pack(side="left", padx=(0, 8))
+    ttk.Button(startup_actions_2, text="\u91cd\u5efa\u81ea\u542f\u914d\u7f6e", command=self.rebuild_startup_now).pack(side="left", padx=(0, 8))
+    ttk.Button(startup_actions_2, text="\u67e5\u770b\u81ea\u542f\u8be6\u60c5", command=self.show_startup_detail).pack(side="left", padx=(0, 8))
+    ttk.Label(startup_actions_2, textvariable=self.status_vars["startup_status"]).pack(side="left", padx=(8, 0))
+
+    diagnostics = ttk.LabelFrame(parent, text="宿主诊断与审计", padding=16)
+    diagnostics.pack(fill="x", padx=10, pady=(0, 10))
+    ttk.Label(diagnostics, text="宿主诊断：", width=14).grid(row=0, column=0, sticky="nw", padx=6, pady=4)
+    ttk.Label(diagnostics, textvariable=self.status_vars["host_diagnostics"], justify="left", wraplength=860).grid(row=0, column=1, sticky="w", padx=6, pady=4)
+    ttk.Label(diagnostics, text="最近审计：", width=14).grid(row=1, column=0, sticky="nw", padx=6, pady=4)
+    ttk.Label(diagnostics, textvariable=self.status_vars["audit_status"], justify="left", wraplength=860).grid(row=1, column=1, sticky="w", padx=6, pady=4)
+    diagnostics.columnconfigure(1, weight=1)
+
     tips = ttk.LabelFrame(parent, text="\u4f7f\u7528\u8bf4\u660e", padding=16)
     tips.pack(fill="both", expand=True, padx=10, pady=(0, 10))
     ttk.Label(
@@ -5527,6 +6567,7 @@ def _ff_build_ops_tab(self: Any, parent: ttk.Frame) -> None:
 
     self.ops_section_var = tk.StringVar(value="one_click_deploy")
     ops_nav_items = [
+        ("takeover", "首装接管", "检查服务器运行条件，并提供首装与接管阶段的常用修复入口"),
         ("one_click_deploy", "\u4e00\u952e\u90e8\u7f72", "\u7edf\u4e00\u5b8c\u6210\u914d\u7f6e\u5199\u5165\u3001\u4f9d\u8d56\u540c\u6b65\u3001\u6784\u5efa\u4e0e\u540e\u7f6e\u68c0\u67e5"),
         ("frontend", "\u524d\u7aef\u90e8\u7f72", "\u5355\u72ec\u90e8\u7f72 frontend/dist \u5230\u670d\u52a1\u73af\u5883"),
         ("release", "\u53d1\u5e03\u5305\u90e8\u7f72", "\u4ece ZIP \u53d1\u5e03\u5305\u76f4\u63a5\u8986\u76d6\u9879\u76ee"),
@@ -5548,6 +6589,38 @@ def _ff_build_ops_tab(self: Any, parent: ttk.Frame) -> None:
     self.ops_content_host = ttk.Frame(content_frame)
     self.ops_content_host.pack(fill="both", expand=True)
     self.ops_section_frames = {}
+
+    takeover_frame = ttk.LabelFrame(self.ops_content_host, text="首装 / 环境接管向导", padding=16)
+    ttk.Label(
+        takeover_frame,
+        text="用于服务器首次部署、打包 EXE 初次落地或已有环境接管。这里会汇总关键条件，并给出最常用的修复按钮。",
+        justify="left",
+        wraplength=760,
+    ).pack(anchor="w", pady=(0, 10))
+    takeover_actions = ttk.Frame(takeover_frame)
+    takeover_actions.pack(fill="x", pady=(0, 10))
+    ttk.Button(takeover_actions, text="重新检查", command=self.refresh_takeover_guide).pack(side="left", padx=4)
+    ttk.Button(takeover_actions, text="同步后端依赖", command=self.sync_backend_deps).pack(side="left", padx=4)
+    ttk.Button(takeover_actions, text="同步前端依赖", command=self.sync_frontend_deps).pack(side="left", padx=4)
+    ttk.Button(takeover_actions, text="生成加密密钥", command=self.generate_encryption_key).pack(side="left", padx=4)
+    ttk.Button(takeover_actions, text="启用开机自启", command=self.enable_startup_now).pack(side="left", padx=4)
+    ttk.Button(takeover_actions, text="启动后台宿主", command=self.handle_start_host).pack(side="left", padx=4)
+
+    takeover_actions_2 = ttk.Frame(takeover_frame)
+    takeover_actions_2.pack(fill="x", pady=(0, 10))
+    ttk.Button(takeover_actions_2, text="接管后端端口", command=self.handle_takeover_backend).pack(side="left", padx=4)
+    ttk.Button(takeover_actions_2, text="释放后端端口", command=self.handle_force_release_port).pack(side="left", padx=4)
+    ttk.Button(takeover_actions_2, text="检查数据库", command=self.check_database_connection).pack(side="left", padx=4)
+    ttk.Button(takeover_actions_2, text="打开日志目录", command=self.open_logs_folder).pack(side="left", padx=4)
+    ttk.Button(takeover_actions_2, text="打开审计日志", command=self.open_audit_log).pack(side="left", padx=4)
+
+    self.takeover_status_var = tk.StringVar(value="尚未检查")
+    ttk.Label(takeover_frame, textvariable=self.takeover_status_var, foreground="#4b5f73").pack(anchor="w", pady=(0, 8))
+
+    self.takeover_summary_text = scrolledtext.ScrolledText(takeover_frame, wrap="word", font=("Consolas", 10), height=20)
+    self.takeover_summary_text.pack(fill="both", expand=True)
+    self.takeover_summary_text.configure(state="disabled")
+    self.ops_section_frames["takeover"] = takeover_frame
 
     one_click_frame = ttk.LabelFrame(self.ops_content_host, text="\u4e00\u952e\u90e8\u7f72", padding=16)
     ttk.Label(
@@ -5608,6 +6681,8 @@ def _ff_build_ops_tab(self: Any, parent: ttk.Frame) -> None:
     release_actions.pack(fill="x")
     ttk.Button(release_actions, text="\u9009\u62e9\u53d1\u5e03\u5305", command=lambda: self.select_path_for_var("release_package_path", "zip")).pack(side="left", padx=4)
     ttk.Button(release_actions, text="\u5e94\u7528\u53d1\u5e03\u5305", command=self.apply_release_package).pack(side="left", padx=4)
+    ttk.Button(release_actions, text="回滚到升级备份", command=self.rollback_release_backup).pack(side="left", padx=4)
+    ttk.Button(release_actions, text="打开升级备份目录", command=self.open_upgrade_backup_folder).pack(side="left", padx=4)
     ttk.Button(release_actions, text="\u6253\u5f00\u9879\u76ee\u76ee\u5f55", command=self.open_project_root).pack(side="left", padx=4)
     self.ops_section_frames["release"] = release_frame
 
@@ -5691,6 +6766,7 @@ def _ff_build_ops_tab(self: Any, parent: ttk.Frame) -> None:
     ttk.Button(maint_actions, text="\u6e05\u7406\u5f52\u6863\u65e5\u5fd7", command=self.manual_cleanup_logs).pack(side="left", padx=4)
     ttk.Button(maint_actions, text="\u540c\u6b65\u540e\u7aef\u4f9d\u8d56", command=self.sync_backend_deps).pack(side="left", padx=4)
     ttk.Button(maint_actions, text="\u540c\u6b65\u524d\u7aef\u4f9d\u8d56", command=self.sync_frontend_deps).pack(side="left", padx=4)
+    ttk.Button(maint_actions, text="打开审计日志", command=self.open_audit_log).pack(side="left", padx=4)
     self.ops_section_frames["maintenance"] = maintenance_frame
 
     alert_frame = ttk.LabelFrame(self.ops_content_host, text="\u544a\u8b66\u901a\u77e5", padding=16)
@@ -5718,6 +6794,7 @@ def _ff_build_ops_tab(self: Any, parent: ttk.Frame) -> None:
     self.ops_section_frames["notes"] = notes_frame
 
     self.show_ops_section()
+    self.refresh_takeover_guide()
 
 
 def _ff_build_env_tab(self: Any, parent: ttk.Frame) -> None:
@@ -6036,11 +7113,13 @@ def _ff_check_git_update(self: Any) -> None:
 def _ff_git_pull_update(self: Any) -> None:
     self.save_manager_state()
     if not self.check_git_available():
+        append_audit_log("git_pull_update", "failed", "git unavailable")
         messagebox.showerror("\u9519\u8bef", "\u672a\u68c0\u6d4b\u5230 Git\uff0c\u8bf7\u5148\u5b89\u88c5 Git \u5e76\u52a0\u5165\u7cfb\u7edf PATH")
         return
 
     repo_url = self.ops_vars["git_repo_url"].get().strip()
     if not repo_url:
+        append_audit_log("git_pull_update", "failed", "missing repo url")
         messagebox.showerror("\u9519\u8bef", "\u8bf7\u5148\u914d\u7f6e Git \u4ed3\u5e93\u5730\u5740")
         return
 
@@ -6054,6 +7133,7 @@ def _ff_git_pull_update(self: Any) -> None:
             "\u5f53\u524d\u76ee\u5f55\u5c1a\u672a\u521d\u59cb\u5316\u4e3a Git \u4ed3\u5e93\uff0c\u5c06\u6267\u884c clone\u3002\u662f\u5426\u7ee7\u7eed\uff1f",
         )
         if not proceed:
+            append_audit_log("git_pull_update", "cancelled", "init repo declined", branch=branch)
             return
         try:
             clone_result = subprocess.run(
@@ -6064,19 +7144,23 @@ def _ff_git_pull_update(self: Any) -> None:
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except Exception as exc:
+            append_audit_log("git_pull_update", "failed", f"git clone exception: {exc}", branch=branch)
             messagebox.showerror("\u5931\u8d25", f"Git clone \u5931\u8d25\uff1a{exc}")
             return
         if clone_result.returncode != 0:
             detail = (clone_result.stderr or clone_result.stdout or "\u672a\u77e5\u9519\u8bef").strip()
+            append_audit_log("git_pull_update", "failed", detail, branch=branch)
             messagebox.showerror("\u5931\u8d25", f"Git clone \u5931\u8d25\uff1a\n{detail}")
             return
         post_ok, post_detail = self.run_git_post_update_tasks()
         if not post_ok:
+            append_audit_log("git_pull_update", "failed", post_detail, branch=branch)
             messagebox.showerror("\u5931\u8d25", f"Git \u4ed3\u5e93\u521d\u59cb\u5316\u5b8c\u6210\uff0c\u4f46\u540e\u7eed\u5904\u7406\u5931\u8d25\uff1a\n{post_detail}")
             return
         detail = "Git \u4ed3\u5e93\u521d\u59cb\u5316\u5b8c\u6210\uff0c\u4ee3\u7801\u5df2\u62c9\u53d6"
         if self.manager_state.get("git_auto_build_frontend", True):
             detail += f"\n\n{post_detail}"
+        append_audit_log("git_pull_update", "success", detail, branch=branch)
         messagebox.showinfo("\u6210\u529f", detail)
         self.refresh_status()
         self.notify_tray("Git \u66f4\u65b0\u5b8c\u6210", "\u9879\u76ee\u4ee3\u7801\u5df2\u521d\u59cb\u5316\u5e76\u62c9\u53d6")
@@ -6098,26 +7182,31 @@ def _ff_git_pull_update(self: Any) -> None:
         )
         if result.returncode != 0:
             detail = (result.stderr or result.stdout or "\u672a\u77e5\u9519\u8bef").strip()
+            append_audit_log("git_pull_update", "failed", detail, branch=branch)
             messagebox.showerror("\u62c9\u53d6\u5931\u8d25", f"Git pull \u5931\u8d25\uff1a\n{detail}")
             return
 
         stdout_text = result.stdout.strip()
         if "Already up to date" in stdout_text:
+            append_audit_log("git_pull_update", "noop", stdout_text or "already up to date", branch=branch)
             messagebox.showinfo("\u63d0\u793a", "\u9879\u76ee\u5df2\u7ecf\u662f\u6700\u65b0\u7248\u672c")
             return
 
         post_ok, post_detail = self.run_git_post_update_tasks()
         if not post_ok:
+            append_audit_log("git_pull_update", "failed", post_detail, branch=branch)
             messagebox.showerror("\u62c9\u53d6\u540e\u5904\u7406\u5931\u8d25", f"Git pull \u5df2\u5b8c\u6210\uff0c\u4f46\u540e\u7eed\u5904\u7406\u5931\u8d25\uff1a\n{post_detail}")
             return
 
         detail = f"\u9879\u76ee\u5df2\u66f4\u65b0\n{stdout_text}"
         if self.manager_state.get("git_auto_build_frontend", True):
             detail += f"\n\n{post_detail}"
+        append_audit_log("git_pull_update", "success", detail, branch=branch)
         messagebox.showinfo("\u6210\u529f", detail)
         self.refresh_status()
         self.notify_tray("Git \u66f4\u65b0\u5b8c\u6210", "\u9879\u76ee\u5df2\u4ece\u8fdc\u7a0b\u4ed3\u5e93\u62c9\u53d6")
     except Exception as exc:
+        append_audit_log("git_pull_update", "failed", str(exc), branch=branch)
         messagebox.showerror("\u5931\u8d25", f"Git \u66f4\u65b0\u5f02\u5e38\uff1a{exc}")
     finally:
         if backend_was_running and not self.backend.is_running():
@@ -6319,6 +7408,7 @@ def _ff_restore_database(self: Any) -> None:
     backup_dir = Path(self.ops_vars["backup_dir"].get().strip() or str(BACKUP_DIR))
     bak_files = sorted(backup_dir.glob("*.bak"), key=lambda p: p.stat().st_mtime, reverse=True)
     if not bak_files:
+        append_audit_log("database_restore", "failed", f"no backup files in {backup_dir}")
         messagebox.showerror("\u6062\u590d\u5931\u8d25", f"\u5907\u4efd\u76ee\u5f55\u4e2d\u672a\u627e\u5230 .bak \u6587\u4ef6\uff1a{backup_dir}")
         return
 
@@ -6343,9 +7433,11 @@ def _ff_restore_database(self: Any) -> None:
             f"\u786e\u5b9a\u8981\u4ece\u4ee5\u4e0b\u5907\u4efd\u6062\u590d\u6570\u636e\u5e93\u5417\uff1f\n{selected_file.name}\n\n\u8b66\u544a\uff1a\u8fd9\u5c06\u8986\u76d6\u5f53\u524d\u6570\u636e\u5e93\u4e2d\u7684\u6240\u6709\u6570\u636e\uff01",
         )
         if not proceed:
+            append_audit_log("database_restore", "cancelled", selected_file.name)
             return
         ok, detail = restore_database_from_backup(self.get_effective_config(), selected_file, sqlcmd)
         choice_window.destroy()
+        append_audit_log("database_restore", "success" if ok else "failed", detail or selected_file.name, backup_file=str(selected_file))
         if ok:
             messagebox.showinfo("\u6062\u590d\u6210\u529f", f"\u6570\u636e\u5e93\u5df2\u4ece {selected_file.name} \u6062\u590d")
             self.notify_tray("\u6570\u636e\u5e93\u6062\u590d\u6210\u529f", f"\u5df2\u4ece {selected_file.name} \u6062\u590d")
@@ -6720,6 +7812,7 @@ def _handle_start_all_override(self: Any, show_dialog: bool = True) -> Tuple[boo
     if show_dialog:
         dialog = messagebox.showinfo if (backend_started and frontend_ok) else messagebox.showwarning
         dialog("启动结果", message)
+    append_audit_log("services_start_all", "success" if (backend_started and frontend_ok) else "failed", message)
     return backend_started and frontend_ok, message
 
 
@@ -7083,6 +8176,263 @@ def _managed_backend_start_sessioned(self: ManagedBackendController, _config: Di
     return False, f"服务宿主在等待时间内未报告就绪。\n{log_tail or '请检查 manager.service.log'}\n{build_runtime_state_snapshot_text()}"
 
 
+def _ff_build_status_tab_compact(self: Any, parent: ttk.Frame) -> None:
+    db_config_state, db_config_detail = describe_database_configuration_from_disk()
+    self.status_badges = {}
+    self.status_nav_items = {}
+    self.status_section_frames = {}
+    self.service_action_buttons = {}
+
+    status_items = {
+        "project_root": str(ROOT_DIR),
+        "env_file": "已存在" if ENV_PATH.exists() else "不存在",
+        "key_file": "已存在" if KEY_PATH.exists() else "不存在",
+        "dist_dir": "已存在" if (DIST_DIR / "index.html").exists() else "不存在",
+        "host_status": self.get_host_status_text(),
+        "manager_runtime_mode": self.get_manager_runtime_mode_text(),
+        "startup_mode": self.get_startup_mode_text(),
+        "startup_detail": self.get_startup_detail_text(),
+        "startup_last_result": self.get_startup_last_result_text(),
+        "startup_last_error": self.get_startup_last_error_text(),
+        "host_diagnostics": self.get_host_diagnostics_text(),
+        "audit_status": self.get_audit_status_text(),
+        "backend_status": self.backend.poll_status(),
+        "backend_port_owner": "未检测",
+        "backend_health_status": "未检查",
+        "backend_url": self.get_backend_url(),
+        "frontend_status": self.frontend.poll_status(),
+        "frontend_port_owner": "未检测",
+        "frontend_health_status": "未检查",
+        "frontend_url": self.get_frontend_url(),
+        "db_config_status": format_database_config_status(db_config_state, db_config_detail),
+        "db_connection_status": "未检查",
+        "db_monitor_status": "已启用" if self.manager_state.get("enable_db_monitor", True) else "已禁用",
+        "db_last_check_at": "未检查",
+        "startup_status": self.get_startup_status_text(),
+        "app_url": self.get_app_url(),
+    }
+    for key, value in status_items.items():
+        self.status_vars[key] = tk.StringVar(value=value)
+
+    parent.columnconfigure(0, weight=1)
+    parent.rowconfigure(0, weight=1)
+
+    shell = ttk.Frame(parent, padding=(10, 10, 10, 10))
+    shell.grid(row=0, column=0, sticky="nsew")
+    shell.columnconfigure(1, weight=1)
+    shell.rowconfigure(0, weight=1)
+
+    nav_wrap = ttk.Frame(shell, width=240)
+    nav_wrap.grid(row=0, column=0, sticky="nsw", padx=(0, 12))
+    nav_wrap.grid_propagate(False)
+    ttk.Label(nav_wrap, text="服务状态", font=("Microsoft YaHei UI", 11, "bold")).pack(anchor="w")
+    ttk.Label(
+        nav_wrap,
+        text="按主题查看运行状态、部署环境和可执行操作，避免所有信息堆叠在一个页面。",
+        justify="left",
+        foreground="#666666",
+        wraplength=210,
+    ).pack(anchor="w", pady=(4, 10))
+
+    self.status_section_var = tk.StringVar(value="overview")
+    status_nav = [
+        ("overview", "运行概览", "查看项目入口、运行模式、启动状态与关键路径。"),
+        ("services", "前后端服务", "分别查看后端与前端的运行、端口、健康检查与访问地址。"),
+        ("database", "数据库状态", "查看数据库配置、连接检查、监控状态与最近检查时间。"),
+        ("manager", "宿主管理", "查看宿主进程、自启方式、最近结果、诊断与审计信息。"),
+        ("actions", "快捷操作", "集中执行启动、停止、重启、接管、日志和托盘操作。"),
+    ]
+    self.create_side_nav(nav_wrap, status_nav, self.status_section_var, self.show_status_section, self.status_nav_items)
+
+    content_wrap = ttk.Frame(shell)
+    content_wrap.grid(row=0, column=1, sticky="nsew")
+    content_wrap.columnconfigure(0, weight=1)
+    content_wrap.rowconfigure(0, weight=1)
+
+    def create_section(title: str, description: str) -> Tuple[ttk.Frame, ttk.Frame]:
+        frame = ttk.Frame(content_wrap)
+        frame.columnconfigure(0, weight=1)
+        ttk.Label(frame, text=title, font=("Microsoft YaHei UI", 12, "bold")).grid(row=0, column=0, sticky="w")
+        ttk.Label(frame, text=description, foreground="#666666", justify="left").grid(
+            row=1, column=0, sticky="w", pady=(4, 10)
+        )
+        body = ttk.Frame(frame)
+        body.grid(row=2, column=0, sticky="nsew")
+        body.columnconfigure(0, weight=1)
+        frame.rowconfigure(2, weight=1)
+        return frame, body
+
+    def add_field_group(container: ttk.Frame, title: str, fields: List[Tuple[str, str]], row: int, column: int = 0) -> ttk.LabelFrame:
+        group = ttk.LabelFrame(container, text=title, padding=12)
+        group.grid(row=row, column=column, sticky="nsew", padx=6, pady=6)
+        group.columnconfigure(1, weight=1)
+        for field_row, (label_text, key) in enumerate(fields):
+            ttk.Label(group, text=f"{label_text}：").grid(row=field_row, column=0, sticky="nw", padx=(0, 8), pady=4)
+            if key in {"backend_status", "frontend_status", "backend_health_status", "frontend_health_status", "db_connection_status", "db_monitor_status"}:
+                badge = tk.Label(
+                    group,
+                    textvariable=self.status_vars[key],
+                    anchor="w",
+                    justify="left",
+                    padx=8,
+                    pady=3,
+                    relief="groove",
+                    bd=1,
+                )
+                badge.grid(row=field_row, column=1, sticky="ew", pady=4)
+                self.status_badges[key] = badge
+            else:
+                wrap_length = 780 if key in {"host_diagnostics", "audit_status"} else 520 if key in {"startup_detail", "startup_last_result", "startup_last_error", "project_root"} else 360
+                ttk.Label(group, textvariable=self.status_vars[key], justify="left", wraplength=wrap_length).grid(
+                    row=field_row, column=1, sticky="w", pady=4
+                )
+        return group
+
+    def add_action_group(container: ttk.Frame, title: str, actions: List[Tuple[str, Any]], row: int) -> None:
+        group = ttk.LabelFrame(container, text=title, padding=10)
+        group.grid(row=row, column=0, sticky="ew", pady=6)
+        for action_col in range(3):
+            group.columnconfigure(action_col, weight=1)
+        for idx, (button_text, command) in enumerate(actions):
+            button = ttk.Button(group, text=button_text, command=command)
+            button.grid(row=idx // 3, column=idx % 3, sticky="ew", padx=4, pady=4)
+            action_key = {
+                "启动全部": "start_all",
+                "停止全部": "stop_all",
+                "重启全部": "restart_all",
+                "启动后端": "start_backend",
+                "停止后端": "stop_backend",
+                "重启后端": "restart_backend",
+                "接管后端": "takeover_backend",
+                "启动前端": "start_frontend",
+                "停止前端": "stop_frontend",
+                "重启前端": "restart_frontend",
+            }.get(button_text)
+            if action_key:
+                self.service_action_buttons[action_key] = button
+
+    overview_frame, overview_body = create_section("运行概览", "优先呈现最常看的环境入口与整体运行状态。")
+    self.status_section_frames["overview"] = overview_frame
+    overview_body.columnconfigure(0, weight=1)
+    overview_body.columnconfigure(1, weight=1)
+    add_field_group(
+        overview_body,
+        "部署入口",
+        [("项目目录", "project_root"), ("应用入口", "app_url"), ("环境文件", "env_file"), ("密钥文件", "key_file"), ("前端构建", "dist_dir")],
+        0,
+        0,
+    )
+    add_field_group(
+        overview_body,
+        "启动状态",
+        [("启动状态", "startup_status"), ("自启方式", "startup_mode"), ("管理模式", "manager_runtime_mode"), ("自启详情", "startup_detail")],
+        0,
+        1,
+    )
+    add_field_group(
+        overview_body,
+        "最近结果",
+        [("上次自启结果", "startup_last_result"), ("上次错误摘要", "startup_last_error")],
+        1,
+        0,
+    )
+    add_field_group(
+        overview_body,
+        "宿主摘要",
+        [("后台宿主", "host_status"), ("Host诊断", "host_diagnostics"), ("最近审计", "audit_status")],
+        1,
+        1,
+    )
+
+    services_frame, services_body = create_section("前后端服务", "前后端服务拆开展示，便于快速判断是哪一侧出现问题。")
+    self.status_section_frames["services"] = services_frame
+    services_body.columnconfigure(0, weight=1)
+    services_body.columnconfigure(1, weight=1)
+    add_field_group(
+        services_body,
+        "后端服务",
+        [("运行状态", "backend_status"), ("端口占用", "backend_port_owner"), ("健康检查", "backend_health_status"), ("访问地址", "backend_url")],
+        0,
+        0,
+    )
+    add_field_group(
+        services_body,
+        "前端服务",
+        [("运行状态", "frontend_status"), ("端口占用", "frontend_port_owner"), ("健康检查", "frontend_health_status"), ("访问地址", "frontend_url")],
+        0,
+        1,
+    )
+
+    database_frame, database_body = create_section("数据库状态", "将配置、连接与监控状态独立出来，减少和服务状态互相干扰。")
+    self.status_section_frames["database"] = database_frame
+    database_body.columnconfigure(0, weight=1)
+    add_field_group(
+        database_body,
+        "数据库检查",
+        [("配置状态", "db_config_status"), ("连接状态", "db_connection_status"), ("监控状态", "db_monitor_status"), ("上次检查", "db_last_check_at")],
+        0,
+        0,
+    )
+
+    manager_frame, manager_body = create_section("宿主管理", "聚焦管理器宿主、自启策略与诊断信息，方便排查 EXE 托管场景。")
+    self.status_section_frames["manager"] = manager_frame
+    manager_body.columnconfigure(0, weight=1)
+    manager_body.columnconfigure(1, weight=1)
+    add_field_group(
+        manager_body,
+        "宿主与模式",
+        [("后台宿主", "host_status"), ("管理模式", "manager_runtime_mode"), ("自启方式", "startup_mode"), ("自启状态", "startup_status")],
+        0,
+        0,
+    )
+    add_field_group(
+        manager_body,
+        "自启结果",
+        [("自启详情", "startup_detail"), ("上次自启结果", "startup_last_result"), ("上次错误摘要", "startup_last_error")],
+        0,
+        1,
+    )
+    add_field_group(
+        manager_body,
+        "诊断与审计",
+        [("Host诊断", "host_diagnostics"), ("最近审计", "audit_status")],
+        1,
+        0,
+    )
+
+    actions_frame, actions_body = create_section("快捷操作", "把常用运维动作集中到单独区域，减少状态信息与操作按钮混排造成的拥挤。")
+    self.status_section_frames["actions"] = actions_frame
+    actions_body.columnconfigure(0, weight=1)
+    add_action_group(
+        actions_body,
+        "全部服务",
+        [("启动全部", self.handle_start_all), ("停止全部", self.handle_stop_all), ("重启全部", self.handle_restart_all), ("打开前端", self.open_frontend), ("打开日志目录", self.open_logs_folder), ("最小化到托盘", self.hide_to_tray)],
+        0,
+    )
+    add_action_group(
+        actions_body,
+        "后端服务",
+        [("启动后端", self.handle_start_backend), ("停止后端", self.handle_stop_backend), ("重启后端", self.handle_restart_backend), ("接管后端", self.handle_takeover_backend), ("释放端口", self.handle_force_release_port)],
+        1,
+    )
+    add_action_group(
+        actions_body,
+        "前端与数据库",
+        [("启动前端", self.handle_start_frontend), ("停止前端", self.handle_stop_frontend), ("重启前端", self.handle_restart_frontend), ("检查数据库", self.check_database_connection)],
+        2,
+    )
+    add_action_group(
+        actions_body,
+        "管理器与自启",
+        [("启动后台宿主", self.handle_start_host), ("停止后台宿主", self.handle_stop_host), ("重启后台宿主", self.handle_restart_host), ("打开宿主日志", self.open_host_log), ("启用开机自启", self.enable_startup_now), ("关闭开机自启", self.disable_startup_now), ("重建开机自启", self.rebuild_startup_now), ("查看自启详情", self.show_startup_detail), ("打开管理器", self.show_window)],
+        3,
+    )
+
+    self.show_status_section()
+    self.refresh_status_badges()
+    _update_service_action_buttons(self)
+
+
 BackendProcessController.__init__ = _backend_process_init_override
 BackendProcessController.start = _backend_process_start_verified
 FrontendProcessController.start = _frontend_process_start_verified
@@ -7093,7 +8443,335 @@ FinFlowManagerApp.handle_start_backend = _handle_start_backend_override
 FinFlowManagerApp.handle_start_frontend = _handle_start_frontend_override
 FinFlowManagerApp.handle_start_all = _handle_start_all_override
 FinFlowManagerApp.handle_takeover_backend = _handle_takeover_backend_override
+_ff_build_status_tab = _ff_build_status_tab_compact
 _ff_refresh_status = _ff_refresh_status_override
+
+
+def _ff_build_status_tab_compact_v2(self: Any, parent: ttk.Frame) -> None:
+    db_config_state, db_config_detail = describe_database_configuration_from_disk()
+    self.status_badges = {}
+    self.status_nav_items = {}
+    self.status_section_frames = {}
+    self.service_action_buttons = {}
+
+    status_items = {
+        "project_root": str(ROOT_DIR),
+        "env_file": "已存在" if ENV_PATH.exists() else "不存在",
+        "key_file": "已存在" if KEY_PATH.exists() else "不存在",
+        "dist_dir": "已存在" if (DIST_DIR / "index.html").exists() else "不存在",
+        "host_status": self.get_host_status_text(),
+        "manager_runtime_mode": self.get_manager_runtime_mode_text(),
+        "startup_mode": self.get_startup_mode_text(),
+        "startup_detail": self.get_startup_detail_text(),
+        "startup_last_result": self.get_startup_last_result_text(),
+        "startup_last_error": self.get_startup_last_error_text(),
+        "host_diagnostics": self.get_host_diagnostics_text(),
+        "audit_status": self.get_audit_status_text(),
+        "backend_status": self.backend.poll_status(),
+        "backend_port_owner": "未检测",
+        "backend_health_status": "未检查",
+        "backend_url": self.get_backend_url(),
+        "frontend_status": self.frontend.poll_status(),
+        "frontend_port_owner": "未检测",
+        "frontend_health_status": "未检查",
+        "frontend_url": self.get_frontend_url(),
+        "db_config_status": format_database_config_status(db_config_state, db_config_detail),
+        "db_connection_status": "未检查",
+        "db_monitor_status": "已启用" if self.manager_state.get("enable_db_monitor", True) else "已禁用",
+        "db_last_check_at": "未检查",
+        "startup_status": self.get_startup_status_text(),
+        "app_url": self.get_app_url(),
+    }
+    for key, value in status_items.items():
+        self.status_vars[key] = tk.StringVar(value=value)
+
+    parent.columnconfigure(0, weight=1)
+    parent.rowconfigure(0, weight=1)
+
+    shell = ttk.Frame(parent, padding=(10, 10, 10, 10))
+    shell.grid(row=0, column=0, sticky="nsew")
+    shell.columnconfigure(1, weight=1)
+    shell.rowconfigure(0, weight=1)
+
+    nav_wrap = ttk.Frame(shell, width=240)
+    nav_wrap.grid(row=0, column=0, sticky="nsw", padx=(0, 12))
+    nav_wrap.grid_propagate(False)
+    ttk.Label(nav_wrap, text="服务状态", font=("Microsoft YaHei UI", 11, "bold")).pack(anchor="w")
+    ttk.Label(
+        nav_wrap,
+        text="按主题查看状态、宿主信息和快捷操作，把首屏重点信息从密集明细里抽离出来。",
+        justify="left",
+        foreground="#666666",
+        wraplength=210,
+    ).pack(anchor="w", pady=(4, 10))
+
+    self.status_section_var = tk.StringVar(value="overview")
+    status_nav = [
+        ("overview", "运行概览", "优先看摘要卡片、访问入口和最近运行结果。"),
+        ("services", "前后端服务", "分别查看前后端运行、端口、健康检查和访问地址。"),
+        ("database", "数据库状态", "查看数据库配置、连接状态、监控状态和检查时间。"),
+        ("manager", "宿主管理", "查看宿主进程、自启方式、诊断和审计摘要。"),
+        ("actions", "快捷操作", "按常用、维护、高风险进行分层，降低误操作。"),
+    ]
+    self.create_side_nav(nav_wrap, status_nav, self.status_section_var, self.show_status_section, self.status_nav_items)
+
+    content_wrap = ttk.Frame(shell)
+    content_wrap.grid(row=0, column=1, sticky="nsew")
+    content_wrap.columnconfigure(0, weight=1)
+    content_wrap.rowconfigure(0, weight=1)
+
+    def create_section(title: str, description: str) -> Tuple[ttk.Frame, ttk.Frame]:
+        frame = ttk.Frame(content_wrap)
+        frame.columnconfigure(0, weight=1)
+        ttk.Label(frame, text=title, font=("Microsoft YaHei UI", 12, "bold")).grid(row=0, column=0, sticky="w")
+        ttk.Label(frame, text=description, foreground="#666666", justify="left").grid(
+            row=1, column=0, sticky="w", pady=(4, 10)
+        )
+        body = ttk.Frame(frame)
+        body.grid(row=2, column=0, sticky="nsew")
+        body.columnconfigure(0, weight=1)
+        frame.rowconfigure(2, weight=1)
+        return frame, body
+
+    def add_field_group(container: ttk.Frame, title: str, fields: List[Tuple[str, str]], row: int, column: int = 0) -> ttk.LabelFrame:
+        group = ttk.LabelFrame(container, text=title, padding=12)
+        group.grid(row=row, column=column, sticky="nsew", padx=6, pady=6)
+        group.columnconfigure(1, weight=1)
+        for field_row, (label_text, key) in enumerate(fields):
+            ttk.Label(group, text=f"{label_text}：").grid(row=field_row, column=0, sticky="nw", padx=(0, 8), pady=4)
+            if key in {"backend_status", "frontend_status", "backend_health_status", "frontend_health_status", "db_connection_status", "db_monitor_status"}:
+                badge = tk.Label(
+                    group,
+                    textvariable=self.status_vars[key],
+                    anchor="w",
+                    justify="left",
+                    padx=8,
+                    pady=3,
+                    relief="groove",
+                    bd=1,
+                )
+                badge.grid(row=field_row, column=1, sticky="ew", pady=4)
+                self.status_badges[key] = badge
+            else:
+                wrap_length = 780 if key in {"host_diagnostics", "audit_status"} else 520 if key in {"startup_detail", "startup_last_result", "startup_last_error", "project_root"} else 360
+                ttk.Label(group, textvariable=self.status_vars[key], justify="left", wraplength=wrap_length).grid(
+                    row=field_row, column=1, sticky="w", pady=4
+                )
+        return group
+
+    def add_summary_card(container: ttk.Frame, title: str, key: str, sub_key: str, row: int, column: int) -> None:
+        bg, fg = self.get_status_badge_palette(key, self.status_vars[key].get())
+        card = tk.Frame(container, bg=bg, bd=1, relief="solid", padx=14, pady=12, highlightthickness=0)
+        card.grid(row=row, column=column, sticky="nsew", padx=6, pady=6)
+        tk.Label(
+            card,
+            text=title,
+            bg=bg,
+            fg="#374151",
+            font=("Microsoft YaHei UI", 9, "bold"),
+            anchor="w",
+            justify="left",
+        ).pack(anchor="w")
+        tk.Label(
+            card,
+            textvariable=self.status_vars[key],
+            bg=bg,
+            fg=fg,
+            font=("Microsoft YaHei UI", 12, "bold"),
+            anchor="w",
+            justify="left",
+            wraplength=220,
+        ).pack(anchor="w", pady=(8, 6))
+        tk.Label(
+            card,
+            textvariable=self.status_vars[sub_key],
+            bg=bg,
+            fg="#4b5563",
+            font=("Microsoft YaHei UI", 8),
+            anchor="w",
+            justify="left",
+            wraplength=220,
+        ).pack(anchor="w")
+
+    def add_action_group(
+        container: ttk.Frame,
+        title: str,
+        description: str,
+        actions: List[Tuple[str, Any]],
+        row: int,
+        accent: str,
+    ) -> None:
+        group = ttk.LabelFrame(container, text=title, padding=12)
+        group.grid(row=row, column=0, sticky="ew", pady=6)
+        group.columnconfigure(0, weight=1)
+
+        intro = tk.Frame(group, bg=accent, padx=10, pady=8)
+        intro.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        tk.Label(
+            intro,
+            text=description,
+            bg=accent,
+            fg="#ffffff",
+            justify="left",
+            wraplength=780,
+            font=("Microsoft YaHei UI", 9),
+        ).pack(anchor="w")
+
+        buttons = ttk.Frame(group)
+        buttons.grid(row=1, column=0, sticky="ew")
+        for action_col in range(3):
+            buttons.columnconfigure(action_col, weight=1)
+        for idx, (button_text, command) in enumerate(actions):
+            button = ttk.Button(buttons, text=button_text, command=command)
+            button.grid(row=idx // 3, column=idx % 3, sticky="ew", padx=4, pady=4)
+            action_key = {
+                "启动全部": "start_all",
+                "停止全部": "stop_all",
+                "重启全部": "restart_all",
+                "启动后端": "start_backend",
+                "停止后端": "stop_backend",
+                "重启后端": "restart_backend",
+                "接管后端": "takeover_backend",
+                "启动前端": "start_frontend",
+                "停止前端": "stop_frontend",
+                "重启前端": "restart_frontend",
+            }.get(button_text)
+            if action_key:
+                self.service_action_buttons[action_key] = button
+
+    overview_frame, overview_body = create_section("运行概览", "先展示影响决策的核心状态，再往下看部署路径与最近运行结果。")
+    self.status_section_frames["overview"] = overview_frame
+    overview_body.columnconfigure(0, weight=1)
+    overview_body.columnconfigure(1, weight=1)
+
+    summary_cards = ttk.Frame(overview_body)
+    summary_cards.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+    for idx in range(4):
+        summary_cards.columnconfigure(idx, weight=1)
+    add_summary_card(summary_cards, "后端状态", "backend_status", "backend_url", 0, 0)
+    add_summary_card(summary_cards, "前端状态", "frontend_status", "frontend_url", 0, 1)
+    add_summary_card(summary_cards, "数据库连接", "db_connection_status", "db_last_check_at", 0, 2)
+    add_summary_card(summary_cards, "宿主状态", "host_status", "startup_status", 0, 3)
+
+    add_field_group(
+        overview_body,
+        "部署入口",
+        [("项目目录", "project_root"), ("应用入口", "app_url"), ("环境文件", "env_file"), ("密钥文件", "key_file"), ("前端构建", "dist_dir")],
+        1,
+        0,
+    )
+    add_field_group(
+        overview_body,
+        "运行模式",
+        [("启动状态", "startup_status"), ("自启方式", "startup_mode"), ("管理模式", "manager_runtime_mode"), ("自启详情", "startup_detail")],
+        1,
+        1,
+    )
+    add_field_group(
+        overview_body,
+        "最近结果",
+        [("上次自启结果", "startup_last_result"), ("上次错误摘要", "startup_last_error")],
+        2,
+        0,
+    )
+    add_field_group(
+        overview_body,
+        "诊断摘要",
+        [("后台宿主", "host_status"), ("Host诊断", "host_diagnostics"), ("最近审计", "audit_status")],
+        2,
+        1,
+    )
+
+    services_frame, services_body = create_section("前后端服务", "前端与后端拆开查看，定位问题会更直接。")
+    self.status_section_frames["services"] = services_frame
+    services_body.columnconfigure(0, weight=1)
+    services_body.columnconfigure(1, weight=1)
+    add_field_group(
+        services_body,
+        "后端服务",
+        [("运行状态", "backend_status"), ("端口占用", "backend_port_owner"), ("健康检查", "backend_health_status"), ("访问地址", "backend_url")],
+        0,
+        0,
+    )
+    add_field_group(
+        services_body,
+        "前端服务",
+        [("运行状态", "frontend_status"), ("端口占用", "frontend_port_owner"), ("健康检查", "frontend_health_status"), ("访问地址", "frontend_url")],
+        0,
+        1,
+    )
+
+    database_frame, database_body = create_section("数据库状态", "数据库相关信息独立展示，避免和服务状态互相挤占。")
+    self.status_section_frames["database"] = database_frame
+    database_body.columnconfigure(0, weight=1)
+    add_field_group(
+        database_body,
+        "数据库检查",
+        [("配置状态", "db_config_status"), ("连接状态", "db_connection_status"), ("监控状态", "db_monitor_status"), ("上次检查", "db_last_check_at")],
+        0,
+        0,
+    )
+
+    manager_frame, manager_body = create_section("宿主管理", "这里聚焦 EXE 托管、自启动和宿主诊断信息。")
+    self.status_section_frames["manager"] = manager_frame
+    manager_body.columnconfigure(0, weight=1)
+    manager_body.columnconfigure(1, weight=1)
+    add_field_group(
+        manager_body,
+        "宿主与模式",
+        [("后台宿主", "host_status"), ("管理模式", "manager_runtime_mode"), ("自启方式", "startup_mode"), ("自启状态", "startup_status")],
+        0,
+        0,
+    )
+    add_field_group(
+        manager_body,
+        "自启结果",
+        [("自启详情", "startup_detail"), ("上次自启结果", "startup_last_result"), ("上次错误摘要", "startup_last_error")],
+        0,
+        1,
+    )
+    add_field_group(
+        manager_body,
+        "诊断与审计",
+        [("Host诊断", "host_diagnostics"), ("最近审计", "audit_status")],
+        1,
+        0,
+    )
+
+    actions_frame, actions_body = create_section("快捷操作", "先放高频动作，再放维护动作，最后把会影响运行状态的操作单独隔离。")
+    self.status_section_frames["actions"] = actions_frame
+    actions_body.columnconfigure(0, weight=1)
+    add_action_group(
+        actions_body,
+        "常用操作",
+        "日常启动、停止、查看入口和日志，适合最频繁使用的运维动作。",
+        [("启动全部", self.handle_start_all), ("停止全部", self.handle_stop_all), ("重启全部", self.handle_restart_all), ("打开前端", self.open_frontend), ("打开日志目录", self.open_logs_folder), ("最小化到托盘", self.hide_to_tray)],
+        0,
+        "#2563eb",
+    )
+    add_action_group(
+        actions_body,
+        "维护操作",
+        "针对单个组件做维护或查看宿主运行情况，适合排查问题时逐项处理。",
+        [("启动后端", self.handle_start_backend), ("停止后端", self.handle_stop_backend), ("重启后端", self.handle_restart_backend), ("启动前端", self.handle_start_frontend), ("停止前端", self.handle_stop_frontend), ("重启前端", self.handle_restart_frontend), ("检查数据库", self.check_database_connection), ("启动后台宿主", self.handle_start_host), ("停止后台宿主", self.handle_stop_host), ("重启后台宿主", self.handle_restart_host), ("打开宿主日志", self.open_host_log), ("查看自启详情", self.show_startup_detail), ("打开管理器", self.show_window)],
+        1,
+        "#0f766e",
+    )
+    add_action_group(
+        actions_body,
+        "高风险操作",
+        "这些动作可能接管端口、改变启动方式或影响现有进程，建议确认环境后再执行。",
+        [("接管后端", self.handle_takeover_backend), ("释放端口", self.handle_force_release_port), ("启用开机自启", self.enable_startup_now), ("关闭开机自启", self.disable_startup_now), ("重建开机自启", self.rebuild_startup_now)],
+        2,
+        "#b42318",
+    )
+
+    self.show_status_section()
+    self.refresh_status_badges()
+    _update_service_action_buttons(self)
+
+
+_ff_build_status_tab = _ff_build_status_tab_compact_v2
 
 
 if __name__ == "__main__":
