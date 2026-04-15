@@ -16,7 +16,7 @@ backend/**/*.pyc
 backend/**/*.pyo
 backend/**/*.log
 backend/.venv/
-
+backend/logs/
 frontend/dist/
 
 # VS Code
@@ -26,7 +26,12 @@ frontend/dist/
 deploy/windows/manager_state.json
 deploy/windows/runtime/
 deploy/windows/upgrade_backups/
+deploy/windows/logs/
 
 # 构建和分发文件
 deploy/windows/dist/
 deploy/windows/build/
+tools/dist/
+
+# FinFlow Manager 可执行文件（根目录）
+/FinFlowManager.exe
