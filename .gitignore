@@ -1,0 +1,49 @@
+__pycache__/
+*.py[cod]
+*.log
+*.err.log
+.env
+.env.*
+!.env.example
+!.env.*.example
+.encryption.key
+.venv/
+venv/
+node_modules/
+.pytest_cache/
+.sisyphus/
+.tmp/
+*.zip
+*.sqlite
+*.db
+*.db-journal
+debuglog.txt
+
+backend/__pycache__/
+backend/**/*.pyc
+backend/**/*.pyo
+backend/**/*.log
+backend/.venv/
+backend/logs/
+backend/finflow.db
+backend/tmp_*.py
+backend/tmp_*.log
+frontend/dist/
+
+# VS Code
+.vscode/
+
+# FinFlow Manager 本地状态（不应进入版本控制）
+deploy/windows/manager_state.json
+deploy/windows/runtime/
+deploy/windows/upgrade_backups/
+deploy/windows/logs/
+
+# 构建和分发文件
+deploy/windows/dist/
+deploy/windows/build/
+tools/dist/
+
+# FinFlow Manager 可执行文件（根目录）
+/FinFlowManager.exe
+/马克账单表.xlsx

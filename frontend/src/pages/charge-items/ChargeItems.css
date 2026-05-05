@@ -1,0 +1,264 @@
+/* Charge-Items Module Style */
+.page-container.charge-items-page {
+    min-height: 0;
+}
+
+.page-container.charge-items-page .table-area-wrapper {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.page-container.charge-items-page .table-area-wrapper > .data-table-wrapper > .table-container,
+.page-container.charge-items-page .table-area-wrapper .data-table-wrapper > .table-container {
+    max-height: calc(100vh - var(--header-height, 64px) - 19rem);
+}
+
+.charge-items-config-modal {
+    max-width: 700px;
+    width: 95vw;
+    background: #ffffff;
+    backdrop-filter: none;
+    border: 1px solid #e2e8f0;
+    border-radius: 1rem;
+    padding: 0;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+    position: relative;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+}
+
+/* 模态框头部 */
+.charge-items-config-modal .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.5rem 2rem;
+    border-bottom: 1px solid #e2e8f0;
+    background: linear-gradient(180deg, #f8fafc 0%, #fff 100%);
+    border-radius: 1rem 1rem 0 0;
+}
+
+.charge-items-config-modal .modal-header h3 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #1e293b;
+    margin: 0;
+    letter-spacing: -0.025em;
+}
+
+.charge-items-config-modal .modal-header .info-badge {
+    background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+    border: 1px solid rgba(59, 130, 246, 0.1);
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    color: #1e40af;
+    font-weight: 500;
+}
+
+.charge-items-config-modal .modal-header .modal-close-btn {
+    padding: 0.5rem;
+    border-radius: 0.5rem;
+    transition: all 0.2s;
+    color: #64748b;
+    background: #f1f5f9;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.charge-items-config-modal .modal-header .modal-close-btn:hover {
+    background: #fee2e2;
+    color: #dc2626;
+    transform: rotate(90deg);
+}
+
+/* 模态框内容 */
+.charge-items-config-modal .modal-body {
+    padding: 2rem;
+    flex: 1;
+}
+
+/* 收费项目信息卡片 */
+.charge-items-config-modal .kd-house-mapping-housecard {
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    border: 1px solid #e2e8f0;
+    border-radius: 0.75rem;
+    padding: 1.5rem;
+    margin-bottom: 2rem;
+    position: relative;
+    overflow: hidden;
+}
+
+.charge-items-config-modal .kd-house-mapping-housecard::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #3b82f6 0%, #60a5fa 100%);
+}
+
+.charge-items-config-modal .kd-house-mapping-housecard-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.charge-items-config-modal .kd-house-mapping-housecard-title {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.charge-items-config-modal .kd-house-mapping-housecard-name {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #1e293b;
+    margin-bottom: 0.5rem;
+}
+
+.charge-items-config-modal .kd-house-mapping-housecard-meta {
+    font-size: 0.875rem;
+    color: #64748b;
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+    background: #fff;
+    display: inline-block;
+    padding: 0.25rem 0.75rem;
+    border-radius: 0.375rem;
+    border: 1px solid #e2e8f0;
+}
+
+/* 选择器容器 */
+.charge-items-config-modal .kd-house-mapping-body {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+/* 提示信息 */
+.charge-items-config-modal .kd-house-mapping-hint {
+    background: linear-gradient(135deg, #fffbeb 0%, #fff7ed 100%);
+    border-left: 4px solid #f59e0b;
+    padding: 1rem 1.25rem;
+    border-radius: 0.5rem;
+    margin: 1rem 0;
+}
+
+.charge-items-config-modal .kd-house-mapping-hint strong {
+    color: #92400e;
+    display: block;
+    margin-bottom: 0.5rem;
+    font-size: 0.9375rem;
+}
+
+.charge-items-config-modal .kd-house-mapping-hint p {
+    margin: 0;
+    font-size: 0.875rem;
+    color: #78350f;
+    line-height: 1.6;
+}
+
+/* 模态框底部 */
+.charge-items-config-modal .kd-house-mapping-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 1rem;
+    padding: 1.5rem 2rem;
+    border-top: 1px solid #e2e8f0;
+    background: #f8fafc;
+    border-radius: 0 0 1rem 1rem;
+}
+
+.charge-items-config-modal .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1.5rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    border-radius: 0.5rem;
+    transition: all 0.2s;
+    cursor: pointer;
+    border: 1px solid transparent;
+}
+
+.charge-items-config-modal .btn-outline {
+    background: #fff;
+    color: #475569;
+    border: 1px solid #e2e8f0;
+}
+
+.charge-items-config-modal .btn-outline:hover {
+    background: #f8fafc;
+    border-color: #cbd5e1;
+    color: #1e293b;
+}
+
+.charge-items-config-modal .btn-primary {
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+    color: #fff;
+    box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.2);
+}
+
+.charge-items-config-modal .btn-primary:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 8px -1px rgba(59, 130, 246, 0.3);
+}
+
+.charge-items-config-modal .btn-primary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* 选择器容器在弹窗中的间距调整 */
+.charge-items-config-modal .project-selector-container {
+    width: 100%;
+}
+
+/* 响应式 */
+@media (max-width: 768px) {
+    .charge-items-config-modal {
+        width: 98vw;
+        max-width: 98vw;
+        margin: 1rem;
+    }
+    
+    .charge-items-config-modal .modal-header {
+        padding: 1rem 1.25rem;
+    }
+    
+    .charge-items-config-modal .modal-header h3 {
+        font-size: 1.125rem;
+    }
+    
+    .charge-items-config-modal .modal-body {
+        padding: 1.25rem;
+    }
+    
+    .charge-items-config-modal .kd-house-mapping-housecard {
+        padding: 1rem;
+    }
+    
+    .charge-items-config-modal .kd-house-mapping-housecard-name {
+        font-size: 1.25rem;
+    }
+    
+    .charge-items-config-modal .kd-house-mapping-footer {
+        padding: 1rem 1.25rem;
+        flex-direction: column-reverse;
+    }
+    
+    .charge-items-config-modal .btn {
+        width: 100%;
+    }
+}

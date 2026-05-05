@@ -1,0 +1,324 @@
+/* Premium Header Restyle */
+.header {
+    height: 72px;
+    padding: 0 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: rgba(255, 255, 255, 0.78);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(226, 232, 240, 0.9);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    transition: all 0.3s ease;
+    overflow: visible !important;
+}
+
+.page-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #0f172a;
+    letter-spacing: -0.02em;
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+/* Icons & Dividers */
+.icon-group {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.icon-btn {
+    position: relative;
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    color: #64748b;
+    border-radius: 10px;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid transparent;
+    cursor: pointer;
+}
+
+.icon-btn:hover {
+    background-color: var(--primary-50);
+    color: var(--primary-600);
+}
+
+.badge-dot {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 8px;
+    height: 8px;
+    background-color: #ef4444;
+    border-radius: 9999px;
+    border: 2px solid #ffffff;
+    box-shadow: 0 0 0 1px rgba(248, 250, 252, 0.9);
+}
+
+.header-divider {
+    width: 1px;
+    height: 20px;
+    background-color: #e2e8f0;
+    margin: 0 4px;
+}
+
+/* Premium Account Book Selector */
+.account-book-selector {
+    display: flex;
+    align-items: center;
+    position: relative;
+    transition: all 0.2s;
+}
+
+.account-icon {
+    position: absolute;
+    left: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #3b82f6;
+    pointer-events: none;
+    z-index: 1;
+}
+
+.glass-select {
+    appearance: none;
+    -webkit-appearance: none;
+    height: 40px;
+    background: rgba(239, 246, 255, 0.78);
+    border: 1px solid rgba(191, 219, 254, 0.62);
+    border-radius: 10px;
+    padding: 8px 38px 8px 40px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #1e3a8a;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    backdrop-filter: blur(8px);
+    max-width: 350px;
+    width: 350px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.account-book-selector::after {
+    content: '';
+    position: absolute;
+    right: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 0;
+    height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid #3b82f6;
+    pointer-events: none;
+    transition: transform 0.2s;
+}
+
+.account-book-selector:hover {
+    transform: translateY(-1px);
+}
+
+.account-book-selector:hover::after {
+    border-top-color: #2563eb;
+}
+
+.glass-select:hover {
+    background: rgba(239, 246, 255, 0.96);
+    border-color: #93c5fd;
+}
+
+.glass-select:focus {
+    outline: none;
+    border-color: #60a5fa;
+    box-shadow: 0 0 0 3px rgba(219, 234, 254, 0.9);
+    background: #ffffff;
+}
+
+.glass-select option {
+    background-color: white;
+    color: #1e293b;
+    font-size: 0.875rem;
+    padding: 8px;
+    font-weight: 500;
+}
+
+/* Custom Select component with glass-select class */
+.custom-select.glass-select {
+    border: 1px solid rgba(191, 219, 254, 0.62) !important;
+    border-radius: 10px !important;
+    background: rgba(239, 246, 255, 0.78) !important;
+    backdrop-filter: blur(8px) !important;
+    max-width: 350px;
+    width: 350px;
+    height: 40px !important;
+    padding: 0 !important;
+}
+
+/* Hide the CSS pseudo-element arrow when using custom Select */
+.account-book-selector-custom::after {
+    display: none !important;
+}
+
+.custom-select.glass-select .custom-select-trigger {
+    height: 40px !important;
+    min-height: 40px !important;
+    padding: 8px 38px 8px 40px !important;
+    font-size: 0.875rem !important;
+    font-weight: 600 !important;
+    color: #1e3a8a !important;
+    border: none !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+}
+
+.custom-select.glass-select .custom-select-value {
+    color: #1e3a8a !important;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.custom-select.glass-select .custom-select-arrow {
+    right: 14px !important;
+    color: #3b82f6 !important;
+}
+
+.custom-select.glass-select:hover {
+    background: rgba(239, 246, 255, 0.96) !important;
+    border-color: #93c5fd !important;
+}
+
+.custom-select.glass-select.open {
+    border-color: #60a5fa !important;
+    box-shadow: 0 0 0 3px rgba(219, 234, 254, 0.9) !important;
+    background: #ffffff !important;
+}
+
+/* User Profile */
+.user-profile-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 40px;
+    padding: 4px 8px 4px 12px;
+    border-radius: 10px;
+    transition: background-color 0.2s ease;
+    cursor: pointer;
+    border: 1px solid transparent;
+    background: transparent;
+}
+
+.user-profile-header:hover {
+    background-color: #f8fafc;
+}
+
+.user-info-header {
+    display: flex;
+    flex-direction: column;
+    text-align: right;
+}
+
+.user-name {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #1e293b;
+    line-height: 1.2;
+}
+
+.user-role {
+    font-size: 0.75rem;
+    color: #64748b;
+}
+
+.avatar-header {
+    width: 36px;
+    height: 36px;
+    background: linear-gradient(135deg, #3b82f6, #00b4d8);
+    color: white;
+    border-radius: 9999px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 0.875rem;
+    box-shadow: 0 2px 6px rgba(59, 130, 246, 0.18);
+    border: 2px solid #ffffff;
+}
+
+.profile-chevron {
+    color: #94a3b8;
+    transition: color 0.2s ease, transform 0.2s ease;
+}
+
+.user-profile-header:hover .profile-chevron {
+    color: #475569;
+}
+
+/* Logout Button */
+.logout-btn-header {
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    color: #64748b;
+    border-radius: 10px;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid transparent;
+    cursor: pointer;
+    margin-left: 2px;
+}
+
+.logout-btn-header:hover {
+    color: #ef4444;
+    background-color: #fef2f2;
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+    .glass-select {
+        width: 260px;
+    }
+}
+
+@media (max-width: 768px) {
+    .hidden-sm {
+        display: none !important;
+    }
+
+    .account-book-selector {
+        margin-right: 0;
+    }
+
+    .glass-select {
+        max-width: 160px;
+        width: 160px;
+        padding-left: 36px;
+    }
+
+    .header-right {
+        gap: 0.5rem;
+    }
+
+    .header {
+        padding: 0 1rem;
+    }
+}

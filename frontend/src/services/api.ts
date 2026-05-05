@@ -1,0 +1,1007 @@
+import axios from 'axios';
+import type {
+    CashJournal,
+    DepositRecord,
+    PrepaymentRecord,
+    PushResult,
+    VoucherPreview,
+    ChargeItem,
+    TaxRateBrief,
+    House,
+    Project,
+    ReceiptBillDetail,
+    Resident,
+    BillVoucherPushStatus,
+    ReceiptBill,
+    VoucherSourceMetadataResponse,
+    TableColumnPreference,
+    SyncSchedule,
+    SyncScheduleExecution,
+    SyncScheduleMeta,
+    MenuPermissionOverview,
+    MenuPermissionRoleState,
+} from '../types';
+
+import { API_BASE_URL, assertSecureApiAccess } from './apiBase';
+import { clearAuthSession, getAuthToken, setAuthToken, setAuthUser } from '../utils/authStorage';
+
+type ReportingPayload = Record<string, unknown>;
+type ReportingParams = Record<string, unknown>;
+
+// Axios Interceptor for Auth
+axios.interceptors.request.use((config) => {
+    assertSecureApiAccess();
+    const token = getAuthToken();
+    if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+    }
+
+    // 注入当前账套上下文
+    const accountBookId = localStorage.getItem('active_account_book');
+    if (accountBookId) {
+        config.headers['X-Account-Book-Id'] = encodeURIComponent(accountBookId);
+    }
+    const accountBookNumber = localStorage.getItem('active_account_book_number');
+    if (accountBookNumber) {
+        config.headers['X-Account-Book-Number'] = encodeURIComponent(accountBookNumber);
+    }
+    const accountBookName = localStorage.getItem('active_account_book_name');
+    if (accountBookName) {
+        config.headers['X-Account-Book-Name'] = encodeURIComponent(accountBookName);
+    }
+
+    return config;
+});
+
+axios.interceptors.response.use(
+    (response) => response,
+    (error) => {
+        if (error.response?.status === 401) {
+            clearAuthSession();
+            if (!window.location.pathname.startsWith('/login')) {
+                window.location.href = '/login';
+            }
+        }
+        return Promise.reject(error);
+    }
+);
+
+export const login = async (username: string, password: string) => {
+    const response = await axios.post(`${API_BASE_URL}/auth/login`, { username, password });
+    if (response.data?.access_token) {
+        setAuthToken(response.data.access_token);
+    }
+    if (response.data?.user) {
+        setAuthUser(response.data.user);
+    }
+    return response.data;
+};
+
+export const getJournals = async (): Promise<CashJournal[]> => {
+    const response = await axios.get<CashJournal[]>(`${API_BASE_URL}/journals`);
+    return response.data;
+};
+
+export const previewVoucher = async (flowId: string): Promise<VoucherPreview> => {
+    const response = await axios.post<VoucherPreview>(`${API_BASE_URL}/journals/${flowId}/preview`);
+    return response.data;
+};
+
+export const pushToKingdee = async (flowId: string): Promise<PushResult> => {
+    const response = await axios.post<PushResult>(`${API_BASE_URL}/journals/${flowId}/push`);
+    return response.data;
+};
+
+// Organization API
+export const getOrganizations = async () => {
+    const response = await axios.get(`${API_BASE_URL}/organizations`);
+    return response.data;
+};
+
+export const getOrganizationsTree = async () => {
+    const response = await axios.get(`${API_BASE_URL}/organizations/tree`);
+    return response.data;
+};
+
+export const createOrganization = async (data: {
+    name: string;
+    code?: string;
+    parent_id?: number;
+    description?: string;
+}) => {
+    const response = await axios.post(`${API_BASE_URL}/organizations`, data);
+    return response.data;
+};
+
+export const updateOrganization = async (id: number, data: {
+    name?: string;
+    code?: string;
+    parent_id?: number;
+    status?: number;
+    description?: string;
+}) => {
+    const response = await axios.put(`${API_BASE_URL}/organizations/${id}`, data);
+    return response.data;
+};
+
+export const deleteOrganization = async (id: number) => {
+    const response = await axios.delete(`${API_BASE_URL}/organizations/${id}`);
+    return response.data;
+};
+
+// User API
+export const getUsers = async (orgId?: number) => {
+    const params = orgId ? { org_id: orgId } : {};
+    const response = await axios.get(`${API_BASE_URL}/users`, { params });
+    return response.data;
+};
+
+export const createUser = async (data: {
+    username: string;
+    password: string;
+    email?: string;
+    phone?: string;
+    real_name?: string;
+    org_id?: number;
+    status?: number;
+    role?: string;
+    account_book_ids?: string[];
+}) => {
+    const response = await axios.post(`${API_BASE_URL}/users`, data);
+    return response.data;
+};
+
+export const updateUser = async (id: number, data: {
+    username?: string;
+    email?: string | null;
+    phone?: string | null;
+    real_name?: string | null;
+    org_id?: number | null;
+    status?: number;
+    role?: string;
+    password?: string;
+    account_book_ids?: string[];
+}) => {
+    const response = await axios.put(`${API_BASE_URL}/users/${id}`, data);
+    return response.data;
+};
+
+export const deleteUser = async (id: number) => {
+    const response = await axios.delete(`${API_BASE_URL}/users/${id}`);
+    return response.data;
+};
+
+export const getMe = async () => {
+    const response = await axios.get(`${API_BASE_URL}/users/me`);
+    return response.data;
+};
+
+export const getMenuPermissions = async (): Promise<MenuPermissionOverview> => {
+    const response = await axios.get<MenuPermissionOverview>(`${API_BASE_URL}/menu-permissions`);
+    return response.data;
+};
+
+export const updateMenuPermissions = async (
+    role: string,
+    data: { menu_keys: string[]; api_keys: string[] }
+): Promise<MenuPermissionRoleState> => {
+    const response = await axios.put<MenuPermissionRoleState>(`${API_BASE_URL}/menu-permissions/${encodeURIComponent(role)}`, data);
+    return response.data;
+};
+
+export const getUserById = async (userId: number) => {
+    const response = await axios.get(`${API_BASE_URL}/users/${userId}`);
+    return response.data;
+};
+
+export const getMyTableColumnPreference = async (tableId: string): Promise<TableColumnPreference> => {
+    const response = await axios.get<TableColumnPreference>(`${API_BASE_URL}/users/me/table-column-preferences/${encodeURIComponent(tableId)}`);
+    return response.data;
+};
+
+export const updateMyTableColumnPreference = async (
+    tableId: string,
+    data: { hidden: string[]; order: string[] }
+): Promise<TableColumnPreference> => {
+    const response = await axios.put<TableColumnPreference>(
+        `${API_BASE_URL}/users/me/table-column-preferences/${encodeURIComponent(tableId)}`,
+        data
+    );
+    return response.data;
+};
+
+// Bills Sync
+export const syncBills = async (communityIds?: number[]) => {
+    const response = await axios.post(`${API_BASE_URL}/bills/sync`, { community_ids: communityIds });
+    return response.data; // Returns { task_id, ... }
+};
+
+export const getSyncStatus = async (taskId: string) => {
+    const response = await axios.get(`${API_BASE_URL}/bills/sync/status/${taskId}`);
+    return response.data;
+};
+
+// Receipt Bills Sync
+export const syncReceiptBills = async (communityIds?: number[]) => {
+    const response = await axios.post(`${API_BASE_URL}/receipt-bills/sync`, { community_ids: communityIds });
+    return response.data;
+};
+
+export const getReceiptBillSyncStatus = async (taskId: string) => {
+    const response = await axios.get(`${API_BASE_URL}/receipt-bills/sync/status/${taskId}`);
+    return response.data;
+};
+
+// Deposit Records Sync
+export const syncDepositRecords = async (communityIds?: number[]) => {
+    const response = await axios.post(`${API_BASE_URL}/deposit-records/sync`, { community_ids: communityIds });
+    return response.data;
+};
+
+export const getDepositRecordSyncStatus = async (taskId: string) => {
+    const response = await axios.get(`${API_BASE_URL}/deposit-records/sync/status/${taskId}`);
+    return response.data;
+};
+
+// Prepayment Records Sync
+export const syncPrepaymentRecords = async (communityIds?: number[]) => {
+    const response = await axios.post(`${API_BASE_URL}/prepayment-records/sync`, { community_ids: communityIds });
+    return response.data;
+};
+
+export const getPrepaymentRecordSyncStatus = async (taskId: string) => {
+    const response = await axios.get(`${API_BASE_URL}/prepayment-records/sync/status/${taskId}`);
+    return response.data;
+};
+
+// Sync Schedule Management
+export const getSyncScheduleMeta = async (): Promise<SyncScheduleMeta> => {
+    const response = await axios.get<SyncScheduleMeta>(`${API_BASE_URL}/sync-schedules/meta`);
+    return response.data;
+};
+
+export const getSyncSchedules = async (): Promise<SyncSchedule[]> => {
+    const response = await axios.get<SyncSchedule[]>(`${API_BASE_URL}/sync-schedules`);
+    return response.data;
+};
+
+export const createSyncSchedule = async (data: {
+    name: string;
+    description?: string | null;
+    target_codes: string[];
+    community_ids: number[];
+    account_book_number?: string | null;
+    account_book_name?: string | null;
+    schedule_type: 'interval' | 'daily' | 'weekly';
+    interval_minutes?: number | null;
+    daily_time?: string | null;
+    weekly_days: string[];
+    timezone: string;
+    enabled: boolean;
+}): Promise<SyncSchedule> => {
+    const response = await axios.post<SyncSchedule>(`${API_BASE_URL}/sync-schedules`, data);
+    return response.data;
+};
+
+export const updateSyncSchedule = async (
+    id: number,
+    data: Partial<{
+        name: string;
+        description?: string | null;
+        target_codes: string[];
+        community_ids: number[];
+        account_book_number?: string | null;
+        account_book_name?: string | null;
+        schedule_type: 'interval' | 'daily' | 'weekly';
+        interval_minutes?: number | null;
+        daily_time?: string | null;
+        weekly_days: string[];
+        timezone: string;
+        enabled: boolean;
+    }>
+): Promise<SyncSchedule> => {
+    const response = await axios.put<SyncSchedule>(`${API_BASE_URL}/sync-schedules/${id}`, data);
+    return response.data;
+};
+
+export const deleteSyncSchedule = async (id: number) => {
+    const response = await axios.delete(`${API_BASE_URL}/sync-schedules/${id}`);
+    return response.data;
+};
+
+export const toggleSyncSchedule = async (id: number, enabled: boolean): Promise<SyncSchedule> => {
+    const response = await axios.post<SyncSchedule>(`${API_BASE_URL}/sync-schedules/${id}/toggle`, null, {
+        params: { enabled },
+    });
+    return response.data;
+};
+
+export const runSyncScheduleNow = async (id: number): Promise<{ execution_id: number; schedule_id: number; status: string }> => {
+    const response = await axios.post<{ execution_id: number; schedule_id: number; status: string }>(
+        `${API_BASE_URL}/sync-schedules/${id}/run`
+    );
+    return response.data;
+};
+
+export const getSyncScheduleExecutions = async (id: number, limit: number = 20): Promise<SyncScheduleExecution[]> => {
+    const response = await axios.get<SyncScheduleExecution[]>(`${API_BASE_URL}/sync-schedules/${id}/executions`, {
+        params: { limit },
+    });
+    return response.data;
+};
+
+export const getLatestSyncScheduleExecutions = async (limit: number = 30): Promise<SyncScheduleExecution[]> => {
+    const response = await axios.get<SyncScheduleExecution[]>(`${API_BASE_URL}/sync-schedules/executions/latest`, {
+        params: { limit },
+    });
+    return response.data;
+};
+
+// Projects Sync
+export const syncProjects = async () => {
+    const response = await axios.post(`${API_BASE_URL}/projects/sync`);
+    return response.data;
+};
+
+export const getProjects = async (params?: { skip?: number; limit?: number; current_account_book_only?: boolean }) => {
+    const response = await axios.get(`${API_BASE_URL}/projects`, { params });
+    return response.data;
+};
+
+export const updateProject = async (projId: string, data: Partial<Project>) => {
+    const response = await axios.put(`${API_BASE_URL}/projects/${projId}`, data);
+    return response.data;
+};
+
+// Dashboard & Stats - Removed Globally
+
+
+
+export const getBills = async (params?: {
+    search?: string;
+    community_ids?: string;
+    include_deleted?: boolean;
+    status?: string;
+    charge_items?: string;
+    customer_name?: string;
+    bill_id?: string;
+    receipt_id?: string;
+    house_name?: string;
+    start_date?: string;
+    end_date?: string;
+    in_month_start?: string;
+    in_month_end?: string;
+    pay_date_start?: string;
+    pay_date_end?: string;
+    pay_time_start?: string;
+    pay_time_end?: string;
+    deal_log_id?: number;
+    skip?: number;
+    limit?: number
+}) => {
+    const response = await axios.get(`${API_BASE_URL}/bills`, { params });
+    return response.data;
+};
+
+export const exportBills = async (params?: {
+    search?: string;
+    community_ids?: string;
+    include_deleted?: boolean;
+    status?: string;
+    charge_items?: string;
+    customer_name?: string;
+    bill_id?: string;
+    receipt_id?: string;
+    house_name?: string;
+    start_date?: string;
+    end_date?: string;
+    in_month_start?: string;
+    in_month_end?: string;
+    pay_date_start?: string;
+    pay_date_end?: string;
+    pay_time_start?: string;
+    pay_time_end?: string;
+    deal_log_id?: number;
+}) => {
+    const response = await axios.get(`${API_BASE_URL}/bills/export`, {
+        params,
+        responseType: 'blob',
+    });
+
+    const disposition = response.headers['content-disposition'] as string | undefined;
+    const filenameStarMatch = disposition?.match(/filename\*=UTF-8''([^;]+)/i);
+    const filenameMatch = disposition?.match(/filename=([^;]+)/i);
+    const rawFilename = filenameStarMatch?.[1] || filenameMatch?.[1]?.replace(/"/g, '');
+    const filename = rawFilename ? decodeURIComponent(rawFilename) : `bills_export_${Date.now()}.csv`;
+
+    return {
+        blob: response.data as Blob,
+        filename,
+    };
+};
+
+export const getBillChargeItems = async () => {
+    const response = await axios.get(`${API_BASE_URL}/bills/charge-items`);
+    return response.data as { value: string, label: string }[];
+};
+
+export const getVoucherFieldModules = async () => {
+    const response = await axios.get<VoucherSourceMetadataResponse>(`${API_BASE_URL}/vouchers/source-modules`);
+    return response.data;
+};
+
+export const getVoucherTemplateCategoriesTree = async () => {
+    const response = await axios.get(`${API_BASE_URL}/vouchers/template-categories/tree`);
+    return response.data;
+};
+
+export const createVoucherTemplateCategory = async (data: {
+    name: string;
+    parent_id?: number | null;
+    sort_order?: number;
+    status?: number;
+    description?: string | null;
+}) => {
+    const response = await axios.post(`${API_BASE_URL}/vouchers/template-categories`, data);
+    return response.data;
+};
+
+export const updateVoucherTemplateCategory = async (id: number, data: {
+    name?: string;
+    parent_id?: number | null;
+    sort_order?: number;
+    status?: number;
+    description?: string | null;
+}) => {
+    const response = await axios.put(`${API_BASE_URL}/vouchers/template-categories/${id}`, data);
+    return response.data;
+};
+
+export const deleteVoucherTemplateCategory = async (id: number) => {
+    const response = await axios.delete(`${API_BASE_URL}/vouchers/template-categories/${id}`);
+    return response.data;
+};
+
+export const getReceiptBills = async (params?: {
+    search?: string;
+    community_ids?: string;
+    deal_date_start?: string;
+    deal_date_end?: string;
+    deal_type?: number;
+    skip?: number;
+    limit?: number;
+}) => {
+    const response = await axios.get(`${API_BASE_URL}/receipt-bills`, { params });
+    return response.data as { total: number; total_income_amount: number; items: ReceiptBill[] };
+};
+
+export const getReceiptBill = async (receiptBillId: number, communityId: number) => {
+    const response = await axios.get<ReceiptBillDetail>(`${API_BASE_URL}/receipt-bills/${receiptBillId}`, {
+        params: { community_id: communityId }
+    });
+    return response.data;
+};
+
+export const getDepositRecords = async (params?: {
+    search?: string;
+    community_ids?: string;
+    operate_type?: number;
+    operate_date_start?: string;
+    operate_date_end?: string;
+    pay_date_start?: string;
+    pay_date_end?: string;
+    has_refund_receipt?: boolean;
+    skip?: number;
+    limit?: number;
+}) => {
+    const response = await axios.get(`${API_BASE_URL}/deposit-records`, { params });
+    return response.data as { total: number; total_amount: number; items: DepositRecord[] };
+};
+
+export const getPrepaymentRecords = async (params?: {
+    search?: string;
+    community_ids?: string;
+    operate_type?: number;
+    operate_date_start?: string;
+    operate_date_end?: string;
+    pay_date_start?: string;
+    pay_date_end?: string;
+    has_refund_receipt?: boolean;
+    skip?: number;
+    limit?: number;
+}) => {
+    const response = await axios.get(`${API_BASE_URL}/prepayment-records`, { params });
+    return response.data as { total: number; total_amount: number; items: PrepaymentRecord[] };
+};
+
+// Reports
+export const getIncomeTrend = async (period: string = 'month') => {
+    const response = await axios.get(`${API_BASE_URL}/reports/income-trend`, { params: { period } });
+    return response.data;
+};
+
+export const getChargeItemsRanking = async (limit: number = 10) => {
+    const response = await axios.get(`${API_BASE_URL}/reports/charge-items-ranking`, { params: { limit } });
+    return response.data;
+};
+
+export const getReportingConnections = async () => {
+    const response = await axios.get(`${API_BASE_URL}/reporting/db-connections`);
+    return response.data;
+};
+
+export const createReportingConnection = async (data: ReportingPayload) => {
+    const response = await axios.post(`${API_BASE_URL}/reporting/db-connections`, data);
+    return response.data;
+};
+
+export const updateReportingConnection = async (id: number, data: ReportingPayload) => {
+    const response = await axios.put(`${API_BASE_URL}/reporting/db-connections/${id}`, data);
+    return response.data;
+};
+
+export const deleteReportingConnection = async (id: number) => {
+    const response = await axios.delete(`${API_BASE_URL}/reporting/db-connections/${id}`);
+    return response.data;
+};
+
+export const testReportingConnection = async (data: ReportingPayload) => {
+    const response = await axios.post(`${API_BASE_URL}/reporting/db-connections/test`, data);
+    return response.data;
+};
+
+export const getReportingConnectionMetadata = async (id: number) => {
+    const response = await axios.get(`${API_BASE_URL}/reporting/db-connections/${id}/metadata`);
+    return response.data;
+};
+
+export const getReportingConnectionSchemas = async (id: number) => {
+    const response = await axios.get(`${API_BASE_URL}/reporting/db-connections/${id}/schemas`);
+    return response.data;
+};
+
+export const getReportingConnectionTables = async (id: number, schemaName?: string) => {
+    const response = await axios.get(`${API_BASE_URL}/reporting/db-connections/${id}/tables`, {
+        params: schemaName ? { schema_name: schemaName } : undefined
+    });
+    return response.data;
+};
+
+export const getReportingTableColumns = async (id: number, tableName: string, schemaName?: string) => {
+    const response = await axios.get(`${API_BASE_URL}/reporting/db-connections/${id}/tables/${encodeURIComponent(tableName)}/columns`, {
+        params: schemaName ? { schema_name: schemaName } : undefined,
+    });
+    return response.data;
+};
+
+export const getReportingDatasets = async () => {
+    const response = await axios.get(`${API_BASE_URL}/reporting/datasets`);
+    return response.data;
+};
+
+export const createReportingDataset = async (data: ReportingPayload) => {
+    const response = await axios.post(`${API_BASE_URL}/reporting/datasets`, data);
+    return response.data;
+};
+
+export const updateReportingDataset = async (id: number, data: ReportingPayload) => {
+    const response = await axios.put(`${API_BASE_URL}/reporting/datasets/${id}`, data);
+    return response.data;
+};
+
+export const deleteReportingDataset = async (id: number) => {
+    const response = await axios.delete(`${API_BASE_URL}/reporting/datasets/${id}`);
+    return response.data;
+};
+
+export const previewReportingDataset = async (id: number, data: { params?: ReportingParams; limit?: number }) => {
+    const response = await axios.post(`${API_BASE_URL}/reporting/datasets/${id}/preview`, data);
+    return response.data;
+};
+
+export const previewReportingDatasetDraft = async (data: {
+    connection_id: number;
+    sql_text: string;
+    params_json?: string | null;
+    row_limit?: number;
+    params?: ReportingParams;
+    limit?: number;
+}) => {
+    const response = await axios.post(`${API_BASE_URL}/reporting/datasets/preview-draft`, data);
+    return response.data;
+};
+
+export const validateReportingDataset = async (id: number) => {
+    const response = await axios.post(`${API_BASE_URL}/reporting/datasets/${id}/validate`);
+    return response.data;
+};
+
+export const validateReportingDatasetDraft = async (data: {
+    connection_id: number;
+    sql_text: string;
+    params_json?: string | null;
+    row_limit?: number;
+    params?: ReportingParams;
+    limit?: number;
+}) => {
+    const response = await axios.post(`${API_BASE_URL}/reporting/datasets/validate-draft`, data);
+    return response.data;
+};
+
+export const getReportingReports = async () => {
+    const response = await axios.get(`${API_BASE_URL}/reporting/reports`);
+    return response.data;
+};
+
+export const getDataDictionaries = async () => {
+    const response = await axios.get(`${API_BASE_URL}/settings/dictionaries`);
+    return response.data;
+};
+
+export const createDataDictionary = async (data: ReportingPayload) => {
+    const response = await axios.post(`${API_BASE_URL}/settings/dictionaries`, data);
+    return response.data;
+};
+
+export const updateDataDictionary = async (id: number, data: ReportingPayload) => {
+    const response = await axios.put(`${API_BASE_URL}/settings/dictionaries/${id}`, data);
+    return response.data;
+};
+
+export const deleteDataDictionary = async (id: number) => {
+    const response = await axios.delete(`${API_BASE_URL}/settings/dictionaries/${id}`);
+    return response.data;
+};
+
+export const previewDataDictionaryDraft = async (data: {
+    dict_type?: 'enum' | 'hierarchy';
+    source_type: 'static' | 'dataset' | 'table' | 'sql';
+    config_json: string;
+    limit?: number;
+}) => {
+    const response = await axios.post(`${API_BASE_URL}/settings/dictionaries/preview-draft`, data);
+    return response.data;
+};
+
+export const getDataDictionaryItems = async (id: number, limit: number = 100) => {
+    const response = await axios.get(`${API_BASE_URL}/settings/dictionaries/${id}/items`, { params: { limit } });
+    return response.data;
+};
+
+export const getBusinessDictionaries = async (params?: {
+    dict_type?: 'enum' | 'hierarchy';
+    keyword?: string;
+}) => {
+    const response = await axios.get(`${API_BASE_URL}/business-dictionaries`, { params });
+    return response.data;
+};
+
+export const getBusinessDictionary = async (id: number) => {
+    const response = await axios.get(`${API_BASE_URL}/business-dictionaries/${id}`);
+    return response.data;
+};
+
+export const resolveBusinessDictionaryByKey = async (key: string, activeOnly: boolean = true) => {
+    const response = await axios.get(`${API_BASE_URL}/business-dictionaries/key/${encodeURIComponent(key)}`, {
+        params: { active_only: activeOnly },
+    });
+    return response.data;
+};
+
+export const createBusinessDictionary = async (data: {
+    key: string;
+    name: string;
+    dict_type: 'enum' | 'hierarchy';
+    category?: string | null;
+    description?: string | null;
+    is_active?: boolean;
+}) => {
+    const response = await axios.post(`${API_BASE_URL}/business-dictionaries`, data);
+    return response.data;
+};
+
+export const updateBusinessDictionary = async (id: number, data: Partial<{
+    key: string;
+    name: string;
+    dict_type: 'enum' | 'hierarchy';
+    category?: string | null;
+    description?: string | null;
+    is_active?: boolean;
+}>) => {
+    const response = await axios.put(`${API_BASE_URL}/business-dictionaries/${id}`, data);
+    return response.data;
+};
+
+export const deleteBusinessDictionary = async (id: number) => {
+    const response = await axios.delete(`${API_BASE_URL}/business-dictionaries/${id}`);
+    return response.data;
+};
+
+export const getBusinessDictionaryItems = async (id: number, activeOnly: boolean = false) => {
+    const response = await axios.get(`${API_BASE_URL}/business-dictionaries/${id}/items`, {
+        params: { active_only: activeOnly },
+    });
+    return response.data;
+};
+
+export const getBusinessDictionaryTree = async (id: number, activeOnly: boolean = true) => {
+    const response = await axios.get(`${API_BASE_URL}/business-dictionaries/${id}/tree`, {
+        params: { active_only: activeOnly },
+    });
+    return response.data;
+};
+
+export const createBusinessDictionaryItem = async (dictionaryId: number, data: {
+    code: string;
+    label: string;
+    value?: string | null;
+    parent_id?: number | null;
+    sort_order?: number;
+    status?: number;
+    description?: string | null;
+    extra_json?: string | null;
+}) => {
+    const response = await axios.post(`${API_BASE_URL}/business-dictionaries/${dictionaryId}/items`, data);
+    return response.data;
+};
+
+export const updateBusinessDictionaryItem = async (itemId: number, data: Partial<{
+    code: string;
+    label: string;
+    value?: string | null;
+    parent_id?: number | null;
+    sort_order?: number;
+    status?: number;
+    description?: string | null;
+    extra_json?: string | null;
+}>) => {
+    const response = await axios.put(`${API_BASE_URL}/business-dictionaries/items/${itemId}`, data);
+    return response.data;
+};
+
+export const deleteBusinessDictionaryItem = async (itemId: number) => {
+    const response = await axios.delete(`${API_BASE_URL}/business-dictionaries/items/${itemId}`);
+    return response.data;
+};
+
+export const createReportingReport = async (data: ReportingPayload) => {
+    const response = await axios.post(`${API_BASE_URL}/reporting/reports`, data);
+    return response.data;
+};
+
+export const updateReportingReport = async (id: number, data: ReportingPayload) => {
+    const response = await axios.put(`${API_BASE_URL}/reporting/reports/${id}`, data);
+    return response.data;
+};
+
+export const deleteReportingReport = async (id: number) => {
+    const response = await axios.delete(`${API_BASE_URL}/reporting/reports/${id}`);
+    return response.data;
+};
+
+export const runReportingReport = async (id: number, data: { params?: ReportingParams; limit?: number }) => {
+    const response = await axios.post(`${API_BASE_URL}/reporting/reports/${id}/run`, data);
+    return response.data;
+};
+
+export const previewReportingReportDraft = async (data: {
+    dataset_id: number;
+    report_type?: string;
+    config_json?: string | null;
+    params?: ReportingParams;
+    limit?: number;
+}) => {
+    const response = await axios.post(`${API_BASE_URL}/reporting/reports/preview-draft`, data);
+    return response.data;
+};
+
+// Report Categories
+export const getReportingReportCategories = async () => {
+    const response = await axios.get(`${API_BASE_URL}/reporting/report-categories`);
+    return response.data;
+};
+
+export const getReportingReportCategoriesTree = async () => {
+    const response = await axios.get(`${API_BASE_URL}/reporting/report-categories/tree`);
+    return response.data;
+};
+
+export const getReportingReportCategory = async (id: number) => {
+    const response = await axios.get(`${API_BASE_URL}/reporting/report-categories/${id}`);
+    return response.data;
+};
+
+export const createReportingReportCategory = async (data: {
+    name: string;
+    parent_id?: number | null;
+    sort_order?: number;
+    status?: number;
+    description?: string | null;
+}) => {
+    const response = await axios.post(`${API_BASE_URL}/reporting/report-categories`, data);
+    return response.data;
+};
+
+export const updateReportingReportCategory = async (id: number, data: {
+    name?: string;
+    parent_id?: number | null;
+    sort_order?: number;
+    status?: number;
+    description?: string | null;
+}) => {
+    const response = await axios.put(`${API_BASE_URL}/reporting/report-categories/${id}`, data);
+    return response.data;
+};
+
+export const deleteReportingReportCategory = async (id: number) => {
+    const response = await axios.delete(`${API_BASE_URL}/reporting/report-categories/${id}`);
+    return response.data;
+};
+
+export const getChargeItems = async () => {
+    const response = await axios.get(`${API_BASE_URL}/charge-items`);
+    return response.data;
+};
+
+export const syncChargeItems = async (communityIds?: number[]) => {
+    const response = await axios.post(`${API_BASE_URL}/charge-items/sync`, { community_ids: communityIds });
+    return response.data;
+};
+
+export const updateChargeItem = async (itemId: number, data: Partial<ChargeItem>) => {
+    const response = await axios.put(`${API_BASE_URL}/charge-items/${itemId}`, data);
+    return response.data;
+};
+
+export const getTaxRates = async (query: { skip?: number; limit?: number; search?: string } = {}) => {
+    const response = await axios.get<{ items: TaxRateBrief[]; total: number }>(`${API_BASE_URL}/finance/tax-rates`, {
+        params: query,
+    });
+    return response.data;
+};
+
+// House API
+export const getHouses = async (query?: { communityId?: string; search?: string; skip?: number; limit?: number }) => {
+    const params = query ? { community_id: query.communityId, search: query.search, skip: query.skip, limit: query.limit } : {};
+    const response = await axios.get(`${API_BASE_URL}/houses`, { params });
+    return response.data;
+};
+
+export const updateHouse = async (houseId: number, data: Partial<House>) => {
+    const response = await axios.put(`${API_BASE_URL}/houses/${houseId}`, data);
+    return response.data;
+};
+
+export const syncHouses = async (communityIds: string[]) => {
+    const response = await axios.post(`${API_BASE_URL}/houses/sync`, {
+        community_ids: communityIds
+    });
+    return response.data;
+};
+
+export const getKingdeeHouses = async (query: { skip?: number; limit?: number; search?: string } = {}) => {
+    const response = await axios.get(`${API_BASE_URL}/finance/kd-houses`, { params: query });
+    return response.data;
+};
+
+export const getKingdeeProjects = async (query: { skip?: number; limit?: number; search?: string } = {}) => {
+    const response = await axios.get(`${API_BASE_URL}/finance/auxiliary-data`, {
+        params: { ...query, categories: '管理项目' }
+    });
+    return response.data;
+};
+
+export const getKingdeeCustomers = async (query: { skip?: number; limit?: number; search?: string } = {}) => {
+    const response = await axios.get(`${API_BASE_URL}/finance/customers`, { params: query });
+    return response.data;
+};
+
+// Resident API
+export const getResidents = async (params?: { community_id?: string; search?: string; skip?: number; limit?: number }) => {
+    const response = await axios.get(`${API_BASE_URL}/residents`, { params });
+    return response.data;
+};
+
+export const syncResidents = async (communityIds: string[]) => {
+    const response = await axios.post(`${API_BASE_URL}/residents/sync`, {
+        community_ids: communityIds
+    });
+    return response.data;
+};
+
+export const updateResident = async (residentId: number, data: Partial<Resident>) => {
+    const response = await axios.put(`${API_BASE_URL}/residents/${residentId}`, data);
+    return response.data;
+};
+
+// Park API
+export const getParks = async (query?: { communityId?: string; search?: string; skip?: number; limit?: number }) => {
+    const params = query ? { community_id: query.communityId, search: query.search, skip: query.skip, limit: query.limit } : {};
+    const response = await axios.get(`${API_BASE_URL}/parks`, { params });
+    return response.data;
+};
+
+export const syncParks = async (communityIds: string[]) => {
+    const response = await axios.post(`${API_BASE_URL}/parks/sync`, {
+        community_ids: communityIds
+    });
+    return response.data;
+};
+
+export const updatePark = async (parkId: number, data: Partial<{ kingdee_house_id: string }>) => {
+    const response = await axios.put(`${API_BASE_URL}/parks/${parkId}`, data);
+    return response.data;
+};
+
+export const previewVoucherForBill = async (billId: number, communityId?: number) => {
+    const response = await axios.post(`${API_BASE_URL}/vouchers/preview-bill/${billId}`, null, {
+        params: communityId !== undefined ? { community_id: communityId } : undefined
+    });
+    return response.data;
+};
+
+export const previewBatchVoucherForBills = async (bills: Array<{ bill_id: number; community_id: number }>) => {
+    const response = await axios.post(`${API_BASE_URL}/vouchers/preview-bills`, { bills });
+    return response.data;
+};
+
+export const previewVoucherForReceipt = async (receiptBillId: number, communityId: number) => {
+    const response = await axios.post(`${API_BASE_URL}/vouchers/preview-receipt/${receiptBillId}`, null, {
+        params: { community_id: communityId }
+    });
+    return response.data;
+};
+
+export const previewBatchVoucherForReceipts = async (
+    receipts: Array<{ receipt_bill_id: number; community_id: number }>
+) => {
+    const response = await axios.post(`${API_BASE_URL}/vouchers/preview-receipts`, { receipts });
+    return response.data;
+};
+
+export const pushVoucherToKingdee = async (
+    kingdeeJson: Record<string, unknown>,
+    bills: Array<{ bill_id: number; community_id: number }> = [],
+    apiId?: number,
+    forcePush: boolean = false
+) => {
+    const response = await axios.post(`${API_BASE_URL}/vouchers/push`, {
+        kingdee_json: kingdeeJson,
+        api_id: apiId,
+        bills,
+        force_push: forcePush
+    });
+    return response.data as PushResult & { tracked_bills?: BillVoucherPushStatus[] };
+};
+
+export const resetBillVoucherBinding = async (
+    bills: Array<{ bill_id: number; community_id: number }>,
+    reason?: string
+) => {
+    const response = await axios.post(`${API_BASE_URL}/bills/voucher/reset`, {
+        bills,
+        reason
+    });
+    return response.data as { success: boolean; push_batch_no?: string };
+};
+
+export const queryVoucherById = async (voucherId: string) => {
+    const response = await axios.post(`${API_BASE_URL}/vouchers/query`, {
+        voucher_id: voucherId,
+        page_no: 1,
+        page_size: 1
+    });
+    return response.data as { success: boolean; exists: boolean };
+};
+
+// 银行账户
+export const getBankAccounts = async (query?: { search?: string; skip?: number; limit?: number }) => {
+    const response = await axios.get(`${API_BASE_URL}/finance/kd-bank-accounts`, { params: query });
+    return response.data;
+};
+
+// 账套
+export const getAccountBooks = async (query?: { search?: string; skip?: number; limit?: number }) => {
+    const response = await axios.get(`${API_BASE_URL}/finance/kd-account-books`, { params: query });
+    return response.data;
+};

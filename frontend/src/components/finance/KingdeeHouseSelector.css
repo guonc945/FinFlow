@@ -1,0 +1,370 @@
+.house-selector-container {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    width: 100%;
+}
+
+.kd-house-selector .selector-label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.kd-house-selector .selector-input-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    height: 38px;
+    padding: 0 var(--space-3);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-card);
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.kd-house-selector .selector-input-wrapper:focus-within {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+
+.kd-house-selector .selector-input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    outline: none;
+    font-size: 0.875rem;
+    background: transparent;
+    color: var(--text-primary);
+}
+
+.kd-house-selector .selector-input::placeholder {
+    color: var(--text-tertiary);
+}
+
+.kd-house-selector .selector-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.kd-house-selector .clear-btn,
+.kd-house-selector .search-trigger-btn {
+    width: 30px;
+    height: 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    color: var(--text-tertiary);
+    border: 1px solid transparent;
+    background: transparent;
+    transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.kd-house-selector .clear-btn:hover {
+    background: var(--error-bg);
+    color: var(--error);
+}
+
+.kd-house-selector .search-trigger-btn:hover {
+    background: var(--gray-100);
+    color: var(--text-primary);
+}
+
+.kd-house-dropdown-anchor {
+    position: relative;
+    width: 100%;
+}
+
+.kd-house-dropdown {
+    position: absolute;
+    left: 0;
+    top: calc(100% + var(--space-2));
+    z-index: 99999;
+    width: min(900px, 95vw);
+    max-width: 100%;
+    max-height: min(72vh, 760px);
+    display: flex;
+    flex-direction: column;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-color);
+    background: var(--bg-card);
+    box-shadow: var(--shadow-lg);
+    overflow: hidden;
+    animation: kdHouseDropdownIn 140ms ease-out;
+}
+
+.kd-house-dropdown-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--border-color);
+    background: var(--gray-50);
+    flex-shrink: 0;
+}
+
+.kd-house-dropdown-icon {
+    width: 24px;
+    height: 24px;
+    border-radius: var(--radius-sm);
+    background: var(--primary-50);
+    color: var(--primary-700);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.kd-house-dropdown-title {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.kd-house-dropdown-close {
+    margin-left: auto;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    color: var(--text-tertiary);
+    transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.kd-house-dropdown-close:hover {
+    background: var(--gray-100);
+    color: var(--text-primary);
+}
+
+.kd-house-dropdown-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.kd-house-search {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    height: 36px;
+    padding: 0 var(--space-3);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-page);
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.kd-house-search:focus-within {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    background: var(--bg-card);
+}
+
+.kd-house-search-icon {
+    color: var(--text-tertiary);
+    flex-shrink: 0;
+}
+
+.kd-house-search-input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 0.8125rem;
+}
+
+.kd-house-search-input::placeholder {
+    color: var(--text-tertiary);
+}
+
+.kd-house-table-wrapper {
+    flex: 1;
+    min-height: 160px;
+    overflow: auto;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+    background: var(--bg-card);
+}
+
+.kd-house-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+.kd-house-thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    text-align: left;
+    padding: 0.625rem 0.75rem;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--gray-50);
+    color: var(--text-secondary);
+    font-weight: 600;
+    font-size: 0.75rem;
+}
+
+.kd-house-table td {
+    padding: 0.625rem 0.75rem;
+    border-bottom: 1px solid var(--gray-100);
+    font-size: 0.8125rem;
+    color: var(--text-primary);
+    vertical-align: top;
+    word-break: break-word;
+}
+
+.kd-house-row {
+    cursor: pointer;
+    transition: background-color var(--transition-fast);
+}
+
+.kd-house-row:hover td {
+    background: var(--primary-50);
+}
+
+.kd-house-cell-mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.kd-house-cell-muted {
+    color: var(--text-tertiary);
+}
+
+.kd-house-cell-nowrap {
+    white-space: nowrap;
+}
+
+.kd-house-tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 0.45rem;
+    height: 20px;
+    border-radius: var(--radius-full);
+    border: 1px solid var(--gray-200);
+    background: var(--gray-50);
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+}
+
+.kd-house-loading-cell {
+    padding: 1.25rem 0.75rem;
+    text-align: center;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+}
+
+.kd-house-loading-icon {
+    animation: kdHouseSpin 1s linear infinite;
+}
+
+.kd-house-empty {
+    padding: 1.5rem 0.75rem;
+    text-align: center;
+    color: var(--text-secondary);
+}
+
+.kd-house-empty-title {
+    margin-top: 0.35rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.kd-house-empty-subtitle {
+    margin-top: 0.15rem;
+    font-size: 0.75rem;
+    color: var(--text-tertiary);
+}
+
+.kd-house-dropdown-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding: var(--space-3) var(--space-4);
+    border-top: 1px solid var(--border-color);
+    background: var(--gray-50);
+    flex-shrink: 0;
+}
+
+.kd-house-match-info {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.kd-house-pagination {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.kd-house-page-btn {
+    width: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.kd-house-page-btn:hover:not(:disabled) {
+    background: var(--gray-100);
+    color: var(--text-primary);
+}
+
+.kd-house-page-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.kd-house-page-indicator {
+    min-width: 72px;
+    text-align: center;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+@keyframes kdHouseDropdownIn {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes kdHouseSpin {
+    from {
+        transform: rotate(0deg);
+    }
+
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@media (max-width: 640px) {
+    .kd-house-dropdown {
+        width: calc(100vw - (2 * var(--space-3)));
+    }
+}

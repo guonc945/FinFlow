@@ -1,0 +1,503 @@
+/* Houses page - Kingdee house mapping modal (scoped) */
+
+.page-container.houses-page {
+    /* Harden against other pages' global overrides (some use !important on .page-container). */
+    display: flex !important;
+    flex-direction: column !important;
+    height: calc(100vh - var(--header-height, 64px) - 2rem) !important;
+    overflow: hidden !important;
+}
+.table-area-wrapper.houses-table-area-wrapper {
+    margin-bottom: 0;
+}
+
+/* Ensure the table region shrinks correctly so pagination stays visible. */
+.page-container.houses-page .table-area-wrapper.houses-table-area-wrapper {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+}
+
+/* Avoid other pages forcing 100% height (often with !important) on these generic classes. */
+.page-container.houses-page .table-area-wrapper.houses-table-area-wrapper .data-table-wrapper {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+}
+
+.page-container.houses-page .table-area-wrapper.houses-table-area-wrapper .table-container {
+    flex: 1 1 auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: auto !important;
+}
+.kd-house-mapping-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-4);
+    background: rgba(15, 23, 42, 0.45);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+.kd-house-mapping-modal {
+    width: min(720px, calc(100vw - (2 * var(--space-4))));
+    max-height: min(640px, calc(100vh - (2 * var(--space-4))));
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-color);
+    background: var(--bg-card);
+    box-shadow: var(--shadow-lg);
+    animation: kdHouseModalIn 160ms ease-out;
+}
+
+.kd-house-mapping-modal.kd-house-edit-modal {
+    width: min(920px, calc(100vw - (2 * var(--space-4))));
+    /* 更高的编辑窗口：用最小高度撑开，而不是用固定 max-height 限制 */
+    min-height: min(720px, calc(100vh - (2 * var(--space-4))));
+    /* 仅受视口限制，避免在大屏上被 640/820 上限截断 */
+    max-height: calc(100vh - (2 * var(--space-4)));
+}
+
+.kd-house-mapping-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding: var(--space-5) var(--space-6);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.kd-house-mapping-title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.kd-house-mapping-title h3 {
+    margin: 0;
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.kd-house-mapping-subtitle {
+    margin-top: 0.25rem;
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+}
+
+.kd-house-mapping-close {
+    width: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-md);
+    color: var(--text-tertiary);
+    transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.kd-house-mapping-close:hover {
+    background: var(--gray-100);
+    color: var(--text-primary);
+}
+
+.kd-house-mapping-body {
+    padding: var(--space-6);
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+    /* 让 body 吃掉剩余高度，footer 贴底，内容在 body 内滚动 */
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.kd-house-mapping-housecard {
+    padding: var(--space-4);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+    background: var(--gray-50);
+}
+
+.kd-house-mapping-housecard-label {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--text-tertiary);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 0.25rem;
+}
+
+.kd-house-mapping-housecard-name {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 0.1rem;
+}
+
+.kd-house-mapping-housecard-meta {
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+}
+
+.kd-house-mapping-hint {
+    margin-top: var(--space-2);
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.kd-house-mapping-hint code {
+    display: inline-block;
+    padding: 0 0.35rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--gray-200);
+    background: var(--gray-50);
+    color: var(--text-primary);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.75rem;
+}
+
+.kd-house-mapping-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-6);
+    border-top: 1px solid var(--border-color);
+    background: var(--gray-50);
+}
+
+@keyframes kdHouseModalIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* 金蝶税率档案映射输入框样式优化 */
+.kd-house-mapping-body .project-selector-container {
+    width: 100%;
+}
+
+.kd-house-mapping-body .selector-label {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 0.5rem;
+    display: block;
+}
+
+.kd-house-mapping-body .selector-input-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    height: 44px;
+    padding: 0 0.75rem;
+    border: 2px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-card);
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+}
+
+.kd-house-mapping-body .selector-input-wrapper:focus-within {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1), 0 2px 8px 0 rgba(59, 130, 246, 0.1);
+    transform: translateY(-1px);
+}
+
+.kd-house-mapping-body .selector-input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    outline: none;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    background: transparent;
+    padding: 0.5rem 0;
+}
+
+.kd-house-mapping-body .selector-input::placeholder {
+    color: var(--text-tertiary);
+    font-weight: 400;
+}
+
+.kd-house-mapping-body .selector-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding-right: 0.25rem;
+}
+
+.kd-house-mapping-body .clear-btn,
+.kd-house-mapping-body .search-trigger-btn {
+    width: 34px;
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-md);
+    color: var(--text-tertiary);
+    border: 1px solid transparent;
+    background: var(--gray-100);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+.kd-house-mapping-body .clear-btn:hover {
+    background: var(--error);
+    color: #fff;
+    transform: scale(1.05);
+    box-shadow: 0 2px 4px rgba(239, 68, 68, 0.2);
+}
+
+.kd-house-mapping-body .search-trigger-btn {
+    background: var(--primary);
+    color: #fff;
+    box-shadow: 0 2px 4px rgba(59, 130, 246, 0.2);
+}
+
+.kd-house-mapping-body .search-trigger-btn:hover {
+    background: var(--primary-600);
+    box-shadow: 0 4px 8px rgba(59, 130, 246, 0.3);
+    transform: translateY(-1px);
+}
+
+.kd-house-mapping-body .clear-btn:active,
+.kd-house-mapping-body .search-trigger-btn:active {
+    transform: scale(0.95);
+}
+
+/* 搜索建议下拉列表样式 - fixed 定位，独立滚动 */
+.suggestions-dropdown {
+    max-height: 240px;
+    overflow-y: auto;
+    border-radius: var(--radius-md);
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2), 0 4px 10px -2px rgba(0, 0, 0, 0.1);
+    border: 1px solid var(--border-color);
+    background: var(--bg-card);
+}
+
+.suggestions-dropdown::-webkit-scrollbar {
+    width: 6px;
+}
+
+.suggestions-dropdown::-webkit-scrollbar-track {
+    background: var(--gray-100);
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+
+.suggestions-dropdown::-webkit-scrollbar-thumb {
+    background: var(--gray-400);
+    border-radius: 3px;
+}
+
+.suggestions-dropdown::-webkit-scrollbar-thumb:hover {
+    background: var(--gray-500);
+}
+
+.suggestion-item {
+    padding: 12px 16px;
+    transition: all 0.15s ease;
+    border-bottom: 1px solid var(--gray-100);
+    cursor: pointer;
+}
+
+.suggestion-item:last-child {
+    border-bottom: none;
+}
+
+.suggestion-item:hover,
+.suggestion-item.highlighted {
+    background: var(--primary-50);
+}
+
+@media (max-width: 640px) {
+    .kd-house-mapping-overlay {
+        padding: var(--space-3);
+    }
+
+    .kd-house-mapping-modal {
+        width: calc(100vw - (2 * var(--space-3)));
+        max-height: calc(100vh - (2 * var(--space-3)));
+    }
+
+    .kd-house-mapping-header,
+    .kd-house-mapping-body,
+    .kd-house-mapping-footer {
+        padding-left: var(--space-4);
+        padding-right: var(--space-4);
+    }
+}
+
+/* 
+ * Flex layout fix for pages using DataTable + pagination in table-area-wrapper.
+ * Prevents pagination from being pushed out of view by making the table column shrink properly.
+ */
+
+/* Projects page */
+.page-container.projects-page,
+/* Charge-items page */
+.page-container.charge-items-page,
+/* Residents page */
+.page-container.residents-page,
+/* Parks page */
+.page-container.parks-page,
+/* AccountBook page */
+.page-container.account-book-page,
+/* AuxiliaryDataCategories page */
+.page-container.aux-data-categories-page,
+/* AuxiliaryData page */
+.page-container.aux-data-page,
+/* KingdeeHouses page */
+.page-container.kd-houses-page,
+/* Customers page */
+.page-container.customers-page,
+/* Suppliers page */
+.page-container.suppliers-page,
+/* BankAccounts page */
+.page-container.bank-accounts-page {
+    display: flex !important;
+    flex-direction: column !important;
+    height: calc(100vh - var(--header-height, 64px) - 2rem) !important;
+    overflow: hidden !important;
+}
+
+.page-container.projects-page .table-area-wrapper,
+.page-container.charge-items-page .table-area-wrapper,
+.page-container.residents-page .table-area-wrapper,
+.page-container.parks-page .table-area-wrapper,
+.page-container.account-book-page .table-area-wrapper,
+.page-container.aux-data-categories-page .table-area-wrapper,
+.page-container.aux-data-page .table-area-wrapper,
+.page-container.kd-houses-page .table-area-wrapper,
+.page-container.customers-page .table-area-wrapper,
+.page-container.suppliers-page .table-area-wrapper,
+.page-container.bank-accounts-page .table-area-wrapper {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+}
+
+.page-container.projects-page .table-area-wrapper .data-table-wrapper,
+.page-container.charge-items-page .table-area-wrapper .data-table-wrapper,
+.page-container.residents-page .table-area-wrapper .data-table-wrapper,
+.page-container.parks-page .table-area-wrapper .data-table-wrapper,
+.page-container.account-book-page .table-area-wrapper .data-table-wrapper,
+.page-container.aux-data-categories-page .table-area-wrapper .data-table-wrapper,
+.page-container.aux-data-page .table-area-wrapper .data-table-wrapper,
+.page-container.kd-houses-page .table-area-wrapper .data-table-wrapper,
+.page-container.customers-page .table-area-wrapper .data-table-wrapper,
+.page-container.suppliers-page .table-area-wrapper .data-table-wrapper,
+.page-container.bank-accounts-page .table-area-wrapper .data-table-wrapper {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+}
+
+.page-container.projects-page .table-area-wrapper .table-container,
+.page-container.charge-items-page .table-area-wrapper .table-container,
+.page-container.residents-page .table-area-wrapper .table-container,
+.page-container.parks-page .table-area-wrapper .table-container,
+.page-container.account-book-page .table-area-wrapper .table-container,
+.page-container.aux-data-categories-page .table-area-wrapper .table-container,
+.page-container.aux-data-page .table-area-wrapper .table-container,
+.page-container.kd-houses-page .table-area-wrapper .table-container,
+.page-container.customers-page .table-area-wrapper .table-container,
+.page-container.suppliers-page .table-area-wrapper .table-container,
+.page-container.bank-accounts-page .table-area-wrapper .table-container {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    overflow: auto !important;
+}
+
+/* Compact pagination footer for all business pages */
+.page-container.projects-page .table-area-wrapper .pagination-footer,
+.page-container.bills-page .table-area-wrapper .pagination-footer,
+.page-container.deposit-records-page .table-area-wrapper .pagination-footer,
+.page-container.prepayment-records-page .table-area-wrapper .pagination-footer,
+.page-container.receipt-bills-page .table-area-wrapper .pagination-footer,
+.page-container.charge-items-page .table-area-wrapper .pagination-footer,
+.page-container.houses-page .table-area-wrapper .pagination-footer,
+.page-container.residents-page .table-area-wrapper .pagination-footer,
+.page-container.account-book-page .table-area-wrapper .pagination-footer,
+.page-container.accounting-subjects-page .table-area-wrapper .pagination-footer,
+.page-container.aux-data-categories-page .table-area-wrapper .pagination-footer,
+.page-container.aux-data-page .table-area-wrapper .pagination-footer,
+.page-container.tax-rates-page .table-area-wrapper .pagination-footer,
+.page-container.kd-houses-page .table-area-wrapper .pagination-footer,
+.page-container.customers-page .table-area-wrapper .pagination-footer,
+.page-container.suppliers-page .table-area-wrapper .pagination-footer,
+.page-container.bank-accounts-page .table-area-wrapper .pagination-footer {
+    flex-shrink: 0 !important;
+    min-height: 2.75rem !important;
+    padding: 0.35rem 0.75rem !important;
+}
+
+.page-container.projects-page .table-area-wrapper .pagination-footer .pagination-info,
+.page-container.bills-page .table-area-wrapper .pagination-footer .pagination-info,
+.page-container.deposit-records-page .table-area-wrapper .pagination-footer .pagination-info,
+.page-container.prepayment-records-page .table-area-wrapper .pagination-footer .pagination-info,
+.page-container.receipt-bills-page .table-area-wrapper .pagination-footer .pagination-info,
+.page-container.charge-items-page .table-area-wrapper .pagination-footer .pagination-info,
+.page-container.houses-page .table-area-wrapper .pagination-footer .pagination-info,
+.page-container.residents-page .table-area-wrapper .pagination-footer .pagination-info,
+.page-container.account-book-page .table-area-wrapper .pagination-footer .pagination-info,
+.page-container.accounting-subjects-page .table-area-wrapper .pagination-footer .pagination-info,
+.page-container.aux-data-categories-page .table-area-wrapper .pagination-footer .pagination-info,
+.page-container.aux-data-page .table-area-wrapper .pagination-footer .pagination-info,
+.page-container.tax-rates-page .table-area-wrapper .pagination-footer .pagination-info,
+.page-container.kd-houses-page .table-area-wrapper .pagination-footer .pagination-info,
+.page-container.customers-page .table-area-wrapper .pagination-footer .pagination-info,
+.page-container.suppliers-page .table-area-wrapper .pagination-footer .pagination-info,
+.page-container.bank-accounts-page .table-area-wrapper .pagination-footer .pagination-info {
+    font-size: 0.7rem !important;
+}
+
+.page-container.projects-page .table-area-wrapper .pagination-footer .page-btn,
+.page-container.bills-page .table-area-wrapper .pagination-footer .page-btn,
+.page-container.deposit-records-page .table-area-wrapper .pagination-footer .page-btn,
+.page-container.prepayment-records-page .table-area-wrapper .pagination-footer .page-btn,
+.page-container.receipt-bills-page .table-area-wrapper .pagination-footer .page-btn,
+.page-container.charge-items-page .table-area-wrapper .pagination-footer .page-btn,
+.page-container.houses-page .table-area-wrapper .pagination-footer .page-btn,
+.page-container.residents-page .table-area-wrapper .pagination-footer .page-btn,
+.page-container.account-book-page .table-area-wrapper .pagination-footer .page-btn,
+.page-container.accounting-subjects-page .table-area-wrapper .pagination-footer .page-btn,
+.page-container.aux-data-categories-page .table-area-wrapper .pagination-footer .page-btn,
+.page-container.aux-data-page .table-area-wrapper .pagination-footer .page-btn,
+.page-container.tax-rates-page .table-area-wrapper .pagination-footer .page-btn,
+.page-container.kd-houses-page .table-area-wrapper .pagination-footer .page-btn,
+.page-container.customers-page .table-area-wrapper .pagination-footer .page-btn,
+.page-container.suppliers-page .table-area-wrapper .pagination-footer .page-btn,
+.page-container.bank-accounts-page .table-area-wrapper .pagination-footer .page-btn {
+    height: 1.75rem !important;
+    min-width: 1.75rem !important;
+    font-size: 0.7rem !important;
+}

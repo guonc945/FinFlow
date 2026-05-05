@@ -1,0 +1,62 @@
+.receipt-bills-page .modern-table {
+    font-size: 0.8rem;
+}
+
+.receipt-bills-page .modern-table th {
+    padding: 0.6rem 0.9rem;
+    font-size: 0.76rem;
+    line-height: 1.15;
+}
+
+.receipt-bills-page .modern-table td {
+    padding: 0.52rem 0.9rem;
+    font-size: 0.79rem;
+    line-height: 1.2;
+    vertical-align: middle;
+}
+
+.receipt-bills-page .modern-table td.receipt-bills-col-related {
+    vertical-align: top;
+}
+
+.receipt-related-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 0.24rem;
+}
+
+.receipt-related-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.24rem;
+    align-items: flex-start;
+}
+
+.receipt-related-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.08rem 0.36rem;
+    border-radius: 999px;
+    font-size: 0.65rem;
+    line-height: 1.1;
+    font-weight: 700;
+}
+
+.receipt-related-summary {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    font-size: 0.72rem;
+    line-height: 1.22;
+    font-weight: 600;
+    word-break: break-word;
+}
+
+.receipt-related-summary.is-active {
+    color: #0f172a;
+}
+
+.receipt-related-summary.is-muted {
+    color: #94a3b8;
+}
